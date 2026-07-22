@@ -5,7 +5,7 @@ import unicodedata
 from datetime import datetime
 
 # Configure the mobile webpage title and clean presentation layout
-st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="vertical")
+st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
 # Inject custom right-to-left CSS styling to guarantee beautiful Arabic text rendering
 st.markdown("""
