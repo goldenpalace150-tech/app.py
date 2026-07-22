@@ -5,9 +5,54 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 
-# ==========================================
-# 1. INITIAL SYSTEM & WINDOW CONFIGURATION
-# ==========================================
+# =======================================================
+# 1. THE EMBEDDED DIRECT BIOTIME HARDWARE LISTENER
+# =======================================================
+# This block intercepts device background data packets immediately,
+# completely bypassing the need for Render, Railway, or PythonAnywhere.
+try:
+    # Read the raw request details directly from Streamlit's internal engine
+    ctx = st.runtime.get_instance()._get_current_session_context()
+    if ctx and ctx.request:
+        # Check if the incoming connection is a device sending its Serial Number (SN)
+        query_params = st.query_params
+        device_sn = query_params.get("SN") or query_params.get("sn")
+        
+        # Alternative fallback: Parse raw query string text if parameters are masked
+        if not device_sn and ctx.request.query_string:
+            raw_qs = ctx.request.query_string.decode('utf-8').lower()
+            if "sn=" in raw_qs:
+                parts = raw_qs.split("sn=")
+                if len(parts) > 1:
+                    device_sn = parts[1].split("&")[0].upper()
+
+        # If a valid device serial number is found, intercept it and log it directly to Neon
+        if device_sn:
+            DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+            SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
+            now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+            
+            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE iclock_terminal 
+                SET last_activity = %s 
+                WHERE sn = %s;
+            """, (now_time, device_sn))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            # Send the clean raw 'OK' confirmation text back to the physical device firmware
+            st.text("OK")
+            st.stop() # Freeze execution here so no graphical elements load for the device
+except Exception as e:
+    pass # Maintain background stability for everyday human web dashboard visitors
+
+
+# =======================================================
+# 2. STANDARD WINDOW CONFIGURATION & DASHBOARD GRAPHICS
+# =======================================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
 st.markdown("""
@@ -17,16 +62,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# System Constants
 EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
-
-# ==========================================
-# 2. HELPER FUNCTIONS & DATABASE INGESTION
-# ==========================================
+# =======================================================
+# 3. DATA LOADING AND CLEANING SERVICES
+# =======================================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
@@ -34,9 +77,7 @@ def clean_txt(raw_text):
 def load_device_statuses():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
-    
-    query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
-    cursor.execute(query)
+    cursor.execute("SELECT alias, last_activity, sn FROM iclock_terminal;")
     rows = cursor.fetchall()
     
     device_metrics = []
@@ -52,7 +93,6 @@ def load_device_statuses():
         else:
             seconds_elapsed = 999999
         
-        # Mark green if checked in within the last 5 minutes (300 seconds)
         if last_act and seconds_elapsed < 300:
             status_tag = "🟢 متصل"
         else:
@@ -101,10 +141,9 @@ def load_attendance_data(today_str):
     conn.close()
     return no_out_staff, late_staff, full_absent_staff
 
-
-# ==========================================
-# 3. DASHBOARD INTERFACE LAYOUT RENDERER
-# ==========================================
+# =======================================================
+# 4. USER DASHBOARD INTERFACE PRODUCTION RENDERER
+# =======================================================
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
