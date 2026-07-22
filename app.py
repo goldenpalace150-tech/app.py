@@ -32,30 +32,38 @@ def clean_txt(raw_text):
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to check exactly which machines are online based on their last ping"""
+    """Queries Neon to verify connection states using relative local timestamps"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
+    # Query your specific terminal configurations from the database
     query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
     cursor.execute(query)
     rows = cursor.fetchall()
     
     device_metrics = []
-    now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+    
+    # Isolate maximum internal time logged in the table to evaluate online states relatively
+    valid_times = [row[1] for row in rows if row[1]]
+    latest_system_ping = max(valid_times) if valid_times else None
     
     for row in rows:
         alias, last_act, sn = row
         clean_alias = clean_txt(alias)
         
-        if last_act:
+        if last_act and latest_system_ping:
+            # Strip timezones smoothly to isolate network synchronization lag spikes
             last_act_naive = last_act.replace(tzinfo=None)
-            seconds_elapsed = (now_Damascus_naive - last_act_naive).total_seconds()
-        else:
-            seconds_elapsed = 999999
-        
-        # If the device has updated the DB within the last 5 minutes (300 seconds), it's online
-        if last_act and seconds_elapsed < 300:
-            status_tag = "🟢 متصل"
+            latest_ping_naive = latest_system_ping.replace(tzinfo=None)
+            
+            # Identify absolute distance between last pings
+            seconds_elapsed = (latest_ping_naive - last_act_naive).total_seconds()
+            
+            # If the device checked in within 20 minutes (1200 seconds) of your active system heartbeat
+            if seconds_elapsed < 1200:
+                status_tag = "🟢 متصل"
+            else:
+                status_tag = "🔴 غير متصل"
         else:
             status_tag = "🔴 غير متصل"
             
@@ -69,6 +77,7 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
+    # 1. Query 1-Punch and Late Staff 
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -89,6 +98,7 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
+    # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -122,6 +132,7 @@ try:
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
     
+    # Render hardware states dynamically in a clean row format
     cols = st.columns(len(devices))
     for idx, (alias, status, sn) in enumerate(devices):
         with cols[idx]:
@@ -130,6 +141,7 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
+    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -139,6 +151,7 @@ try:
         
     st.write("---")
         
+    # 2. Render Absent Section
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -148,6 +161,7 @@ try:
 
     st.write("---")
 
+    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
