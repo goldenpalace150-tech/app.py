@@ -33,6 +33,7 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
+    # 1. Query 1-Punch and Late Staff (Locked to Syrian time conversion)
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -53,6 +54,7 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
+    # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -60,7 +62,9 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(r, clean_txt(r)) for r in full_absent_rows]
+    
+    # FIXED LOGIC: Explicitly unpack the code and name columns cleanly from the database row tuple container
+    full_absent_staff = [(row[0], clean_txt(row[1])) for row in full_absent_rows if row]
     
     cursor.close()
     conn.close()
@@ -70,14 +74,13 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-# --- 📱 HEADER WITH PERMANENT PREMIUM IMAGE LINK ---
-# FIXED: Pointed to a highly stable, non-expiring direct image path
+# --- 📱 CLEAN TEXT-ONLY COMPANY HEADER ---
 st.markdown(
     f"""
-    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; margin-bottom: 25px; gap: 10px;">
-        <img src="https://postimg.cc" width="250" style="margin-bottom: 5px;">
-        <h2 style="margin: 0; padding: 0; color: #D4AF37; font-weight: bold;">لوحة تحكم إدارة الحضور والغياب</h2>
-        <h4 style="margin: 0; padding: 0; color: #555;">تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}</h4>
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; margin-bottom: 25px; gap: 5px;">
+        <h1 style="margin: 0; padding: 0; color: #D4AF37; font-weight: bold; font-size: 2.5rem;">✨ شركة القصر الذهبي ✨</h1>
+        <h2 style="margin: 5px 0 0 0; padding: 0; color: #333; font-weight: bold;">لوحة تحكم إدارة الحضور والغياب</h2>
+        <h4 style="margin: 0; padding: 0; color: #666;">تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}</h4>
     </div>
     """, 
     unsafe_allow_html=True
@@ -90,17 +93,20 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
+    # Render Late Staff Section
     st.markdown(f"### ⏰ المتأخرون اليوم ({len(late)}) – بصمة دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
-            st.markdown(f"🔸 **{name}** (كود: {code}) ── 🕛 وقت الدخول: **{t_time}**")
+            st.markdown(f"🔸 **{name}** (كود: {code}) ── 12 وقت الدخول: **{t_time}**")
     else:
         st.success("🎉 لا يوجد متأخرين اليوم!")
         
     st.write("---")
         
+    # Render Absent Section
     st.markdown(f"### ❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
+        # FIXED DISPLAY LOOP: Unpacks cleaner text configurations flawlessly
         for code, name in absent:
             st.markdown(f"🔹 **{name}** (كود: {code})")
     else:
@@ -108,10 +114,11 @@ try:
 
     st.write("---")
 
+    # Render Normal 1-Punch Section
     st.markdown(f"### ⚠️ سجلوا دخول في الوقت ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
-            st.markdown(f"🔸 **{name}** (كود: {code}) ── 🕒 وقت الدخول: **{t_time}**")
+            st.markdown(f"🔸 **{name}** (كود: {code}) ── 3 وقت الدخول: **{t_time}**")
     else:
         st.markdown("لا يوجد موظفين منتظمين بانتظار الخروج.")
 
