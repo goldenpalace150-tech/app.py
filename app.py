@@ -61,7 +61,9 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(row, clean_txt(row)) for row in full_absent_rows if row]
+    
+    # CRITICAL FIX: Unpack index 0 and 1 explicitly from the tuple so no brackets ever leak
+    full_absent_staff = [(row[0], clean_txt(row[1])) for row in full_absent_rows if row]
     
     cursor.close()
     conn.close()
@@ -83,7 +85,7 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Render Late Staff Section as a clean, spacious text list
+    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -93,7 +95,7 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent Section as a clean, spacious text list
+    # 2. Render Absent Section - CRITICAL FIX LOOP
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -103,7 +105,7 @@ try:
 
     st.write("---")
 
-    # 3. Render Normal 1-Punch Section as a clean, spacious text list
+    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
