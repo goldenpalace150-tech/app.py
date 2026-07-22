@@ -2,10 +2,12 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime
 import zoneinfo
 
-# Configure the mobile webpage title and centered layout
+# ==========================================
+# 1. INITIAL SYSTEM & WINDOW CONFIGURATION
+# ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
 # Inject clean, universal right-to-left layout alignments for text lines
@@ -24,6 +26,45 @@ DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 # Explicitly lock the system clock to Syrian time boundaries
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
+
+# =======================================================
+# 2. ADMS / BIOTIME SERVER ENDPOINT PROTOCOL GATEWAY
+# =======================================================
+# Intercepts direct hardware pings arriving at er9uhn6cadbmh6u6dpxmf7.streamlit.app
+# Resolves the offline state of Device 3 without needing ngrok tunnels.
+params = st.query_params
+
+if "SN" in params or "sn" in params:
+    device_sn = params.get("SN") or params.get("sn")
+    now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        cursor = conn.cursor()
+        
+        # Mirror native BioTime activity logs by overwriting terminal ping status
+        cursor.execute("""
+            UPDATE iclock_terminal 
+            SET last_activity = %s 
+            WHERE sn = %s;
+        """, (now_time, device_sn))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        # Return mandatory raw string answer expected by ZKTeco firmware to confirm handshake
+        st.text("OK") 
+        st.stop()  # Immediately stop executing the frontend dashboard for network pings
+        
+    except Exception as db_api_err:
+        st.text(f"ERROR: {db_api_err}")
+        st.stop()
+
+
+# ==========================================
+# 3. HELPER FUNCTIONS & DATABASE INGESTION
+# ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
@@ -33,7 +74,7 @@ def load_device_statuses():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # Query your specific terminal model metadata parameters
+    # Query specific terminal model metadata parameters
     query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
     cursor.execute(query)
     rows = cursor.fetchall()
@@ -45,7 +86,7 @@ def load_device_statuses():
         alias, last_act, sn = row
         clean_alias = clean_txt(alias)
         
-        # If the device has communicated within the last 5 minutes, it is strictly Online
+        # If the device has communicated within the last 5 minutes, it is Online
         if last_act and (now_Damascus.replace(tzinfo=None) - last_act).total_seconds() < 300:
             status_tag = "🟢 متصل"
         else:
@@ -90,12 +131,16 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(row, clean_txt(row)) for row in full_absent_rows if row]
+    full_absent_staff = [(row[0], clean_txt(row[1])) for row in full_absent_rows if row]
     
     cursor.close()
     conn.close()
     return no_out_staff, late_staff, full_absent_staff
 
+
+# ==========================================
+# 4. DASHBOARD INTERFACE LAYOUT RENDERER
+# ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
