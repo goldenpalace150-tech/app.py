@@ -14,8 +14,7 @@ st.markdown("""
     h1, h2, h3, p, span, li, div { text-align: right !important; direction: RTL !important; }
     .stDataFrame { direction: RTL !important; text-align: right !important; }
     </style>
-""", unsafe_allow_back_with_embedding=True, unsafe_allow_html=True)
-
+""", unsafe_allow_html=True)
 # System Constants
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
