@@ -5,19 +5,14 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 
-# Configure the mobile webpage title and centered wide layout
+# Configure the mobile webpage title and centered layout
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
-# Force explicit right-to-left column alignment for grid spreadsheets
+# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
-    h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; }
-    /* Force interactive data spreadsheet blocks to render right-to-left matching Excel layouts */
-    [data-testid="stComponentBase"] { direction: RTL !important; }
-    [data-testid="stTable"] { direction: RTL !important; }
-    .stDataFrame { direction: RTL !important; text-align: right !important; }
-    div[data-testid="stCell"] { text-align: right !important; direction: RTL !important; }
+    h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -54,9 +49,9 @@ def load_attendance_data(today_str):
         time_clean = p_time.strftime('%I:%M %p')
         
         if p_time.hour > 9 or (p_time.hour == 9 and p_time.minute > 15):
-            late_staff.append({"الكود": emp_code, "اسم الموظف": clean_name, "وقت الدخول": time_clean})
+            late_staff.append((emp_code, clean_name, time_clean))
         else:
-            no_out_staff.append({"الكود": emp_code, "اسم الموظف": clean_name, "وقت الدخول": time_clean})
+            no_out_staff.append((emp_code, clean_name, time_clean))
             
     # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
@@ -66,7 +61,7 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [{"الكود": r, "اسم الموظف الغائب": clean_txt(r)} for r in full_absent_rows if r]
+    full_absent_staff = [(row, clean_txt(row)) for row in full_absent_rows if row]
     
     cursor.close()
     conn.close()
@@ -76,10 +71,10 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-# --- 📱 FIXED NATIVE HEADER PATHS (CACHING IMMUNE) ---
+# --- 📱 CLEAN NATIVE HEADER BANNER ---
 st.title("✨ شركة القصر الذهبي ✨")
 st.header("لوحة تحكم إدارة الحضور والغياب")
-st.write(f"📅 تاريخ اليوم: **{today_syria_str}**  │  ⏰ التوقيت الحالي في سوريا: **{time_syria_str}**")
+st.write(f"📅 التاريخ: **{today_syria_str}**  │  ⏰ الوقت الحالي في سوريا: **{time_syria_str}**")
 
 if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
@@ -88,31 +83,31 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # Render Late Staff Section as an Excel Data Spreadsheet Grid Matrix
-    st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – بصمة دخول بعد 09:15 صباحاً")
+    # 1. Render Late Staff Section as a clean, spacious text list
+    st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
-        df_late = pd.DataFrame(late)
-        st.dataframe(df_late, use_container_width=True, hide_index=True)
+        for code, name, t_time in late:
+            st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
     else:
         st.success("🎉 لا يوجد متأخرين اليوم!")
         
     st.write("---")
         
-    # Render Absent Section as an Excel Data Spreadsheet Grid Matrix
+    # 2. Render Absent Section as a clean, spacious text list
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
-        df_absent = pd.DataFrame(absent)
-        st.dataframe(df_absent, use_container_width=True, hide_index=True)
+        for code, name in absent:
+            st.write(f"🔹 **{name}** (كود: {code})")
     else:
         st.success("🎉 لا يوجد غيابات كاملة اليوم!")
 
     st.write("---")
 
-    # Render Normal 1-Punch Section as an Excel Data Spreadsheet Grid Matrix
-    st.subheader(f"⚠️ سجلوا دخول في الوقت ولم يسجلوا خروج بعد ({len(no_out)})")
+    # 3. Render Normal 1-Punch Section as a clean, spacious text list
+    st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
-        df_no_out = pd.DataFrame(no_out)
-        st.dataframe(df_no_out, use_container_width=True, hide_index=True)
+        for code, name, t_time in no_out:
+            st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
     else:
         st.info("لا يوجد موظفين منتظمين بانتظار الخروج.")
 
