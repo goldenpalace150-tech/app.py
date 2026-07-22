@@ -30,19 +30,17 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 # =======================================================
 # 2. ADMS / BIOTIME SERVER ENDPOINT PROTOCOL GATEWAY
 # =======================================================
-# Intercepts direct hardware pings arriving at er9uhn6cadbmh6u6dpxmf7.streamlit.app
-# Resolves the offline state of Device 3 without needing ngrok tunnels.
 params = st.query_params
 
 if "SN" in params or "sn" in params:
     device_sn = params.get("SN") or params.get("sn")
+    # Kept naive to match database handling rules safely
     now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
     
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         cursor = conn.cursor()
         
-        # Mirror native BioTime activity logs by overwriting terminal ping status
         cursor.execute("""
             UPDATE iclock_terminal 
             SET last_activity = %s 
@@ -53,9 +51,8 @@ if "SN" in params or "sn" in params:
         cursor.close()
         conn.close()
         
-        # Return mandatory raw string answer expected by ZKTeco firmware to confirm handshake
         st.text("OK") 
-        st.stop()  # Immediately stop executing the frontend dashboard for network pings
+        st.stop()  
         
     except Exception as db_api_err:
         st.text(f"ERROR: {db_api_err}")
@@ -74,20 +71,27 @@ def load_device_statuses():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # Query specific terminal model metadata parameters
     query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
     cursor.execute(query)
     rows = cursor.fetchall()
     
     device_metrics = []
-    now_Damascus = datetime.now(SYRIA_TZ)
+    # FIX: Native localized timestamp stripped of offset to match query records perfectly
+    now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
     
     for row in rows:
         alias, last_act, sn = row
         clean_alias = clean_txt(alias)
         
-        # If the device has communicated within the last 5 minutes, it is Online
-        if last_act and (now_Damascus.replace(tzinfo=None) - last_act).total_seconds() < 300:
+        # FIX: Ensure last_act is naive before running the calculation subtraction
+        if last_act:
+            last_act_naive = last_act.replace(tzinfo=None)
+            seconds_elapsed = (now_Damascus_naive - last_act_naive).total_seconds()
+        else:
+            seconds_elapsed = 999999
+        
+        # If the device has communicated within the last 5 minutes (300 seconds)
+        if last_act and seconds_elapsed < 300:
             status_tag = "🟢 متصل"
         else:
             status_tag = "🔴 غير متصل"
@@ -102,7 +106,6 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # 1. Query 1-Punch and Late Staff 
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -123,7 +126,6 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
-    # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -145,7 +147,6 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-# --- 📱 CLEAN NATIVE HEADER BANNER ---
 st.title("✨ شركة القصر الذهبي ✨")
 st.header("لوحة تحكم إدارة الحضور والغياب")
 st.write(f"📅 التاريخ: **{today_syria_str}**  │  ⏰ الوقت الحالي في سوريا: **{time_syria_str}**")
@@ -154,12 +155,10 @@ if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
-    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
     st.write("---")
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
     
-    # Render hardware states dynamically in a clean row format
     cols = st.columns(len(devices))
     for idx, (alias, status, sn) in enumerate(devices):
         with cols[idx]:
@@ -168,7 +167,6 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -178,7 +176,6 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent Section
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -188,7 +185,6 @@ try:
 
     st.write("---")
 
-    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
