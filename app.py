@@ -10,7 +10,6 @@ import zoneinfo
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
-# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -22,73 +21,17 @@ st.markdown("""
 EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
-
-# Explicitly lock the system clock to Syrian time boundaries
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
-# =======================================================
-# 2. ADVANCED MULTI-PATH BIOTIME/ADMS ENGINE GATEWAY
-# =======================================================
-# This upgraded gateway catches parameters from raw query strings,
-# bypassing the custom /iclock/ sub-paths used by ZKTeco hardware.
-params = st.query_params
-
-# Fallback checking both standard dict keys and direct raw string lookups
-has_sn = "SN" in params or "sn" in params
-device_sn = None
-
-if has_sn:
-    device_sn = params.get("SN") or params.get("sn")
-else:
-    # Fallback logic: Inspect raw query context strings manually if native routing fails
-    try:
-        ctx = st.runtime.get_instance()._get_current_session_context()
-        if ctx and ctx.request and ctx.request.query_string:
-            raw_qs = ctx.request.query_string.decode('utf-8').lower()
-            if "sn=" in raw_qs:
-                # Carve out the SN parameter value cleanly from the raw payload
-                parts = raw_qs.split("sn=")
-                if len(parts) > 1:
-                    device_sn = parts[1].split("&")[0].upper()
-    except Exception:
-        pass  # Maintain stability if internal server context objects change
-
-if device_sn:
-    now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
-    try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-        cursor = conn.cursor()
-        
-        # Immediate atomic status write straight to Neon DB instances
-        cursor.execute("""
-            UPDATE iclock_terminal 
-            SET last_activity = %s 
-            WHERE sn = %s;
-        """, (now_time, device_sn))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        # Print standard confirmation text block back to hardware lines
-        st.text("OK") 
-        st.stop()  
-        
-    except Exception as db_api_err:
-        st.text(f"ERROR: {db_api_err}")
-        st.stop()
-
-
 # ==========================================
-# 3. HELPER FUNCTIONS & DATABASE INGESTION
+# 2. HELPER FUNCTIONS & DATABASE INGESTION
 # ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to check exactly which machines are online based on their last ping"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
@@ -109,7 +52,7 @@ def load_device_statuses():
         else:
             seconds_elapsed = 999999
         
-        # Evaluates whether the device has sent an update within the last 5 minutes
+        # Mark green if checked in within the last 5 minutes (300 seconds)
         if last_act and seconds_elapsed < 300:
             status_tag = "🟢 متصل"
         else:
@@ -160,7 +103,7 @@ def load_attendance_data(today_str):
 
 
 # ==========================================
-# 4. DASHBOARD INTERFACE LAYOUT RENDERER
+# 3. DASHBOARD INTERFACE LAYOUT RENDERER
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
