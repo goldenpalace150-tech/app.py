@@ -1,3 +1,33 @@
+# Make sure this exact block is at the very top of your GitHub app.py file:
+try:
+    ctx = st.runtime.get_instance()._get_current_session_context()
+    if ctx and ctx.request:
+        query_params = st.query_params
+        device_sn = query_params.get("SN") or query_params.get("sn")
+        
+        if device_sn:
+            DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+            import zoneinfo
+            SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
+            from datetime import datetime
+            now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+            
+            import psycopg2
+            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE iclock_terminal 
+                SET last_activity = %s 
+                WHERE sn = %s;
+            """, (now_time, device_sn))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            st.text("OK")
+            st.stop()
+except Exception:
+    pass
 import streamlit as st
 import psycopg2
 import pandas as pd
