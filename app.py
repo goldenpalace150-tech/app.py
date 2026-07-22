@@ -39,7 +39,7 @@ def load_device_statuses():
     rows = cursor.fetchall()
     
     device_metrics = []
-    now_ Damascus = datetime.now(SYRIA_TZ)
+    now_Damascus = datetime.now(SYRIA_TZ)
     
     for row in rows:
         alias, last_act, sn = row
