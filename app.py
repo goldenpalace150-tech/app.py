@@ -30,8 +30,7 @@ def load_attendance_data():
     today_str = datetime.now().strftime('%Y-%m-%d')
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
-    
-    # 1. Query 1-Punch and Late Staff
+        # 1. Query 1-Punch and Late Staff
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -45,10 +44,17 @@ def load_attendance_data():
     for row in one_punch_rows:
         emp_code, name, p_time = row
         clean_name = clean_txt(name)
+        # Format the exact punch time cleanly
         time_clean = p_time.strftime('%I:%M %p')
         
+        # Merge time directly into the text display label string
+        display_label = f"{clean_name} ({time_clean})"
+        
         if p_time.hour > 9 or (p_time.hour == 9 and p_time.minute > 15):
-            late_staff.append({"الكود": emp_code, "الاسم": clean_name, "وقت الدخول": time_clean})
+            late_staff.append({"الكود": emp_code, "الموظف ووقت الدخول": display_label})
+        else:
+            no_out_staff.append({"الكود": emp_code, "الموظف ووقت الدخول": display_label})
+
         else:
             no_out_staff.append({"الكود": emp_code, "الاسم": clean_name, "وقت الدخول": time_clean})
             
