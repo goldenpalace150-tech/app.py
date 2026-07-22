@@ -28,19 +28,39 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
 # =======================================================
-# 2. ADMS / BIOTIME SERVER ENDPOINT PROTOCOL GATEWAY
+# 2. ADVANCED MULTI-PATH BIOTIME/ADMS ENGINE GATEWAY
 # =======================================================
+# This upgraded gateway catches parameters from raw query strings,
+# bypassing the custom /iclock/ sub-paths used by ZKTeco hardware.
 params = st.query_params
 
-if "SN" in params or "sn" in params:
+# Fallback checking both standard dict keys and direct raw string lookups
+has_sn = "SN" in params or "sn" in params
+device_sn = None
+
+if has_sn:
     device_sn = params.get("SN") or params.get("sn")
-    # Kept naive to match database handling rules safely
+else:
+    # Fallback logic: Inspect raw query context strings manually if native routing fails
+    try:
+        ctx = st.runtime.get_instance()._get_current_session_context()
+        if ctx and ctx.request and ctx.request.query_string:
+            raw_qs = ctx.request.query_string.decode('utf-8').lower()
+            if "sn=" in raw_qs:
+                # Carve out the SN parameter value cleanly from the raw payload
+                parts = raw_qs.split("sn=")
+                if len(parts) > 1:
+                    device_sn = parts[1].split("&")[0].upper()
+    except Exception:
+        pass  # Maintain stability if internal server context objects change
+
+if device_sn:
     now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
-    
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         cursor = conn.cursor()
         
+        # Immediate atomic status write straight to Neon DB instances
         cursor.execute("""
             UPDATE iclock_terminal 
             SET last_activity = %s 
@@ -51,6 +71,7 @@ if "SN" in params or "sn" in params:
         cursor.close()
         conn.close()
         
+        # Print standard confirmation text block back to hardware lines
         st.text("OK") 
         st.stop()  
         
@@ -76,21 +97,19 @@ def load_device_statuses():
     rows = cursor.fetchall()
     
     device_metrics = []
-    # FIX: Native localized timestamp stripped of offset to match query records perfectly
     now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
     
     for row in rows:
         alias, last_act, sn = row
         clean_alias = clean_txt(alias)
         
-        # FIX: Ensure last_act is naive before running the calculation subtraction
         if last_act:
             last_act_naive = last_act.replace(tzinfo=None)
             seconds_elapsed = (now_Damascus_naive - last_act_naive).total_seconds()
         else:
             seconds_elapsed = 999999
         
-        # If the device has communicated within the last 5 minutes (300 seconds)
+        # Evaluates whether the device has sent an update within the last 5 minutes
         if last_act and seconds_elapsed < 300:
             status_tag = "🟢 متصل"
         else:
@@ -133,7 +152,7 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(row[0], clean_txt(row[1])) for row in full_absent_rows if row]
+    full_absent_staff = [(row, clean_txt(row)) for row in full_absent_rows if row]
     
     cursor.close()
     conn.close()
