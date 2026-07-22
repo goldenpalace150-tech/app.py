@@ -3,7 +3,7 @@ import psycopg2
 import pandas as pd
 import unicodedata
 from datetime import datetime
-import zoneinfo  # FIXED: Native library to handle strict regional timezones
+import zoneinfo
 
 # Configure the mobile webpage title and centered wide layout
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
@@ -18,11 +18,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # System Constants
-EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
+EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 
-# FIXED: Explicitly lock the system clock to Syrian time boundaries
+# Explicitly lock the system clock to Syrian time boundaries
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 def clean_txt(raw_text):
@@ -62,37 +62,40 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(r[0], clean_txt(r[1])) for r in full_absent_rows]
+    full_absent_staff = [(r, clean_txt(r)) for r in full_absent_rows]
     
     cursor.close()
     conn.close()
     return no_out_staff, late_staff, full_absent_staff
 
-# --- 📱 MOBILE WEB INTERFACE GRAPHICS DISPLAY ---
-# FIXED: Forces the current header time to evaluate directly using the Damascus clock
+# Forces the current header time to evaluate directly using the Damascus clock
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
 st.title("🏆 لوحة تحكم شركة القصر الذهبي")
-st.subheader(f"تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str} 🇸🇾")
 
-if st.button("🔄 تحديث البيانات الحية الآن"):
-    st.cache_data.clear()
-
-st.title("🏆 لوحة تحكم شركة القصر الذهبي")
-
-# FIXED: Replaced fragile emoji flags with the official high-quality Syrian flag image link
+# Embedded official high-quality Syrian Arab Republic Flag SVG vector
 st.markdown(
     f"""
-    <div style="display: flex; align-items: center; gap: 10px; direction: rtl;">
-        <h3 style="margin: 0; padding: 0;">تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}</h3>
-        <img src="https://wikimedia.org" width="35" style="border: 1px solid #ddd; border-radius: 3px; margin-top: 5px;">
+    <div style="display: flex; align-items: center; gap: 12px; direction: rtl; margin-bottom: 20px;">
+        <h3 style="margin: 0; padding: 0; display: inline-block; vertical-align: middle;">
+            تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}
+        </h3>
+        <img src="https://wikimedia.org" width="40" style="border: 1px solid #ccc; border-radius: 4px; display: inline-block; vertical-align: middle;">
     </div>
     """, 
     unsafe_allow_html=True
 )
 
+if st.button("🔄 تحديث البيانات الحية الآن"):
+    st.cache_data.clear()
+
+try:
+    no_out, late, absent = load_attendance_data(today_syria_str)
+    st.write("---")
+    
+    # Render Late Staff Section
     st.markdown(f"### ⏰ المتأخرون اليوم ({len(late)}) - بصمة دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
