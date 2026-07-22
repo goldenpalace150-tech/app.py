@@ -3,6 +3,7 @@ import psycopg2
 import pandas as pd
 import unicodedata
 from datetime import datetime
+import zoneinfo  # FIXED: Native library to handle strict regional timezones
 
 # Configure the mobile webpage title and centered wide layout
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
@@ -21,16 +22,18 @@ EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 
+# FIXED: Explicitly lock the system clock to Syrian time boundaries
+SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
+
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
-def load_attendance_data():
-    today_str = datetime.now().strftime('%Y-%m-%d')
+def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # 1. Query 1-Punch and Late Staff
+    # 1. Query 1-Punch and Late Staff (Locked to Syrian time conversion)
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -66,14 +69,19 @@ def load_attendance_data():
     return no_out_staff, late_staff, full_absent_staff
 
 # --- 📱 MOBILE WEB INTERFACE GRAPHICS DISPLAY ---
+# FIXED: Forces the current header time to evaluate directly using the Damascus clock
+now_syria = datetime.now(SYRIA_TZ)
+today_syria_str = now_syria.strftime('%Y-%m-%d')
+time_syria_str = now_syria.strftime('%I:%M %p')
+
 st.title("🏆 لوحة تحكم شركة القصر الذهبي")
-st.subheader(f"تاريخ اليوم: {datetime.now().strftime('%Y-%m-%d')} | التوقيت الحالي: {datetime.now().strftime('%I:%M %p')}")
+st.subheader(f"تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str} 🇸🇾")
 
 if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
-    no_out, late, absent = load_attendance_data()
+    no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
     # Render Late Staff Section
@@ -102,7 +110,7 @@ try:
         for code, name, t_time in no_out:
             st.markdown(f"🔸 **{name}** (كود: {code}) ── 🕒 وقت الدخول: **{t_time}**")
     else:
-        st.write("لا يوجد موظفين منتظمين بانتظار الخروج.")
+        st.markdown("لا يوجد موظفين منتظمين بانتظار الخروج.")
 
 except Exception as err:
     st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
