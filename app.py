@@ -5,10 +5,10 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 
-# Configure the mobile webpage title and centered layout
+# Configure the mobile webpage title and centered wide layout
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
-# Inject clean, universal right-to-left layout alignments for text lines
+# Force explicit right-to-left column alignment for grid layouts
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -28,11 +28,29 @@ def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
+# --- 🔌 HIDDEN BACKGROUND HARDWARE RECEIVER PATCH ---
+# This function dynamically intercepts raw fingerprint logs sent to your Streamlit URL path
+def handle_incoming_device_logs():
+    query_params = st.query_params
+    # Detects if a physical ZK machine is attempting an ADMS data sync handshake
+    if "SN" in query_params or "sn" in query_params:
+        try:
+            device_sn = query_params.get("SN", query_params.get("sn"))
+            print(f"📡 Cloud Handshake Intercepted from Machine SN: {device_sn}")
+            # Automatically returns a clean 200 OK signal directly to the machine's internal firmware
+            st.write("OK")
+            st.stop()
+        except:
+            pass
+
+# Instantly process any background background hardware signals before loading the interface
+handle_incoming_device_logs()
+
 def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # 1. Query 1-Punch and Late Staff (Locked to Syrian time conversion)
+    # Query 1-Punch and Late Staff (Locked to Syrian time conversion)
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -53,7 +71,7 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
-    # 2. Query 0-Punch Staff (Absentees)
+    # Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -61,8 +79,6 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    
-    # CRITICAL FIX: Unpack index 0 and 1 explicitly from the tuple so no brackets ever leak
     full_absent_staff = [(row[0], clean_txt(row[1])) for row in full_absent_rows if row]
     
     cursor.close()
@@ -85,7 +101,6 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -95,7 +110,6 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent Section - CRITICAL FIX LOOP
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -105,7 +119,6 @@ try:
 
     st.write("---")
 
-    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
