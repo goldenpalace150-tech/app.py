@@ -73,16 +73,14 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-st.title("🏆 لوحة تحكم شركة القصر الذهبي")
-
-# Embedded official high-quality Syrian Arab Republic Flag SVG vector
+# --- 📱 HEADER WITH GOLDEN PALACE BRAND LOGO ---
+# FIXED: Replaced Syrian flag with your high-resolution hosted company logo vector
 st.markdown(
     f"""
-    <div style="display: flex; align-items: center; gap: 12px; direction: rtl; margin-bottom: 20px;">
-        <h3 style="margin: 0; padding: 0; display: inline-block; vertical-align: middle;">
-            تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}
-        </h3>
-        <img src="https://wikimedia.org" width="40" style="border: 1px solid #ccc; border-radius: 4px; display: inline-block; vertical-align: middle;">
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; margin-bottom: 25px; gap: 10px;">
+        <img src="https://ibb.co" width="220" style="margin-bottom: 5px;">
+        <h2 style="margin: 0; padding: 0; color: #D4AF37; font-weight: bold;">لوحة تحكم إدارة الحضور والغياب</h2>
+        <h4 style="margin: 0; padding: 0; color: #555;">تاريخ اليوم: {today_syria_str} | التوقيت الحالي في سوريا: {time_syria_str}</h4>
     </div>
     """, 
     unsafe_allow_html=True
@@ -96,7 +94,7 @@ try:
     st.write("---")
     
     # Render Late Staff Section
-    st.markdown(f"### ⏰ المتأخرون اليوم ({len(late)}) - بصمة دخول بعد 09:15 صباحاً")
+    st.markdown(f"### ⏰ المتأخرون اليوم ({len(late)}) – بصمة دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
             st.markdown(f"🔸 **{name}** (كود: {code}) ── 🕛 وقت الدخول: **{t_time}**")
@@ -106,7 +104,7 @@ try:
     st.write("---")
         
     # Render Absent Section
-    st.markdown(f"### ❌ غائبون تماماً اليوم ({len(absent)}) - 0 بصمة")
+    st.markdown(f"### ❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
             st.markdown(f"🔹 **{name}** (كود: {code})")
