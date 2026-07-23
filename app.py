@@ -171,17 +171,18 @@ try:
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, mobile in absent:
-            # FIXED: Explicitly added column ratio constraints [4, 1] to satisfy Streamlit specs
             item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
-                if mobile and mobile != 'None':
+                if mobile and mobile != 'None' and mobile != '':
                     phone_formatted = mobile if mobile.startswith('+') or len(mobile) > 10 else f"963{mobile.lstrip('0')}"
                     msg = f"مرحباً {name}، يرجى العلم أنه لم يتم تسجيل بصمة حضور لك اليوم المندرج بتاريخ {today_syria_str}. إذا كنت متواجداً بالعمل، يرجى مراجعة الإدارة أو تأكيد البصمة مسبقاً."
                     encoded_msg = urllib.parse.quote(msg)
                     wa_url = f"https://wa.me{phone_formatted}?text={encoded_msg}"
-                    st.markdown(f'<a href="{wa_url}" target="_blank" style="text-decoration:none;"><button style="background-color:#25D366; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer;">💬 مراسلة تذكيرية</button></a>', unsafe_allow_html=True)
+                    
+                    # FIXED: Using secure, browser-native Streamlit button to prevent window blocking rules
+                    st.link_button("💬 تذكير", url=wa_url, use_container_width=True)
                 else:
                     st.caption("🚫 لا يوجد رقم")
     else:
