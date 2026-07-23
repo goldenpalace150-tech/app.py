@@ -39,13 +39,14 @@ def load_device_statuses():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
+    device_metrics = []
+    
     # Primary: Try querying the standard ZKBioTime live tracking flag directly
     try:
         query = "SELECT alias, is_online, sn FROM iclock_terminal;"
         cursor.execute(query)
         rows = cursor.fetchall()
         
-        device_metrics = []
         for row in rows:
             alias, is_online, sn = row
             clean_alias = clean_txt(alias)
@@ -59,36 +60,44 @@ def load_device_statuses():
             device_metrics.append((clean_alias, status_tag, sn))
             
     except Exception:
-        # Fallback: If your specific BioTime version uses a different column configuration,
-        # we check the relative distance to the absolute newest check-in record in the database.
-        query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
-        cursor.execute(query)
-        rows = cursor.fetchall()
+        # CRITICAL FIX: Explicitly rollback the aborted transaction to unblock the database channel
+        conn.rollback()
         
-        device_metrics = []
-        valid_times = [r for r in rows if r and r]
-        latest_system_ping = max(valid_times) if valid_times else None
-        
-        for row in rows:
-            alias, last_act, sn = row
-            clean_alias = clean_txt(alias)
+        # Fallback: Check the relative distance to the absolute newest check-in record in the database
+        try:
+            query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
+            cursor.execute(query)
+            rows = cursor.fetchall()
             
-            if last_act and latest_system_ping:
-                last_act_naive = last_act.replace(tzinfo=None)
-                latest_ping_naive = latest_system_ping.replace(tzinfo=None)
+            # Safely extract valid datetime elements for processing
+            valid_times = [r[1] for r in rows if r and r[1]]
+            latest_system_ping = max(valid_times) if valid_times else None
+            
+            for row in rows:
+                alias, last_act, sn = row
+                clean_alias = clean_txt(alias)
                 
-                # If this device's timestamp matches the newest server check-in, it's live
-                if last_act_naive == latest_ping_naive:
-                    status_tag = "🟢 متصل"
+                if last_act and latest_system_ping:
+                    last_act_naive = last_act.replace(tzinfo=None)
+                    latest_ping_naive = latest_system_ping.replace(tzinfo=None)
+                    
+                    # If this device's timestamp matches the newest server check-in, it's live
+                    if last_act_naive == latest_ping_naive:
+                        status_tag = "🟢 متصل"
+                    else:
+                        status_tag = "🔴 غير متصل"
                 else:
                     status_tag = "🔴 غير متصل"
-            else:
-                status_tag = "🔴 غير متصل"
-                
-            device_metrics.append((clean_alias, status_tag, sn))
+                    
+                device_metrics.append((clean_alias, status_tag, sn))
+        except Exception as fallback_err:
+            # If everything completely fails, return an empty list to avoid breaking layout rendering
+            pass
         
-    cursor.close()
-    conn.close()
+    finally:
+        cursor.close()
+        conn.close()
+        
     return device_metrics
 
 def load_attendance_data(today_str):
@@ -125,7 +134,7 @@ def load_attendance_data(today_str):
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
     
-    # FIXED: Cleanly unpacks columns into individual clean string pairs
+    # Cleanly unpacks columns into individual clean string pairs
     full_absent_staff = []
     for row in full_absent_rows:
         if row:
@@ -159,10 +168,13 @@ try:
     devices = load_device_statuses()
     
     # Render hardware states dynamically in a clean row format
-    cols = st.columns(len(devices))
-    for idx, (alias, status, sn) in enumerate(devices):
-        with cols[idx]:
-            st.metric(label=f"جهاز: {alias}", value=status, delta=f"SN: {sn[:6]}...")
+    if devices:
+        cols = st.columns(len(devices))
+        for idx, (alias, status, sn) in enumerate(devices):
+            with cols[idx]:
+                st.metric(label=f"جهاز: {alias}", value=status, delta=f"SN: {sn[:6]}...")
+    else:
+        st.warning("⚠️ لا توجد أجهزة مضافة أو تعذر تحميل البيانات.")
 
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
