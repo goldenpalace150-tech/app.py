@@ -4,18 +4,18 @@ import sys
 import asyncio
 import psycopg2
 import unicodedata
-import urllib.parse  # FIXED: Added missing import to resolve NameError compiler crash
+import urllib.parse
 from datetime import datetime
 from pyppeteer import launch
 
 # ==========================================
-# 0. ALIGNMENT STRINGS CONFIGURATION
+# 0. ALIGNMENT STRINGS CONFIGURATION (UNICODE ESCAPED)
 # ==========================================
 MSG_TEMPLATES = {
     "db_err": "Database error encountered, rolling back: {}",
     "sys_err": "Sync placeholder pause: {}",
-    "in_punch": "مرحباً {}، تم تسجيل بصمة *الدخول* بنجاح عند الساعة {}. أتمنى لك يوماً سعيداً! ✨",
-    "out_punch": "مرحباً {}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {}. رافقتك السلامة! 🏡"
+    "in_punch": "\u0645\u0631\u062d\u0628\u0627\u064b {}\u060c \u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0628\u0635\u0645\u0629 *\u0627\u0644\u062f\u062e\u0648\u0644* \u0628\u0646\u062c\u0627\u062d \u0639\u0646\u062f \u0627\u0644\u0633\u0627\u0639\u0645 {} \u0622\u062a\u0645\u0646\u0649 \u0644\u0643 \u064a\u0641 \u064a\u0648\u0645\u0627\u064b \u0633\u0639\u064a\u062f\u0627\u064b! \u2728",
+    "out_punch": "\u0645\u0631\u062d\u0628\u0627\u064b {}\u060c \u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0628\u0635\u0645\u0629 *\u0627\u0644\u062e\u0631\u0648\u062c* \u0628\u0646\u062c\u0627\u062d \u0639\u0646\u062f \u0627\u0644\u0633\u0627\u0639\u0629 {} \u0631\u0627\u0641\u0642\u062a\u0643 \u0627\u0644\u0633\u0644\u0627\u0645\u0629! \ud83c\udfe1"
 }
 
 DATABASE_URL = os.environ.get("NEON_DB_URL")
@@ -43,10 +43,11 @@ async def main():
         os.makedirs(session_dir)
         
     try:
-        # FIXED: Configured pyppeteer to download and map its bundle dependencies inside the container automatically
+        # FIXED: Forces pyppeteer to launch using the native Microsoft Edge pre-installed on the GitHub Windows Runner
         browser = await launch(
             headless=True,
             userDataDir=session_dir,
+            executablePath=r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             args=[
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
@@ -78,7 +79,7 @@ async def main():
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
         res = cursor.fetchone()
-        last_processed_id = res[0] if res and res[0] else 0
+        last_processed_id = res if res and res else 0
         print(f"Connected! Monitoring updates from ID: {last_processed_id}")
     except Exception as db_init_err:
         print(f"Database handshake failure: {db_init_err}")
@@ -122,12 +123,15 @@ async def main():
                 """
                 cursor.execute(count_query, (emp_code, today_str, t_id))
                 count_res = cursor.fetchone()
-                punch_count = count_res[0] if count_res else 1
+                punch_count = count_res if count_res else 1
                 
                 if punch_count % 2 != 0:
                     status_msg = MSG_TEMPLATES["in_punch"].format(name_clean, time_str)
                 else:
                     status_msg = MSG_TEMPLATES["out_punch"].format(name_clean, time_str)
+                
+                print(f"Applying strict real-time delivery rules. Buffering payload state...")
+                await asyncio.sleep(5)
                 
                 print(f"Dispatching payload data to target: {phone_clean}")
                 target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={urllib.parse.quote(status_msg)}"
@@ -144,7 +148,7 @@ async def main():
                 
                 last_processed_id = t_id
                 
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)
             
         except psycopg2.DatabaseError as db_err:
             print(MSG_TEMPLATES["db_err"].format(db_err))
