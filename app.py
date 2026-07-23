@@ -41,7 +41,6 @@ def load_device_statuses():
     
     device_metrics = []
     
-    # Primary: Try querying the standard ZKBioTime live tracking flag directly
     try:
         query = "SELECT alias, is_online, sn FROM iclock_terminal;"
         cursor.execute(query)
@@ -51,7 +50,6 @@ def load_device_statuses():
             alias, is_online, sn = row
             clean_alias = clean_txt(alias)
             
-            # If ZKBioTime marks it True/1, it's 100% live online right now
             if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')):
                 status_tag = "🟢 متصل"
             else:
@@ -60,16 +58,12 @@ def load_device_statuses():
             device_metrics.append((clean_alias, status_tag, sn))
             
     except Exception:
-        # Rollback the aborted transaction to unblock the database channel session safely
         conn.rollback()
-        
-        # Fallback: Check the relative distance window against the newest database check-in record
         try:
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
             
-            # Extract timestamps for the max calculation window safely
             timestamps = [r[1] for r in rows if r and r[1]]
             latest_system_ping = max(timestamps) if timestamps else None
             
@@ -80,11 +74,8 @@ def load_device_statuses():
                 if last_act and latest_system_ping:
                     last_act_naive = last_act.replace(tzinfo=None)
                     latest_ping_naive = latest_system_ping.replace(tzinfo=None)
-                    
-                    # Calculate the distance gap between devices and the master heartbeat
                     seconds_elapsed = (latest_ping_naive - last_act_naive).total_seconds()
                     
-                    # FIXED: Green if the device ping falls within a 10-minute window of the newest data
                     if seconds_elapsed < 600:
                         status_tag = "🟢 متصل"
                     else:
@@ -106,37 +97,45 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # 1. Query 1-Punch and Late Staff 
+    # Query 1-Punch and Late Staff
     query1 = f"""
-        SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
-        FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
-        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' AND e.emp_code NOT IN ({mgmt_codes_str})
+        SELECT e.emp_code, e.first_name, 
+               MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
+               MAX(t.punch_time AT TIME ZONE 'GMT-3') as last_punch,
+               COUNT(t.id) as punch_count
+        FROM personnel_employee e 
+        JOIN iclock_transaction t ON e.id = t.emp_id
+        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' 
+          AND e.emp_code NOT IN ({mgmt_codes_str})
         GROUP BY e.emp_code, e.first_name;
     """
     cursor.execute(query1)
-    one_punch_rows = cursor.fetchall()
+    attendance_rows = cursor.fetchall()
     
     no_out_staff, late_staff = [], []
-    for row in one_punch_rows:
-        emp_code, name, p_time = row
+    for row in attendance_rows:
+        emp_code, name, first_punch, last_punch, punch_count = row
         clean_name = clean_txt(name)
-        time_clean = p_time.strftime('%I:%M %p')
+        time_in_clean = first_punch.strftime('%I:%M %p')
         
-        if p_time.hour > 9 or (p_time.hour == 9 and p_time.minute > 15):
-            late_staff.append((emp_code, clean_name, time_clean))
-        else:
-            no_out_staff.append((emp_code, clean_name, time_clean))
+        # Late Entry: Punched in after 09:15 AM
+        if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
+            late_staff.append((emp_code, clean_name, time_in_clean))
+        
+        # Present Staff: Checked-in normally and currently inside (only 1 punch recorded so far)
+        if punch_count == 1 and not (first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)):
+            no_out_staff.append((emp_code, clean_name, time_in_clean))
             
-    # 2. Query 0-Punch Staff (Absentees)
+    # Query 0-Punch Staff (Absentees / Forgot to punch)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
-        AND e.emp_code NOT IN ({mgmt_codes_str}) ORDER BY e.emp_code ASC;
+          AND e.emp_code NOT IN ({mgmt_codes_str}) 
+        ORDER BY e.emp_code ASC;
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
     
-    # Cleanly unpacks columns into individual clean string pairs
     full_absent_staff = []
     for row in full_absent_rows:
         if row:
@@ -169,7 +168,6 @@ try:
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
     
-    # Render hardware states dynamically in a clean row format
     if devices:
         cols = st.columns(len(devices))
         for idx, (alias, status, sn) in enumerate(devices):
@@ -191,23 +189,23 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent Section
-    st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
+    # 2. CHANGED: Render Absent / Forgot to Punch Section
+    st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)}) – (Absent or Forgot to Punch)")
     if absent:
         for code, name in absent:
             st.write(f"🔹 **{name}** (كود: {code})")
     else:
-        st.success("🎉 لا يوجد غيابات كاملة اليوم!")
+        st.success("🎉 لا يوجد غيابات اليوم!")
 
     st.write("---")
 
-    # 3. Render Normal 1-Punch Section
-    st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
+    # 3. CHANGED: Render Present Staff Section
+    st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)}) – (Present Staff)")
     if no_out:
         for code, name, t_time in no_out:
             st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
     else:
-        st.info("لا يوجد موظفين منتظمين بانتظار الخروج.")
+        st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")
 
 except Exception as err:
     st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
