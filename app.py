@@ -235,12 +235,11 @@ try:
                         app_url = f"whatsapp://send?phone={phone}&text={encoded_msg}"
                         st.link_button("💬 تذكير الخروج", url=app_url, use_container_width=True)
                     else:
-                        st.caption("🚫 لا يوجد رقم")
-                else:
-                else:
-                    st.caption("🔒 يفتح 06:45 مساءً")
+                      else:
+                    st.caption("\U0001F512 06:45 PM")
     else:
-        st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")
+        st.info("No present staff waiting for logout.")
 
 except Exception as err:
-    st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
+    st.error(f"Database error: {err}")
+
