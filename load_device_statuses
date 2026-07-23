@@ -1,0 +1,54 @@
+def load_device_statuses():
+    """Queries Neon to display the live native connection states calculated directly by ZKBioTime"""
+    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    cursor = conn.cursor()
+    
+    # Try querying the standard ZKBioTime live tracking columns directly
+    try:
+        query = "SELECT alias, is_online, sn FROM iclock_terminal;"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        device_metrics = []
+        for row in rows:
+            alias, is_online, sn = row
+            clean_alias = clean_txt(alias)
+            
+            # If ZKBioTime marks it True/1, it's 100% live online right now
+            if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')):
+                status_tag = "🟢 متصل"
+            else:
+                status_tag = "🔴 غير متصل"
+                
+            device_metrics.append((clean_alias, status_tag, sn))
+            
+    except Exception:
+        # FALLBACK: If your specific BioTime version uses a different column name layout
+        query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        device_metrics = []
+        # Find the absolute latest timestamp currently existing inside your table
+        # We look at all positions to ensure we grab a valid tuple timestamp record cleanly
+        valid_times = [r[1] for r in rows if r and r[1]]
+        latest_system_ping = max(valid_times) if valid_times else None
+        
+        for row in rows:
+            alias, last_act, sn = row
+            clean_alias = clean_txt(alias)
+            
+            if last_act and latest_system_ping:
+                # If this device's timestamp matches the newest server check-in, it's live
+                if last_act == latest_system_ping:
+                    status_tag = "🟢 متصل"
+                else:
+                    status_tag = "🔴 غير متصل"
+            else:
+                status_tag = "🔴 غير متصل"
+                
+            device_metrics.append((clean_alias, status_tag, sn))
+        
+    cursor.close()
+    conn.close()
+    return device_metrics
