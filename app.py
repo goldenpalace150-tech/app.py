@@ -157,27 +157,28 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-st.title("✨ شركة القصر الذهبي ✨")
-st.header("لوحة تحكم إدارة الحضور والغياب")
-st.write(f"📅 التاريخ: **{today_syria_str}**  │  ⏰ الوقت الحالي في سوريا: **{time_syria_str}**")
+# Main Banner Layout
+st.title(TEXT_CONFIG["title_main"])
+st.header(TEXT_CONFIG["title_sub"])
+st.write(TEXT_CONFIG["lbl_date"].format(today_syria_str, time_syria_str))
 
-if st.button("🔄 تحديث البيانات الحية الآن"):
+if st.button(TEXT_CONFIG["btn_refresh"]):
     st.cache_data.clear()
 
 try:
-    # --- 🔔 REAL-TIME LIVE PUNCH NOTIFICATIONS LOG ---
+    # --- Live Ticker Logs ---
     st.write("---")
-    st.markdown("### 🔔 سجل البصمات الفوري (بث حي مباشر):")
+    st.markdown(TEXT_CONFIG["header_live_log"])
     live_logs = load_live_punch_notifications(today_syria_str)
     if live_logs:
         for code, name, p_time in live_logs:
-            st.info(f"⚡ البصمة الأخيرة: قام **{name}** (كود: {code}) بالتبصيم الآن عند الساعة **{p_time}**")
+            st.info(TEXT_CONFIG["live_log_row"].format(name, code, p_time))
     else:
-        st.caption("⏳ بانتظار تسجيل أولى بصمات الموظفين اليوم...")
+        st.caption(TEXT_CONFIG["caption_no_logs"])
 
-    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
+    # --- Biometric Devices Layout ---
     st.write("---")
-    st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
+    st.markdown(TEXT_CONFIG["header_devices"])
     devices = load_device_statuses()
     if devices:
         cols = st.columns(len(devices))
@@ -185,61 +186,63 @@ try:
             with cols[idx]:
                 st.metric(label=f"جهاز: {alias}", value=status, delta=f"SN: {sn[:6]}...")
     else:
-        st.warning("⚠️ لا توجد أجهزة مضافة أو تعذر تحميل البيانات.")
+        st.warning(TEXT_CONFIG["warn_no_devices"])
 
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Render Late Staff Section
-    st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
+    # 1. Late Staff Loop
+    st.subheader(TEXT_CONFIG["header_late"].format(len(late)))
     if late:
         for code, name, phone, t_time in late:
-            st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
+            st.write(TEXT_CONFIG["late_row"].format(name, code, t_time))
     else:
-        st.success("🎉 لا يوجد متأخرين اليوم!")
+        st.success(TEXT_CONFIG["success_no_late"])
         
     st.write("---")
         
-    # 2. Render Absent / Forgot to punch section
-    st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
+    # 2. Absent / Forgot to Punch Loop
+    st.subheader(TEXT_CONFIG["header_absent"].format(len(absent)))
     if absent:
         for code, name, phone in absent:
             item_col, action_col = st.columns([4, 1])
             with item_col:
-                st.write(f"🔹 **{name}** (كود: {code})")
+                st.write(TEXT_CONFIG["absent_row"].format(name, code))
             with action_col:
                 if phone and phone != '963' and phone != '':
-                    sms_text = f"مرحباً {name}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً."
+                    sms_text = TEXT_CONFIG["sms_morning"].format(name)
                     encoded_msg = urllib.parse.quote(sms_text)
                     app_url = f"whatsapp://send?phone={phone}&text={encoded_msg}"
-                    st.link_button("💬 تذكير الدخول", url=app_url, use_container_width=True)
+                    st.link_button(TEXT_CONFIG["btn_sms_morning"], url=app_url, use_container_width=True)
                 else:
-                    st.caption("🚫 لا يوجد رقم")
+                    st.caption(TEXT_CONFIG["caption_no_phone"])
     else:
-        st.success("🎉 لا يوجد غيابات اليوم!")
+        st.success(TEXT_CONFIG["success_no_absent"])
 
     st.write("---")
 
-    # 3. Render Present Staff Section
-    st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
+    # 3. Present Staff / Missing Checkout Loop
+    st.subheader(TEXT_CONFIG["header_present"].format(len(no_out)))
     if no_out:
         for code, name, phone, t_time in no_out:
             item_col, action_col = st.columns([4, 1])
             with item_col:
-                st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
+                st.write(TEXT_CONFIG["present_row"].format(name, code, t_time))
             with action_col:
                 if now_syria.hour > 18 or (now_syria.hour == 18 and now_syria.minute >= 45):
                     if phone and phone != '963' and phone != '':
-                        sms_text = f"مرحباً {name}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل."
+                        sms_text = TEXT_CONFIG["sms_evening"].format(name)
                         encoded_msg = urllib.parse.quote(sms_text)
                         app_url = f"whatsapp://send?phone={phone}&text={encoded_msg}"
-                        st.link_button("💬 تذكير الخروج", url=app_url, use_container_width=True)
+                        st.link_button(TEXT_CONFIG["btn_sms_evening"], url=app_url, use_container_width=True)
                     else:
-                      else:
-                    st.caption("\U0001F512 06:45 PM")
+                        st.caption(TEXT_CONFIG["caption_no_phone"])
+                else:
+                    st.caption(TEXT_CONFIG["caption_locked_evening"])
     else:
-        st.info("No present staff waiting for logout.")
+        st.info(TEXT_CONFIG["info_no_present"])
 
 except Exception as err:
-    st.error(f"Database error: {err}")
+    st.error(TEXT_CONFIG["err_db"].format(err))
+
 
