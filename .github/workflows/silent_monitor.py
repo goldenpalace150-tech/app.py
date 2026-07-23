@@ -14,7 +14,7 @@ DATABASE_URL = os.environ.get("NEON_DB_URL")
 EXCLUDED_CODES = ("40", "10", "20")
 
 if not DATABASE_URL:
-    print("Critical configuration error: NEON_DB_URL environment variable is missing.")
+    print("❌ Critical configuration error: NEON_DB_URL environment variable is missing.")
     sys.exit(1)
 
 def clean_phone(raw_phone):
@@ -28,43 +28,66 @@ def clean_txt(raw_text):
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 async def main():
-    print("Initializing virtual background browser instance inside GitHub Cloud...")
-    
-    # Store session data cleanly in the runner's AppData profile folder
+    print("🚀 Initializing virtual background browser instance inside GitHub Cloud...")
     session_dir = r"C:\Users\runneradmin\AppData\Local\Google\Chrome\User Data\WhatsAppCloudSession"
     
-    browser = await launch(
-        headless=True,
-        args=['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,800'],
-        userDataDir=session_dir
-    )
-    page = await browser.newPage()
-    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36")
+    # Ensure directory path structures are allocated cleanly inside the container environment
+    if not os.path.exists(session_dir):
+        os.makedirs(session_dir)
+        
+    try:
+        # FIXED: Added critical args required to bypass administrative execution blocking on GitHub Virtual Windows Servers
+        browser = await launch(
+            headless=True,
+            userDataDir=session_dir,
+            args=[
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--window-size=1280,800'
+            ]
+        )
+        page = await browser.newPage()
+        await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    except Exception as browser_err:
+        print(f"❌ Failed to spin up virtual Chromium engine process: {browser_err}")
+        # Create an emergency placeholder file so the GitHub Artifact step doesn't break the build pipeline run
+        with open("whatsapp_cloud_login.png", "w") as f:
+            f.write("Browser launch crashed.")
+        sys.exit(1)
+        
+    print("🌐 Connecting to WhatsApp Web core framework...")
+    try:
+        await page.goto("https://whatsapp.com", {'waitUntil': 'networkidle2', 'timeout': 60000})
+        print("⏳ Settling connection states...")
+        await asyncio.sleep(20)
+    except Exception as nav_err:
+        print(f"⚠️ Initial network link synchronization timed out: {nav_err}")
     
-    print("Connecting to WhatsApp Web core framework...")
-    await page.goto("https://whatsapp.com")
-    
-    # Give the cloud browser plenty of time to boot and check session cookies
-    await asyncio.sleep(25)
-    
-    # Save a verification image file to capture either your active chat panel or the QR code
+    # Save the auth state token layout capture checkpoint directly to project root path layout safely
     await page.screenshot({'path': 'whatsapp_cloud_login.png'})
-    print("Auth snapshot saved as 'whatsapp_cloud_login.png'. Uploading it to workspace artifacts...")
+    print("📸 Auth snapshot saved as 'whatsapp_cloud_login.png' inside working cloud directory root workspace.")
     
     # Connect to database and look up latest transaction ID
-    conn = psycopg2.connect(DATABASE_URL)
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
-    res = cursor.fetchone()
-    last_processed_id = res[0] if res and res[0] else 0
-    print(f"Real-time background monitor active. Tracking updates from ID: {last_processed_id}")
-    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
+        res = cursor.fetchone()
+        last_processed_id = res[0] if res and res[0] else 0
+        print(f"📡 Real-time cloud background monitor active. Tracking updates from ID: {last_processed_id}")
+    except Exception as db_init_err:
+        print(f"❌ Cloud DB handshake failure: {db_init_err}")
+        await browser.close()
+        sys.exit(1)
+        
     start_time = time.time()
     
     while True:
-        # Exit smoothly at 4 hours and 40 minutes (280 minutes) to give GitHub time to encrypt and cache cookies
+        # Exit smoothly at 4 hours and 40 minutes (280 minutes) to let cache configurations save state safely
         if (time.time() - start_time) > (280 * 60):
-            print("Cyclic duration threshold reached. Exporting state cache and restarting...")
+            print("⏳ Reached runtime block cycle threshold constraint limits. Cycling process logs safely...")
             break
             
         try:
@@ -104,13 +127,13 @@ async def main():
                 else:
                     status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {time_str}. رافقتك السلامة! 🏡"
                 
-                print(f"Sending headless cloud message payload to: {phone_clean}")
+                print(f"✉ Dispatching cloud headless payload directly to phone route: {phone_clean}")
                 target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={status_msg}"
                 
-                await page.goto(target_url)
+                await page.goto(target_url, {'waitUntil': 'networkidle2'})
                 await asyncio.sleep(8)  
                 
-                # Clicks the send button using virtual Javascript actions inside RAM
+                # Triggers the hidden click send key event cleanly via background JS contexts inside RAM
                 await page.evaluate("""() => {
                     const sendBtn = document.querySelector('span[data-icon="send"]') || document.querySelector('button[aria-label="Send"]');
                     if(sendBtn) sendBtn.click();
@@ -123,13 +146,16 @@ async def main():
             await asyncio.sleep(5)
             
         except psycopg2.DatabaseError as db_err:
+            print(f"⚠️ DB transaction pipeline stalled, rolling back channel tree branches: {db_err}")
             conn.rollback()
             await asyncio.sleep(10)
-        except Exception as e:
+        except Exception as loop_err:
+            print(f"⏳ Background engine padding idle sync check: {loop_err}")
             await asyncio.sleep(10)
             
     cursor.close()
     conn.close()
+    await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
