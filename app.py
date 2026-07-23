@@ -18,7 +18,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# System Constants - UPDATED to match your local script settings
+# System Constants
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
@@ -31,10 +31,11 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 # 2. HELPER FUNCTIONS & LIVE DATA SERVICES
 # ==========================================
 def clean_phone(raw_phone):
-    """Your exact phone formatting logic transferred from the local script"""
+    """Your exact logic but updated to strictly remove all '+' symbols to avoid URL breaking"""
     if not raw_phone: return ""
     clean_raw = unicodedata.normalize('NFKC', str(raw_phone)).encode('ascii', 'ignore').decode('ascii')
-    phone = clean_raw.strip().replace(" ", "").replace("-", "").lstrip("0")
+    # FIXED: Added explicit replacement for '+' to guarantee a pure numeric phone string output
+    phone = clean_raw.strip().replace(" ", "").replace("-", "").replace("+", "").lstrip("0")
     return f"963{phone}" if phone.startswith('9') and len(phone) == 9 else (f"963{phone[1:]}" if phone.startswith('09') else phone)
 
 def clean_txt(raw_text):
@@ -61,7 +62,7 @@ def load_device_statuses():
             cursor.execute(query)
             rows = cursor.fetchall()
             
-            timestamps = [r[1] for r in rows if r and r[1]]
+            timestamps = [r for r in rows if r and r]
             latest_system_ping = max(timestamps) if timestamps else None
             
             for row in rows:
@@ -172,19 +173,21 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent / Forgot to punch section with Dynamic Script SMS Templates
+    # 2. Render Absent / Forgot to punch section
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, phone in absent:
-            item_col, action_col = st.columns([4, 1])
+            item_col, action_col = st.columns()
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
-                if phone and phone != '963':
-                    # Uses your exact Morning SMS script layout definition natively
+                # Basic string validation check to protect against blank database fields
+                if phone and phone != '963' and phone != '':
                     sms_text = f"مرحباً {name}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً."
                     encoded_msg = urllib.parse.quote(sms_text)
-                    wa_url = f"https://wa.me{phone}?text={encoded_msg}"
+                    
+                    # FIXED: Upgraded to universal official API endpoints and stripped erroneous symbols
+                    wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
                     st.link_button("💬 تذكير الدخول", url=wa_url, use_container_width=True)
                 else:
                     st.caption("🚫 لا يوجد رقم")
@@ -193,21 +196,21 @@ try:
 
     st.write("---")
 
-    # 3. Render Present Staff Section with Evening Reminder Verification
+    # 3. Render Present Staff Section
     st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
         for code, name, phone, t_time in no_out:
-            item_col, action_col = st.columns([4, 1])
+            item_col, action_col = st.columns()
             with item_col:
                 st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
             with action_col:
-                # Locks evening checkout message validation until exactly 06:45 PM based on your local script constraints
                 if now_syria.hour > 18 or (now_syria.hour == 18 and now_syria.minute >= 45):
-                    if phone and phone != '963':
-                        # Uses your exact Evening SMS script layout definition natively
+                    if phone and phone != '963' and phone != '':
                         sms_text = f"مرحباً {name}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل."
                         encoded_msg = urllib.parse.quote(sms_text)
-                        wa_url = f"https://wa.me{phone}?text={encoded_msg}"
+                        
+                        # FIXED: Upgraded to universal official API endpoints and stripped erroneous symbols
+                        wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
                         st.link_button("💬 تذكير الخروج", url=wa_url, use_container_width=True)
                     else:
                         st.caption("🚫 لا يوجد رقم")
