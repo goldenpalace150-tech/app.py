@@ -5,58 +5,8 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 
-# =======================================================
-# 1. THE DEFINITIVE DIRECT EMBEDDED HARDWARE GATEWAY
-# =======================================================
-# This block intercepts lowercase/uppercase raw network pings arriving 
-# directly at er9uhn6cadbmh6u6dpxmf7.streamlit.app without any third-party hosts.
-try:
-    ctx = st.runtime.get_instance()._get_current_session_context()
-    if ctx and ctx.request:
-        device_sn = None
-        
-        # Look for the hardware Serial Number in standard query parameters
-        params = st.query_params
-        if params:
-            # Check every variation of uppercase and lowercase 'sn' fields
-            device_sn = params.get("SN") or params.get("sn") or params.get("Sn") or params.get("sN")
-        
-        # CRITICAL FALLBACK: If Streamlit filters the params, parse the raw URL query string directly
-        if not device_sn and ctx.request.query_string:
-            raw_qs = ctx.request.query_string.decode('utf-8').lower()
-            if "sn=" in raw_qs:
-                # Extract the serial text safely out of strings like '?sn=wky010...'
-                parts = raw_qs.split("sn=")
-                if len(parts) > 1:
-                    device_sn = parts[1].split("&")[0].strip().upper()
-
-        # If we successfully captured the device signature, write it directly to the database
-        if device_sn:
-            DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
-            SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
-            now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
-            
-            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE iclock_terminal 
-                SET last_activity = %s 
-                WHERE sn = %s;
-            """, (now_time, device_sn))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            # MANDATORY FIRMWARE ACKNOWLEDGMENT
-            # This raw string prevents the "X" icon by telling the device firmware the data is safe
-            st.text("OK")
-            st.stop() # Freeze the app here so it doesn't waste bandwidth rendering the web UI
-except Exception as gateway_err:
-    pass # Maintain continuous dashboard stability for normal human visitors
-
-
 # ==========================================
-# 2. DASHBOARD WINDOW CONFIGURATION & STYLING
+# 1. SYSTEM CONFIGURATION & RTL STYLING
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
@@ -67,6 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# System Constants
 EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
@@ -74,14 +25,14 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
 # ==========================================
-# 3. HELPER DATA SERVICES & LIVE CLOCK MATH
+# 2. HELPER FUNCTIONS & DATABASE INGESTION
 # ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to verify exact connection states using a literal live clock execution"""
+    """Queries Neon to check exactly which machines are online based on a true live 10-minute window"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
@@ -90,7 +41,7 @@ def load_device_statuses():
     rows = cursor.fetchall()
     
     device_metrics = []
-    # Fetch the exact true current moment in Syria right now to avoid false greens
+    # Check explicitly against the absolute current time in Syria right now
     now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
     
     for row in rows:
@@ -103,7 +54,7 @@ def load_device_statuses():
         else:
             seconds_elapsed = 999999
         
-        # Hardware terminal marks true green only if it updated the DB within the past 10 minutes
+        # Device shows green ONLY if your local BioTime server updated Neon within the last 10 minutes
         if last_act and seconds_elapsed < 600:
             status_tag = "🟢 متصل"
         else:
@@ -154,7 +105,7 @@ def load_attendance_data(today_str):
 
 
 # ==========================================
-# 4. DASHBOARD INTERFACE LAYOUT RENDERER
+# 3. DASHBOARD INTERFACE LAYOUT RENDERER
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
