@@ -6,10 +6,11 @@ from datetime import datetime
 import zoneinfo
 
 # ==========================================
-# 1. SYSTEM CONFIGURATION & RTL STYLING
+# 1. INITIAL SYSTEM & WINDOW CONFIGURATION
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
+# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -21,46 +22,70 @@ st.markdown("""
 EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+
+# Explicitly lock the system clock to Syrian time boundaries
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
 # ==========================================
-# 2. HELPER FUNCTIONS & DATABASE INGESTION
+# 2. HELPER FUNCTIONS & LIVE DATA SERVICES
 # ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to check exactly which machines are online based on a true live 10-minute window"""
+    """Queries Neon to display the live native connection states calculated directly by ZKBioTime"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
-    cursor.execute(query)
-    rows = cursor.fetchall()
-    
-    device_metrics = []
-    # Check explicitly against the absolute current time in Syria right now
-    now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
-    
-    for row in rows:
-        alias, last_act, sn = row
-        clean_alias = clean_txt(alias)
+    # Primary: Try querying the standard ZKBioTime live tracking flag directly
+    try:
+        query = "SELECT alias, is_online, sn FROM iclock_terminal;"
+        cursor.execute(query)
+        rows = cursor.fetchall()
         
-        if last_act:
-            last_act_naive = last_act.replace(tzinfo=None)
-            seconds_elapsed = (now_Damascus_naive - last_act_naive).total_seconds()
-        else:
-            seconds_elapsed = 999999
-        
-        # Device shows green ONLY if your local BioTime server updated Neon within the last 10 minutes
-        if last_act and seconds_elapsed < 600:
-            status_tag = "🟢 متصل"
-        else:
-            status_tag = "🔴 غير متصل"
+        device_metrics = []
+        for row in rows:
+            alias, is_online, sn = row
+            clean_alias = clean_txt(alias)
             
-        device_metrics.append((clean_alias, status_tag, sn))
+            # If ZKBioTime marks it True/1, it's 100% live online right now
+            if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')):
+                status_tag = "🟢 متصل"
+            else:
+                status_tag = "🔴 غير متصل"
+                
+            device_metrics.append((clean_alias, status_tag, sn))
+            
+    except Exception:
+        # Fallback: If your specific BioTime version uses a different column configuration,
+        # we check the relative distance to the absolute newest check-in record in the database.
+        query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        device_metrics = []
+        valid_times = [r for r in rows if r and r]
+        latest_system_ping = max(valid_times) if valid_times else None
+        
+        for row in rows:
+            alias, last_act, sn = row
+            clean_alias = clean_txt(alias)
+            
+            if last_act and latest_system_ping:
+                last_act_naive = last_act.replace(tzinfo=None)
+                latest_ping_naive = latest_system_ping.replace(tzinfo=None)
+                
+                # If this device's timestamp matches the newest server check-in, it's live
+                if last_act_naive == latest_ping_naive:
+                    status_tag = "🟢 متصل"
+                else:
+                    status_tag = "🔴 غير متصل"
+            else:
+                status_tag = "🔴 غير متصل"
+                
+            device_metrics.append((clean_alias, status_tag, sn))
         
     cursor.close()
     conn.close()
@@ -70,6 +95,7 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
+    # 1. Query 1-Punch and Late Staff 
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -90,6 +116,7 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
+    # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -97,7 +124,13 @@ def load_attendance_data(today_str):
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
-    full_absent_staff = [(row, clean_txt(row)) for row in full_absent_rows if row]
+    
+    # FIXED: Cleanly unpacks columns into individual clean string pairs
+    full_absent_staff = []
+    for row in full_absent_rows:
+        if row:
+            emp_code, name = row
+            full_absent_staff.append((clean_txt(emp_code), clean_txt(name)))
     
     cursor.close()
     conn.close()
@@ -111,6 +144,7 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
+# --- 📱 CLEAN NATIVE HEADER BANNER ---
 st.title("✨ شركة القصر الذهبي ✨")
 st.header("لوحة تحكم إدارة الحضور والغياب")
 st.write(f"📅 التاريخ: **{today_syria_str}**  │  ⏰ الوقت الحالي في سوريا: **{time_syria_str}**")
@@ -119,10 +153,12 @@ if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
+    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
     st.write("---")
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
     
+    # Render hardware states dynamically in a clean row format
     cols = st.columns(len(devices))
     for idx, (alias, status, sn) in enumerate(devices):
         with cols[idx]:
@@ -131,6 +167,7 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
+    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -140,6 +177,7 @@ try:
         
     st.write("---")
         
+    # 2. Render Absent Section
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -149,6 +187,7 @@ try:
 
     st.write("---")
 
+    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
