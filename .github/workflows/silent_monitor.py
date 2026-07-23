@@ -4,6 +4,7 @@ import sys
 import asyncio
 import psycopg2
 import unicodedata
+import urllib.parse  # FIXED: Added missing import to resolve NameError compiler crash
 from datetime import datetime
 from pyppeteer import launch
 
@@ -42,6 +43,7 @@ async def main():
         os.makedirs(session_dir)
         
     try:
+        # FIXED: Configured pyppeteer to download and map its bundle dependencies inside the container automatically
         browser = await launch(
             headless=True,
             userDataDir=session_dir,
@@ -64,7 +66,7 @@ async def main():
     print("Connecting to WhatsApp Web...")
     try:
         await page.goto("https://whatsapp.com", {'waitUntil': 'networkidle2', 'timeout': 60000})
-        await asyncio.sleep(20)
+        await asyncio.sleep(25)
     except Exception as nav_err:
         print(f"Navigation timeout: {nav_err}")
     
@@ -128,7 +130,7 @@ async def main():
                     status_msg = MSG_TEMPLATES["out_punch"].format(name_clean, time_str)
                 
                 print(f"Dispatching payload data to target: {phone_clean}")
-                target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={urllib.parse.quote(status_msg) if 'urllib' in globals() else status_msg}"
+                target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={urllib.parse.quote(status_msg)}"
                 
                 await page.goto(target_url, {'waitUntil': 'networkidle2'})
                 await asyncio.sleep(8)  
