@@ -11,7 +11,6 @@ import urllib.parse
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
-# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -19,8 +18,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# System Constants
-EXCLUDED_MANAGEMENT_CODES = ("40", "10")
+# System Constants - UPDATED to match your local script settings
+EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 
@@ -31,6 +30,13 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 # ==========================================
 # 2. HELPER FUNCTIONS & LIVE DATA SERVICES
 # ==========================================
+def clean_phone(raw_phone):
+    """Your exact phone formatting logic transferred from the local script"""
+    if not raw_phone: return ""
+    clean_raw = unicodedata.normalize('NFKC', str(raw_phone)).encode('ascii', 'ignore').decode('ascii')
+    phone = clean_raw.strip().replace(" ", "").replace("-", "").lstrip("0")
+    return f"963{phone}" if phone.startswith('9') and len(phone) == 9 else (f"963{phone[1:]}" if phone.startswith('09') else phone)
+
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
@@ -79,7 +85,7 @@ def load_attendance_data(today_str):
     
     # Query 1-Punch and Late Staff
     query1 = f"""
-        SELECT e.emp_code, e.first_name, 
+        SELECT e.emp_code, e.first_name, e.mobile,
                MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
                MAX(t.punch_time AT TIME ZONE 'GMT-3') as last_punch,
                COUNT(t.id) as punch_count
@@ -87,24 +93,25 @@ def load_attendance_data(today_str):
         JOIN iclock_transaction t ON e.id = t.emp_id
         WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' 
           AND e.emp_code NOT IN ({mgmt_codes_str})
-        GROUP BY e.emp_code, e.first_name;
+        GROUP BY e.emp_code, e.first_name, e.mobile;
     """
     cursor.execute(query1)
     attendance_rows = cursor.fetchall()
     
     no_out_staff, late_staff = [], []
     for row in attendance_rows:
-        emp_code, name, first_punch, last_punch, punch_count = row
+        emp_code, name, mobile, first_punch, last_punch, punch_count = row
         clean_name = clean_txt(name)
         time_in_clean = first_punch.strftime('%I:%M %p')
+        phone_clean = clean_phone(mobile)
         
         if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
-            late_staff.append((emp_code, clean_name, time_in_clean))
+            late_staff.append((emp_code, clean_name, phone_clean, time_in_clean))
         
         if punch_count == 1 and not (first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)):
-            no_out_staff.append((emp_code, clean_name, time_in_clean))
+            no_out_staff.append((emp_code, clean_name, phone_clean, time_in_clean))
             
-    # Query 0-Punch Staff (Absentees / Forgot to punch)
+    # Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, COALESCE(e.mobile, '') FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -118,7 +125,7 @@ def load_attendance_data(today_str):
     for row in full_absent_rows:
         if row:
             emp_code, name, mobile = row
-            full_absent_staff.append((clean_txt(emp_code), clean_txt(name), str(mobile).strip()))
+            full_absent_staff.append((clean_txt(emp_code), clean_txt(name), clean_phone(mobile)))
     
     cursor.close()
     conn.close()
@@ -132,7 +139,6 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-# --- 📱 CLEAN NATIVE HEADER BANNER ---
 st.title("✨ شركة القصر الذهبي ✨")
 st.header("لوحة تحكم إدارة الحضور والغياب")
 st.write(f"📅 التاريخ: **{today_syria_str}**  │  ⏰ الوقت الحالي في سوريا: **{time_syria_str}**")
@@ -141,7 +147,6 @@ if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
-    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
     st.write("---")
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
@@ -160,29 +165,27 @@ try:
     # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
-        for code, name, t_time in late:
+        for code, name, phone, t_time in late:
             st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
     else:
         st.success("🎉 لا يوجد متأخرين اليوم!")
         
     st.write("---")
         
-    # 2. Render Absent / Forgot to punch section
+    # 2. Render Absent / Forgot to punch section with Dynamic Script SMS Templates
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
-        for code, name, mobile in absent:
+        for code, name, phone in absent:
             item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
-                if mobile and mobile != 'None' and mobile != '':
-                    phone_formatted = mobile if mobile.startswith('+') or len(mobile) > 10 else f"963{mobile.lstrip('0')}"
-                    msg = f"مرحباً {name}، يرجى العلم أنه لم يتم تسجيل بصمة حضور لك اليوم المندرج بتاريخ {today_syria_str}. إذا كنت متواجداً بالعمل، يرجى مراجعة الإدارة أو تأكيد البصمة مسبقاً."
-                    encoded_msg = urllib.parse.quote(msg)
-                    wa_url = f"https://wa.me{phone_formatted}?text={encoded_msg}"
-                    
-                    # FIXED: Using secure, browser-native Streamlit button to prevent window blocking rules
-                    st.link_button("💬 تذكير", url=wa_url, use_container_width=True)
+                if phone and phone != '963':
+                    # Uses your exact Morning SMS script layout definition natively
+                    sms_text = f"مرحباً {name}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً."
+                    encoded_msg = urllib.parse.quote(sms_text)
+                    wa_url = f"https://wa.me{phone}?text={encoded_msg}"
+                    st.link_button("💬 تذكير الدخول", url=wa_url, use_container_width=True)
                 else:
                     st.caption("🚫 لا يوجد رقم")
     else:
@@ -190,11 +193,26 @@ try:
 
     st.write("---")
 
-    # 3. Render Present Staff Section
+    # 3. Render Present Staff Section with Evening Reminder Verification
     st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
-        for code, name, t_time in no_out:
-            st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
+        for code, name, phone, t_time in no_out:
+            item_col, action_col = st.columns([4, 1])
+            with item_col:
+                st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
+            with action_col:
+                # Locks evening checkout message validation until exactly 06:45 PM based on your local script constraints
+                if now_syria.hour > 18 or (now_syria.hour == 18 and now_syria.minute >= 45):
+                    if phone and phone != '963':
+                        # Uses your exact Evening SMS script layout definition natively
+                        sms_text = f"مرحباً {name}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل."
+                        encoded_msg = urllib.parse.quote(sms_text)
+                        wa_url = f"https://wa.me{phone}?text={encoded_msg}"
+                        st.link_button("💬 تذكير الخروج", url=wa_url, use_container_width=True)
+                    else:
+                        st.caption("🚫 لا يوجد رقم")
+                else:
+                    st.caption("🔒 يفتح 06:45 مساءً")
     else:
         st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")
 
