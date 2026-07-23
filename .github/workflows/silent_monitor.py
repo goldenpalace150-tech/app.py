@@ -1,23 +1,20 @@
 import os
 import time
 import sys
+import asyncio
 import psycopg2
-import requests
 import unicodedata
 from datetime import datetime
+from pyppeteer import launch
 
 # ==========================================
 # CLOUD BACKEND ENGINE CONFIGURATION
 # ==========================================
-# Reads securely from GitHub environment secrets instead of exposing it in raw text
 DATABASE_URL = os.environ.get("NEON_DB_URL")
 EXCLUDED_CODES = ("40", "10", "20")
 
-# If you use a free WhatsApp gateway provider, put your API webhook url target here
-GATEWAY_API_URL = "https://yourgatewayprovider.com" 
-
 if not DATABASE_URL:
-    print("❌ Critical configuration error: NEON_DB_URL environment variable is missing.")
+    print("Critical configuration error: NEON_DB_URL environment variable is missing.")
     sys.exit(1)
 
 def clean_phone(raw_phone):
@@ -30,36 +27,44 @@ def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
-def send_via_cloud_gateway(phone, message):
-    """
-    Sends the message text layout directly over internet networks.
-    This replaces clipboard-copying and mouse-clicking commands entirely!
-    """
-    print(f"📡 Forwarding message to phone: {phone}")
-    print(f"💬 Text: {message}")
+async def main():
+    print("Initializing virtual background browser instance inside GitHub Cloud...")
     
-    # Optional connection payload example:
-    # try:
-    #     requests.post(GATEWAY_API_URL, json={"to": phone, "body": message}, timeout=10)
-    # except Exception as e:
-    #     print(f"⚠️ Gateway transmission hold: {e}")
-
-def main():
-    print("📡 Establishing secure network connection channel pipeline to Neon Server...")
+    # Store session data cleanly in the runner's AppData profile folder
+    session_dir = r"C:\Users\runneradmin\AppData\Local\Google\Chrome\User Data\WhatsAppCloudSession"
+    
+    browser = await launch(
+        headless=True,
+        args=['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,800'],
+        userDataDir=session_dir
+    )
+    page = await browser.newPage()
+    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    print("Connecting to WhatsApp Web core framework...")
+    await page.goto("https://whatsapp.com")
+    
+    # Give the cloud browser plenty of time to boot and check session cookies
+    await asyncio.sleep(25)
+    
+    # Save a verification image file to capture either your active chat panel or the QR code
+    await page.screenshot({'path': 'whatsapp_cloud_login.png'})
+    print("Auth snapshot saved as 'whatsapp_cloud_login.png'. Uploading it to workspace artifacts...")
+    
+    # Connect to database and look up latest transaction ID
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
     res = cursor.fetchone()
     last_processed_id = res[0] if res and res[0] else 0
-    print(f"✅ Connection successful! Monitoring starting from system entry ID: {last_processed_id}")
+    print(f"Real-time background monitor active. Tracking updates from ID: {last_processed_id}")
     
     start_time = time.time()
     
     while True:
-        # Gracefully exit right before hitting the hard 6-hour execution limit (315 minutes = 5 hours 15 mins)
-        if (time.time() - start_time) > (315 * 60):
-            print("⏳ Reached cloud engine sequence threshold limits. Re-routing execution cycle cleanly...")
+        # Exit smoothly at 4 hours and 40 minutes (280 minutes) to give GitHub time to encrypt and cache cookies
+        if (time.time() - start_time) > (280 * 60):
+            print("Cyclic duration threshold reached. Exporting state cache and restarting...")
             break
             
         try:
@@ -92,23 +97,39 @@ def main():
                 """
                 cursor.execute(count_query, (emp_code, today_str, t_id))
                 count_res = cursor.fetchone()
-                punch_count = count_res[0] if count_res and count_res[0] else 1
+                punch_count = count_res[0] if count_res else 1
                 
                 if punch_count % 2 != 0:
                     status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الدخول* بنجاح عند الساعة {time_str}. أتمنى لك يوماً سعيداً! ✨"
                 else:
                     status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {time_str}. رافقتك السلامة! 🏡"
                 
-                send_via_cloud_gateway(phone_clean, status_msg)
+                print(f"Sending headless cloud message payload to: {phone_clean}")
+                target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={status_msg}"
+                
+                await page.goto(target_url)
+                await asyncio.sleep(8)  
+                
+                # Clicks the send button using virtual Javascript actions inside RAM
+                await page.evaluate("""() => {
+                    const sendBtn = document.querySelector('span[data-icon="send"]') || document.querySelector('button[aria-label="Send"]');
+                    if(sendBtn) sendBtn.click();
+                }""")
+                await asyncio.sleep(2)
+                print(f"✔ Done. Confirmation message routed for Employee Code: {emp_code}")
+                
                 last_processed_id = t_id
                 
-            time.sleep(5) # Rest 5 seconds between database scans
+            await asyncio.sleep(5)
             
         except psycopg2.DatabaseError as db_err:
             conn.rollback()
-            time.sleep(10)
+            await asyncio.sleep(10)
         except Exception as e:
-            time.sleep(10)
+            await asyncio.sleep(10)
+            
+    cursor.close()
+    conn.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
