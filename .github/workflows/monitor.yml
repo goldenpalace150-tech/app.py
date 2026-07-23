@@ -16,7 +16,7 @@ jobs:
     - name: Configure Cloud Python Runtime Environment
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # FIXED: Cleared the python_python typo
+        python-version: '3.11'
 
     - name: Install Critical Web & Database Libraries
       run: |
@@ -34,13 +34,14 @@ jobs:
 
     - name: Execute Live Real-time Scanner Engine
       timeout-minutes: 290 # Exits cleanly after 4 hours and 50 minutes to securely save your cache file
+      working-directory: ${{ github.workspace }} # FIXED: Forces runner to execute directly from your repository root directory
       env:
         NEON_DB_URL: ${{ secrets.NEON_DATABASE_URL }}
       run: |
         python silent_monitor.py
 
     - name: Upload WhatsApp Login Screenshot
-      if: always() # Forces it to upload the picture even if the script times out or stops
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: whatsapp-qr-snapshot
