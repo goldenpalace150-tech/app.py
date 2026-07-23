@@ -1,0 +1,33 @@
+name: 24/7 Live Attendance Monitor
+
+on:
+  schedule:
+    - cron: '0 */5 * * *' # Triggers automatically every 5 hours to beat the 6-hour execution limit
+  workflow_dispatch: # Allows you to manually click a play button to launch it immediately
+
+jobs:
+  run-monitor:
+    runs-on: windows-latest # Boots up a free Windows cloud runtime container instance natively
+
+    steps:
+    - name: Download Repository Source Code
+      uses: actions/checkout@v4
+
+    - name: Configure Cloud Python Runtime Environment
+      uses: actions/setup-python@v5
+      with:
+        python_python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Critical Database Adapters
+      run: |
+        python -m pip install --upgrade pip
+        pip install psycopg2-binary requests
+
+    - name: Execute Live Real-time Scanner Engine
+      timeout-minutes: 320 # Auto-closes cleanly at 5 hours and 20 minutes right before the hard cloud cutoff
+      env:
+        # We read variables securely from your private repository secrets storage vault
+        NEON_DB_URL: ${{ secrets.NEON_DATABASE_URL }}
+      run: |
+        python silent_monitor.py
