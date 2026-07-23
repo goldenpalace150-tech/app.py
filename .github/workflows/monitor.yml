@@ -33,12 +33,12 @@ jobs:
           wa-session-
 
     - name: Execute Live Real-time Scanner Engine
-      timeout-minutes: 290 # Exits cleanly after 4 hours and 50 minutes to securely save your cache file
-      working-directory: ${{ github.workspace }} # FIXED: Forces runner to execute directly from your repository root directory
+      timeout-minutes: 290
+      working-directory: ${{ github.workspace }}
       env:
         NEON_DB_URL: ${{ secrets.NEON_DATABASE_URL }}
       run: |
-        python silent_monitor.py
+        python .github/workflows/silent_monitor.py
 
     - name: Upload WhatsApp Login Screenshot
       if: always()
