@@ -5,6 +5,45 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 import urllib.parse
+# ==========================================
+# 0. CONFIGURATION DICTIONARY
+# ==========================================
+TEXT_CONFIG = {
+    "page_title": "حضور القصر الذهبي",
+    "style_align": """
+        <style>
+        .reportview-container .main .block-container { direction: RTL; text-align: right; }
+        h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
+        </style>
+    """,
+    "title_main": "✨ شركة القصر الذهبي ✨",
+    "title_sub": "لوحة تحكم إدارة الحضور والغياب",
+    "lbl_date": "📅 التاريخ: **{}**  │  ⏰ الوقت الحالي في سوريا: **{}**",
+    "btn_refresh": "🔄 تحديث البيانات الحية الآن",
+    "status_online": "🟢 متصل",
+    "status_offline": "🔴 غير متصل",
+    "header_devices": "### 📡 حالة اتصال أجهزة البصمة الحالية:",
+    "warn_no_devices": "⚠️ لا توجد أجهزة مضافة أو تعذر تحميل البيانات.",
+    "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
+    "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
+    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
+    "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
+    "absent_row": "🔹 **{}** (كود: {})",
+    "sms_morning": "مرحباً {}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً.",
+    "btn_sms_morning": "💬 تذكير الدخول",
+    "caption_no_phone": "🚫 لا يوجد رقم",
+    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
+    "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
+    "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
+    "sms_evening": "مرحباً {}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل.",
+    "btn_sms_evening": "💬 تذكير الخروج",
+    "caption_locked_evening": "🔒 يفتح 06:45 مساءً",
+    "info_no_present": "لا يوجد موظفين منتظمين متواجدين حالياً.",
+    "err_db": "خطأ في الاتصال بقاعدة البيانات السحابية: {}",
+    "header_live_log": "### 🔔 سجل البصمات الفوري (بث حي مباشر):",
+    "live_log_row": "⚡ البصمة الأخيرة: قام **{}** (كود: {}) بالتبصيم الآن عند الساعة **{}**",
+    "caption_no_logs": "⏳ بانتظار تسجيل أولى بصمات الموظفين اليوم..."
+}
 
 # ==========================================
 # 1. INITIAL SYSTEM & WINDOW CONFIGURATION
