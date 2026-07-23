@@ -4,6 +4,7 @@ import pandas as pd
 import unicodedata
 from datetime import datetime
 import zoneinfo
+import urllib.parse
 
 # ==========================================
 # 1. INITIAL SYSTEM & WINDOW CONFIGURATION
@@ -35,62 +36,39 @@ def clean_txt(raw_text):
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to display the live native connection states calculated directly by ZKBioTime"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
-    
     device_metrics = []
     
     try:
         query = "SELECT alias, is_online, sn FROM iclock_terminal;"
         cursor.execute(query)
         rows = cursor.fetchall()
-        
         for row in rows:
             alias, is_online, sn = row
-            clean_alias = clean_txt(alias)
-            
-            if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')):
-                status_tag = "🟢 متصل"
-            else:
-                status_tag = "🔴 غير متصل"
-                
-            device_metrics.append((clean_alias, status_tag, sn))
-            
+            status_tag = "🟢 متصل" if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')) else "🔴 غير متصل"
+            device_metrics.append((clean_txt(alias), status_tag, sn))
     except Exception:
         conn.rollback()
         try:
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
-            
-            timestamps = [r[1] for r in rows if r and r[1]]
+            timestamps = [r for r in rows if r and r]
             latest_system_ping = max(timestamps) if timestamps else None
-            
             for row in rows:
                 alias, last_act, sn = row
-                clean_alias = clean_txt(alias)
-                
                 if last_act and latest_system_ping:
-                    last_act_naive = last_act.replace(tzinfo=None)
-                    latest_ping_naive = latest_system_ping.replace(tzinfo=None)
-                    seconds_elapsed = (latest_ping_naive - last_act_naive).total_seconds()
-                    
-                    if seconds_elapsed < 600:
-                        status_tag = "🟢 متصل"
-                    else:
-                        status_tag = "🔴 غير متصل"
+                    seconds_elapsed = (latest_system_ping.replace(tzinfo=None) - last_act.replace(tzinfo=None)).total_seconds()
+                    status_tag = "🟢 متصل" if seconds_elapsed < 600 else "🔴 غير متصل"
                 else:
                     status_tag = "🔴 غير متصل"
-                    
-                device_metrics.append((clean_alias, status_tag, sn))
+                device_metrics.append((clean_txt(alias), status_tag, sn))
         except Exception:
             pass
-        
     finally:
         cursor.close()
         conn.close()
-        
     return device_metrics
 
 def load_attendance_data(today_str):
@@ -118,17 +96,15 @@ def load_attendance_data(today_str):
         clean_name = clean_txt(name)
         time_in_clean = first_punch.strftime('%I:%M %p')
         
-        # Late Entry: Punched in after 09:15 AM
         if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
             late_staff.append((emp_code, clean_name, time_in_clean))
         
-        # Present Staff: Checked-in normally and currently inside (only 1 punch recorded so far)
         if punch_count == 1 and not (first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)):
             no_out_staff.append((emp_code, clean_name, time_in_clean))
             
     # Query 0-Punch Staff (Absentees / Forgot to punch)
     query0 = f"""
-        SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
+        SELECT DISTINCT e.emp_code, e.first_name, COALESCE(e.mobile, '') FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
           AND e.emp_code NOT IN ({mgmt_codes_str}) 
         ORDER BY e.emp_code ASC;
@@ -139,8 +115,8 @@ def load_attendance_data(today_str):
     full_absent_staff = []
     for row in full_absent_rows:
         if row:
-            emp_code, name = row
-            full_absent_staff.append((clean_txt(emp_code), clean_txt(name)))
+            emp_code, name, mobile = row
+            full_absent_staff.append((clean_txt(emp_code), clean_txt(name), str(mobile).strip()))
     
     cursor.close()
     conn.close()
@@ -189,18 +165,29 @@ try:
         
     st.write("---")
         
-    # 2. CHANGED: Render Absent / Forgot to Punch Section
-    st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)}) – (Absent or Forgot to Punch)")
+    # 2. UPDATED: Removed English text from header
+    st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
-        for code, name in absent:
-            st.write(f"🔹 **{name}** (كود: {code})")
+        for code, name, mobile in absent:
+            item_col, action_col = st.columns([4, 1])
+            with item_col:
+                st.write(f"🔹 **{name}** (كود: {code})")
+            with action_col:
+                if mobile:
+                    phone_formatted = mobile if mobile.startswith('+') or len(mobile) > 10 else f"963{mobile.lstrip('0')}"
+                    msg = f"مرحباً {name}، يرجى العلم أنه لم يتم تسجيل بصمة حضور لك اليوم المندرج بتاريخ {today_syria_str}. إذا كنت متواجداً بالعمل، يرجى مراجعة الإدارة أو تأكيد البصمة مسبقاً."
+                    encoded_msg = urllib.parse.quote(msg)
+                    wa_url = f"https://wa.me{phone_formatted}?text={encoded_msg}"
+                    st.markdown(f'<a href="{wa_url}" target="_blank" style="text-decoration:none;"><button style="background-color:#25D366; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer;">💬 مراسلة تذكيرية</button></a>', unsafe_allow_html=True)
+                else:
+                    st.caption("🚫 لا يوجد رقم")
     else:
         st.success("🎉 لا يوجد غيابات اليوم!")
 
     st.write("---")
 
-    # 3. CHANGED: Render Present Staff Section
-    st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)}) – (Present Staff)")
+    # 3. UPDATED: Removed English text from header
+    st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
             st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
