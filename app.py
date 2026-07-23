@@ -54,8 +54,11 @@ def load_device_statuses():
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
-            timestamps = [r for r in rows if r and r]
+            
+            # FIXED: Properly extract the datetime index [1] from rows to prevent system execution crash
+            timestamps = [r[1] for r in rows if r and r[1]]
             latest_system_ping = max(timestamps) if timestamps else None
+            
             for row in rows:
                 alias, last_act, sn = row
                 if last_act and latest_system_ping:
@@ -165,11 +168,11 @@ try:
         
     st.write("---")
         
-    # 2. UPDATED: Removed English text from header
+    # 2. Render Absent / Forgot to punch section
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, mobile in absent:
-            item_col, action_col = st.columns([4, 1])
+            item_col, action_col = st.columns()
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
@@ -186,7 +189,7 @@ try:
 
     st.write("---")
 
-    # 3. UPDATED: Removed English text from header
+    # 3. Render Present Staff Section
     st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
