@@ -8,13 +8,20 @@ from datetime import datetime
 from pyppeteer import launch
 
 # ==========================================
-# CLOUD BACKEND ENGINE CONFIGURATION
+# 0. ALIGNMENT STRINGS CONFIGURATION
 # ==========================================
+MSG_TEMPLATES = {
+    "db_err": "Database error encountered, rolling back: {}",
+    "sys_err": "Sync placeholder pause: {}",
+    "in_punch": "مرحباً {}، تم تسجيل بصمة *الدخول* بنجاح عند الساعة {}. أتمنى لك يوماً سعيداً! ✨",
+    "out_punch": "مرحباً {}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {}. رافقتك السلامة! 🏡"
+}
+
 DATABASE_URL = os.environ.get("NEON_DB_URL")
 EXCLUDED_CODES = ("40", "10", "20")
 
 if not DATABASE_URL:
-    print("❌ Critical configuration error: NEON_DB_URL environment variable is missing.")
+    print("Critical configuration error: NEON_DB_URL is missing.")
     sys.exit(1)
 
 def clean_phone(raw_phone):
@@ -28,15 +35,13 @@ def clean_txt(raw_text):
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 async def main():
-    print("🚀 Initializing virtual background browser instance inside GitHub Cloud...")
+    print("Initializing virtual browser instance inside RAM...")
     session_dir = r"C:\Users\runneradmin\AppData\Local\Google\Chrome\User Data\WhatsAppCloudSession"
     
-    # Ensure directory path structures are allocated cleanly inside the container environment
     if not os.path.exists(session_dir):
         os.makedirs(session_dir)
         
     try:
-        # FIXED: Added critical args required to bypass administrative execution blocking on GitHub Virtual Windows Servers
         browser = await launch(
             headless=True,
             userDataDir=session_dir,
@@ -51,43 +56,38 @@ async def main():
         page = await browser.newPage()
         await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     except Exception as browser_err:
-        print(f"❌ Failed to spin up virtual Chromium engine process: {browser_err}")
-        # Create an emergency placeholder file so the GitHub Artifact step doesn't break the build pipeline run
+        print(f"Browser engine crash: {browser_err}")
         with open("whatsapp_cloud_login.png", "w") as f:
-            f.write("Browser launch crashed.")
+            f.write("Crash placeholder")
         sys.exit(1)
         
-    print("🌐 Connecting to WhatsApp Web core framework...")
+    print("Connecting to WhatsApp Web...")
     try:
         await page.goto("https://whatsapp.com", {'waitUntil': 'networkidle2', 'timeout': 60000})
-        print("⏳ Settling connection states...")
         await asyncio.sleep(20)
     except Exception as nav_err:
-        print(f"⚠️ Initial network link synchronization timed out: {nav_err}")
+        print(f"Navigation timeout: {nav_err}")
     
-    # Save the auth state token layout capture checkpoint directly to project root path layout safely
     await page.screenshot({'path': 'whatsapp_cloud_login.png'})
-    print("📸 Auth snapshot saved as 'whatsapp_cloud_login.png' inside working cloud directory root workspace.")
+    print("Snapshot created successfully.")
     
-    # Connect to database and look up latest transaction ID
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
         res = cursor.fetchone()
         last_processed_id = res[0] if res and res[0] else 0
-        print(f"📡 Real-time cloud background monitor active. Tracking updates from ID: {last_processed_id}")
+        print(f"Connected! Monitoring updates from ID: {last_processed_id}")
     except Exception as db_init_err:
-        print(f"❌ Cloud DB handshake failure: {db_init_err}")
+        print(f"Database handshake failure: {db_init_err}")
         await browser.close()
         sys.exit(1)
         
     start_time = time.time()
     
     while True:
-        # Exit smoothly at 4 hours and 40 minutes (280 minutes) to let cache configurations save state safely
         if (time.time() - start_time) > (280 * 60):
-            print("⏳ Reached runtime block cycle threshold constraint limits. Cycling process logs safely...")
+            print("Cycling loop execution cleanly...")
             break
             
         try:
@@ -123,34 +123,33 @@ async def main():
                 punch_count = count_res[0] if count_res else 1
                 
                 if punch_count % 2 != 0:
-                    status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الدخول* بنجاح عند الساعة {time_str}. أتمنى لك يوماً سعيداً! ✨"
+                    status_msg = MSG_TEMPLATES["in_punch"].format(name_clean, time_str)
                 else:
-                    status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {time_str}. رافقتك السلامة! 🏡"
+                    status_msg = MSG_TEMPLATES["out_punch"].format(name_clean, time_str)
                 
-                print(f"✉ Dispatching cloud headless payload directly to phone route: {phone_clean}")
-                target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={status_msg}"
+                print(f"Dispatching payload data to target: {phone_clean}")
+                target_url = f"https://whatsapp.com/send?phone={phone_clean}&text={urllib.parse.quote(status_msg) if 'urllib' in globals() else status_msg}"
                 
                 await page.goto(target_url, {'waitUntil': 'networkidle2'})
                 await asyncio.sleep(8)  
                 
-                # Triggers the hidden click send key event cleanly via background JS contexts inside RAM
                 await page.evaluate("""() => {
                     const sendBtn = document.querySelector('span[data-icon="send"]') || document.querySelector('button[aria-label="Send"]');
                     if(sendBtn) sendBtn.click();
                 }""")
                 await asyncio.sleep(2)
-                print(f"✔ Done. Confirmation message routed for Employee Code: {emp_code}")
+                print(f"Message complete for ID: {emp_code}")
                 
                 last_processed_id = t_id
                 
             await asyncio.sleep(5)
             
         except psycopg2.DatabaseError as db_err:
-            print(f"⚠️ DB transaction pipeline stalled, rolling back channel tree branches: {db_err}")
+            print(MSG_TEMPLATES["db_err"].format(db_err))
             conn.rollback()
             await asyncio.sleep(10)
         except Exception as loop_err:
-            print(f"⏳ Background engine padding idle sync check: {loop_err}")
+            print(MSG_TEMPLATES["sys_err"].format(loop_err))
             await asyncio.sleep(10)
             
     cursor.close()
