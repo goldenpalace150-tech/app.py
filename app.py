@@ -60,18 +60,18 @@ def load_device_statuses():
             device_metrics.append((clean_alias, status_tag, sn))
             
     except Exception:
-        # CRITICAL FIX: Explicitly rollback the aborted transaction to unblock the database channel
+        # Rollback the aborted transaction to unblock the database channel session safely
         conn.rollback()
         
-        # Fallback: Check the relative distance to the absolute newest check-in record in the database
+        # Fallback: Check the relative distance window against the newest database check-in record
         try:
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
             
-            # Safely extract valid datetime elements for processing
-            valid_times = [r[1] for r in rows if r and r[1]]
-            latest_system_ping = max(valid_times) if valid_times else None
+            # Extract timestamps for the max calculation window safely
+            timestamps = [r[1] for r in rows if r and r[1]]
+            latest_system_ping = max(timestamps) if timestamps else None
             
             for row in rows:
                 alias, last_act, sn = row
@@ -81,8 +81,11 @@ def load_device_statuses():
                     last_act_naive = last_act.replace(tzinfo=None)
                     latest_ping_naive = latest_system_ping.replace(tzinfo=None)
                     
-                    # If this device's timestamp matches the newest server check-in, it's live
-                    if last_act_naive == latest_ping_naive:
+                    # Calculate the distance gap between devices and the master heartbeat
+                    seconds_elapsed = (latest_ping_naive - last_act_naive).total_seconds()
+                    
+                    # FIXED: Green if the device ping falls within a 10-minute window of the newest data
+                    if seconds_elapsed < 600:
                         status_tag = "🟢 متصل"
                     else:
                         status_tag = "🔴 غير متصل"
@@ -90,8 +93,7 @@ def load_device_statuses():
                     status_tag = "🔴 غير متصل"
                     
                 device_metrics.append((clean_alias, status_tag, sn))
-        except Exception as fallback_err:
-            # If everything completely fails, return an empty list to avoid breaking layout rendering
+        except Exception:
             pass
         
     finally:
