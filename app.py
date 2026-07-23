@@ -11,7 +11,6 @@ import urllib.parse
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
-# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -45,7 +44,6 @@ def load_device_statuses():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     device_metrics = []
-    
     try:
         query = "SELECT alias, is_online, sn FROM iclock_terminal;"
         cursor.execute(query)
@@ -60,10 +58,8 @@ def load_device_statuses():
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
-            
             timestamps = [r[1] for r in rows if r and r[1]]
             latest_system_ping = max(timestamps) if timestamps else None
-            
             for row in rows:
                 alias, last_act, sn = row
                 if last_act and latest_system_ping:
@@ -79,11 +75,34 @@ def load_device_statuses():
         conn.close()
     return device_metrics
 
+def load_live_punch_notifications(today_str):
+    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    cursor = conn.cursor()
+    recent_punches = []
+    try:
+        query = f"""
+            SELECT e.emp_code, e.first_name, (t.punch_time AT TIME ZONE 'GMT-3') as p_time
+            FROM iclock_transaction t
+            JOIN personnel_employee e ON t.emp_id = e.id
+            WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}'
+            ORDER BY t.punch_time DESC LIMIT 5;
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        for row in rows:
+            emp_code, name, p_time = row
+            recent_punches.append((clean_txt(emp_code), clean_txt(name), p_time.strftime('%I:%M:%S %p')))
+    except Exception:
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+    return recent_punches
+
 def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # Query 1-Punch and Late Staff
     query1 = f"""
         SELECT e.emp_code, e.first_name, e.mobile,
                MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
@@ -111,7 +130,6 @@ def load_attendance_data(today_str):
         if punch_count == 1 and not (first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)):
             no_out_staff.append((emp_code, clean_name, phone_clean, time_in_clean))
             
-    # Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, COALESCE(e.mobile, '') FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -147,11 +165,20 @@ if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
-    # --- LIVE HARDWARE COUNTER DASHBOARD ---
+    # --- 🔔 REAL-TIME LIVE PUNCH NOTIFICATIONS LOG ---
+    st.write("---")
+    st.markdown("### 🔔 سجل البصمات الفوري (بث حي مباشر):")
+    live_logs = load_live_punch_notifications(today_syria_str)
+    if live_logs:
+        for code, name, p_time in live_logs:
+            st.info(f"⚡ البصمة الأخيرة: قام **{name}** (كود: {code}) بالتبصيم الآن عند الساعة **{p_time}**")
+    else:
+        st.caption("⏳ بانتظار تسجيل أولى بصمات الموظفين اليوم...")
+
+    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
     st.write("---")
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
-    
     if devices:
         cols = st.columns(len(devices))
         for idx, (alias, status, sn) in enumerate(devices):
@@ -177,7 +204,6 @@ try:
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, phone in absent:
-            # FIXED: Explicitly added relative layout width ratio configurations [4, 1]
             item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
@@ -185,8 +211,8 @@ try:
                 if phone and phone != '963' and phone != '':
                     sms_text = f"مرحباً {name}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً."
                     encoded_msg = urllib.parse.quote(sms_text)
-                    wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
-                    st.link_button("💬 تذكير الدخول", url=wa_url, use_container_width=True)
+                    app_url = f"whatsapp://send?phone={phone}&text={encoded_msg}"
+                    st.link_button("💬 تذكير الدخول", url=app_url, use_container_width=True)
                 else:
                     st.caption("🚫 لا يوجد رقم")
     else:
@@ -198,7 +224,6 @@ try:
     st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
         for code, name, phone, t_time in no_out:
-            # FIXED: Explicitly added relative layout width ratio configurations [4, 1]
             item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
@@ -207,14 +232,9 @@ try:
                     if phone and phone != '963' and phone != '':
                         sms_text = f"مرحباً {name}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل."
                         encoded_msg = urllib.parse.quote(sms_text)
-                        wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
-                        st.link_button("💬 تذكير الخروج", url=wa_url, use_container_width=True)
+                        app_url = f"whatsapp://send?phone={phone}&text={encoded_msg}"
+                        st.link_button("💬 تذكير الخروج", url=app_url, use_container_width=True)
                     else:
                         st.caption("🚫 لا يوجد رقم")
                 else:
-                    st.caption("🔒 يفتح 06:45 مساءً")
-    else:
-        st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")
-
-except Exception as err:
-    st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
+st.caption("🔒 يفتح 06:45 مساءً")else:st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")except Exception as err:st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
