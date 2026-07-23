@@ -237,4 +237,7 @@ try:
                     else:
                         st.caption("🚫 لا يوجد رقم")
                 else:
-st.caption("🔒 يفتح 06:45 مساءً")else:st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")except Exception as err:st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
+st.caption("🔒 يفتح 06:45 مساءً")
+else:
+st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")except Exception as err:
+st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
