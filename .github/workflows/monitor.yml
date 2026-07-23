@@ -16,7 +16,7 @@ jobs:
     - name: Configure Cloud Python Runtime Environment
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.11' # FIXED: Cleared the python_python typo
 
     - name: Install Critical Web & Database Libraries
       run: |
@@ -38,6 +38,13 @@ jobs:
         NEON_DB_URL: ${{ secrets.NEON_DATABASE_URL }}
       run: |
         python silent_monitor.py
+
+    - name: Upload WhatsApp Login Screenshot
+      if: always() # Forces it to upload the picture even if the script times out or stops
+      uses: actions/upload-artifact@v4
+      with:
+        name: whatsapp-qr-snapshot
+        path: whatsapp_cloud_login.png
 
     - name: Save Updated WhatsApp Session Cache Folder
       if: always()
