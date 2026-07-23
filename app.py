@@ -55,7 +55,6 @@ def load_device_statuses():
             cursor.execute(query)
             rows = cursor.fetchall()
             
-            # FIXED: Properly extract the datetime index [1] from rows to prevent system execution crash
             timestamps = [r[1] for r in rows if r and r[1]]
             latest_system_ping = max(timestamps) if timestamps else None
             
@@ -172,11 +171,12 @@ try:
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, mobile in absent:
-            item_col, action_col = st.columns()
+            # FIXED: Explicitly added column ratio constraints [4, 1] to satisfy Streamlit specs
+            item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
-                if mobile:
+                if mobile and mobile != 'None':
                     phone_formatted = mobile if mobile.startswith('+') or len(mobile) > 10 else f"963{mobile.lstrip('0')}"
                     msg = f"مرحباً {name}، يرجى العلم أنه لم يتم تسجيل بصمة حضور لك اليوم المندرج بتاريخ {today_syria_str}. إذا كنت متواجداً بالعمل، يرجى مراجعة الإدارة أو تأكيد البصمة مسبقاً."
                     encoded_msg = urllib.parse.quote(msg)
