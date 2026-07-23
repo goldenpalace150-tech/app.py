@@ -1,18 +1,41 @@
-# Make sure this exact block is at the very top of your GitHub app.py file:
+import streamlit as st
+import psycopg2
+import pandas as pd
+import unicodedata
+from datetime import datetime
+import zoneinfo
+
+# =======================================================
+# 1. THE DEFINITIVE DIRECT EMBEDDED HARDWARE GATEWAY
+# =======================================================
+# This block intercepts lowercase/uppercase raw network pings arriving 
+# directly at er9uhn6cadbmh6u6dpxmf7.streamlit.app without any third-party hosts.
 try:
     ctx = st.runtime.get_instance()._get_current_session_context()
     if ctx and ctx.request:
-        query_params = st.query_params
-        device_sn = query_params.get("SN") or query_params.get("sn")
+        device_sn = None
         
+        # Look for the hardware Serial Number in standard query parameters
+        params = st.query_params
+        if params:
+            # Check every variation of uppercase and lowercase 'sn' fields
+            device_sn = params.get("SN") or params.get("sn") or params.get("Sn") or params.get("sN")
+        
+        # CRITICAL FALLBACK: If Streamlit filters the params, parse the raw URL query string directly
+        if not device_sn and ctx.request.query_string:
+            raw_qs = ctx.request.query_string.decode('utf-8').lower()
+            if "sn=" in raw_qs:
+                # Extract the serial text safely out of strings like '?sn=wky010...'
+                parts = raw_qs.split("sn=")
+                if len(parts) > 1:
+                    device_sn = parts[1].split("&")[0].strip().upper()
+
+        # If we successfully captured the device signature, write it directly to the database
         if device_sn:
             DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
-            import zoneinfo
             SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
-            from datetime import datetime
             now_time = datetime.now(SYRIA_TZ).replace(tzinfo=None)
             
-            import psycopg2
             conn = psycopg2.connect(DATABASE_URL, sslmode='require')
             cursor = conn.cursor()
             cursor.execute("""
@@ -24,19 +47,16 @@ try:
             cursor.close()
             conn.close()
             
+            # MANDATORY FIRMWARE ACKNOWLEDGMENT
+            # This raw string prevents the "X" icon by telling the device firmware the data is safe
             st.text("OK")
-            st.stop()
-except Exception:
-    pass
-import streamlit as st
-import psycopg2
-import pandas as pd
-import unicodedata
-from datetime import datetime
-import zoneinfo
+            st.stop() # Freeze the app here so it doesn't waste bandwidth rendering the web UI
+except Exception as gateway_err:
+    pass # Maintain continuous dashboard stability for normal human visitors
+
 
 # ==========================================
-# 1. INITIAL SYSTEM & WINDOW CONFIGURATION
+# 2. DASHBOARD WINDOW CONFIGURATION & STYLING
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
@@ -47,7 +67,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# System Constants
 EXCLUDED_MANAGEMENT_CODES = ("40", "10")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
@@ -55,45 +74,38 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
 # ==========================================
-# 2. HELPER FUNCTIONS & DATABASE INGESTION
+# 3. HELPER DATA SERVICES & LIVE CLOCK MATH
 # ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    """Queries Neon to verify connection states using relative local timestamps"""
+    """Queries Neon to verify exact connection states using a literal live clock execution"""
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # Query your specific terminal configurations from the database
     query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
     cursor.execute(query)
     rows = cursor.fetchall()
     
     device_metrics = []
-    
-    # Isolate maximum internal time logged in the table to evaluate online states relatively
-    valid_times = [row[1] for row in rows if row[1]]
-    latest_system_ping = max(valid_times) if valid_times else None
+    # Fetch the exact true current moment in Syria right now to avoid false greens
+    now_Damascus_naive = datetime.now(SYRIA_TZ).replace(tzinfo=None)
     
     for row in rows:
         alias, last_act, sn = row
         clean_alias = clean_txt(alias)
         
-        if last_act and latest_system_ping:
-            # Strip timezones smoothly to isolate network synchronization lag spikes
+        if last_act:
             last_act_naive = last_act.replace(tzinfo=None)
-            latest_ping_naive = latest_system_ping.replace(tzinfo=None)
-            
-            # Identify absolute distance between last pings
-            seconds_elapsed = (latest_ping_naive - last_act_naive).total_seconds()
-            
-            # If the device checked in within 20 minutes (1200 seconds) of your active system heartbeat
-            if seconds_elapsed < 1200:
-                status_tag = "🟢 متصل"
-            else:
-                status_tag = "🔴 غير متصل"
+            seconds_elapsed = (now_Damascus_naive - last_act_naive).total_seconds()
+        else:
+            seconds_elapsed = 999999
+        
+        # Hardware terminal marks true green only if it updated the DB within the past 10 minutes
+        if last_act and seconds_elapsed < 600:
+            status_tag = "🟢 متصل"
         else:
             status_tag = "🔴 غير متصل"
             
@@ -107,7 +119,6 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cursor = conn.cursor()
     
-    # 1. Query 1-Punch and Late Staff 
     query1 = f"""
         SELECT DISTINCT e.emp_code, e.first_name, MIN(t.punch_time AT TIME ZONE 'GMT-3') 
         FROM personnel_employee e JOIN iclock_transaction t ON e.id = t.emp_id
@@ -128,7 +139,6 @@ def load_attendance_data(today_str):
         else:
             no_out_staff.append((emp_code, clean_name, time_clean))
             
-    # 2. Query 0-Punch Staff (Absentees)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
@@ -144,7 +154,7 @@ def load_attendance_data(today_str):
 
 
 # ==========================================
-# 3. DASHBOARD INTERFACE LAYOUT RENDERER
+# 4. DASHBOARD INTERFACE LAYOUT RENDERER
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
@@ -162,7 +172,6 @@ try:
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
     
-    # Render hardware states dynamically in a clean row format
     cols = st.columns(len(devices))
     for idx, (alias, status, sn) in enumerate(devices):
         with cols[idx]:
@@ -171,7 +180,6 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Render Late Staff Section
     st.subheader(f"⏰ المتأخرون اليوم ({len(late)}) – دخول بعد 09:15 صباحاً")
     if late:
         for code, name, t_time in late:
@@ -181,7 +189,6 @@ try:
         
     st.write("---")
         
-    # 2. Render Absent Section
     st.subheader(f"❌ غائبون تماماً اليوم ({len(absent)}) – 0 بصمة")
     if absent:
         for code, name in absent:
@@ -191,7 +198,6 @@ try:
 
     st.write("---")
 
-    # 3. Render Normal 1-Punch Section
     st.subheader(f"⚠️ سجلوا دخول ولم يسجلوا خروج بعد ({len(no_out)})")
     if no_out:
         for code, name, t_time in no_out:
