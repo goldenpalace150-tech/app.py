@@ -58,7 +58,7 @@ def load_device_statuses():
             query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
             cursor.execute(query)
             rows = cursor.fetchall()
-            timestamps = [r[1] for r in rows if r and r[1]]
+            timestamps = [r for r in rows if r and r]
             latest_system_ping = max(timestamps) if timestamps else None
             for row in rows:
                 alias, last_act, sn = row
@@ -237,7 +237,10 @@ try:
                     else:
                         st.caption("🚫 لا يوجد رقم")
                 else:
-st.caption("🔒 يفتح 06:45 مساءً")
-else:
-st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")except Exception as err:
-st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
+                else:
+                    st.caption("🔒 يفتح 06:45 مساءً")
+    else:
+        st.info("لا يوجد موظفين منتظمين متواجدين حالياً.")
+
+except Exception as err:
+    st.error(f"خطأ في الاتصال بقاعدة البيانات السحابية: {err}")
