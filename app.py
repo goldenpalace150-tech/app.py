@@ -11,6 +11,7 @@ import urllib.parse
 # ==========================================
 st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
 
+# Inject clean, universal right-to-left layout alignments for text lines
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -31,10 +32,8 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 # 2. HELPER FUNCTIONS & LIVE DATA SERVICES
 # ==========================================
 def clean_phone(raw_phone):
-    """Your exact logic but updated to strictly remove all '+' symbols to avoid URL breaking"""
     if not raw_phone: return ""
     clean_raw = unicodedata.normalize('NFKC', str(raw_phone)).encode('ascii', 'ignore').decode('ascii')
-    # FIXED: Added explicit replacement for '+' to guarantee a pure numeric phone string output
     phone = clean_raw.strip().replace(" ", "").replace("-", "").replace("+", "").lstrip("0")
     return f"963{phone}" if phone.startswith('9') and len(phone) == 9 else (f"963{phone[1:]}" if phone.startswith('09') else phone)
 
@@ -62,7 +61,7 @@ def load_device_statuses():
             cursor.execute(query)
             rows = cursor.fetchall()
             
-            timestamps = [r for r in rows if r and r]
+            timestamps = [r[1] for r in rows if r and r[1]]
             latest_system_ping = max(timestamps) if timestamps else None
             
             for row in rows:
@@ -148,6 +147,7 @@ if st.button("🔄 تحديث البيانات الحية الآن"):
     st.cache_data.clear()
 
 try:
+    # --- LIVE HARDWARE COUNTER DASHBOARD ---
     st.write("---")
     st.markdown("### 📡 حالة اتصال أجهزة البصمة الحالية:")
     devices = load_device_statuses()
@@ -177,16 +177,14 @@ try:
     st.subheader(f"❌ غائبون أو نسوا تسجيل الحضور ({len(absent)})")
     if absent:
         for code, name, phone in absent:
-            item_col, action_col = st.columns()
+            # FIXED: Explicitly added relative layout width ratio configurations [4, 1]
+            item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔹 **{name}** (كود: {code})")
             with action_col:
-                # Basic string validation check to protect against blank database fields
                 if phone and phone != '963' and phone != '':
                     sms_text = f"مرحباً {name}، يظهر نظامنا أنك لم تقم بتسجيل الدخول اليوم. يرجى بصمة الدخول فوراً."
                     encoded_msg = urllib.parse.quote(sms_text)
-                    
-                    # FIXED: Upgraded to universal official API endpoints and stripped erroneous symbols
                     wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
                     st.link_button("💬 تذكير الدخول", url=wa_url, use_container_width=True)
                 else:
@@ -200,7 +198,8 @@ try:
     st.subheader(f"🟢 الموظفون المتواجدون حالياً في العمل ({len(no_out)})")
     if no_out:
         for code, name, phone, t_time in no_out:
-            item_col, action_col = st.columns()
+            # FIXED: Explicitly added relative layout width ratio configurations [4, 1]
+            item_col, action_col = st.columns([4, 1])
             with item_col:
                 st.write(f"🔸 **{name}** (كود: {code}) ── وقت الدخول: {t_time}")
             with action_col:
@@ -208,8 +207,6 @@ try:
                     if phone and phone != '963' and phone != '':
                         sms_text = f"مرحباً {name}، لقد نسيت تسجيل الخروج اليوم. يرجى تذكر تبصيم الخروج قبل مغادرة العمل."
                         encoded_msg = urllib.parse.quote(sms_text)
-                        
-                        # FIXED: Upgraded to universal official API endpoints and stripped erroneous symbols
                         wa_url = f"https://whatsapp.com{phone}&text={encoded_msg}"
                         st.link_button("💬 تذكير الخروج", url=wa_url, use_container_width=True)
                     else:
