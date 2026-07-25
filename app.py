@@ -17,24 +17,25 @@ TEXT_CONFIG = {
     """,
     "title_main": "✨ شركة القصر الذهبي ✨",
     "title_sub": "لوحة تحكم إدارة الحضور والغياب",
-    "lbl_date": "📅 التاريخ: **{}**  │  ⏰ الوقت الحالي في سوريا: **{}**",
+    "lbl_date": "📅 التاريخ الحالي في سوريا: **{}**  │  ⏰ الوقت الحالي: **{}**",
+    "lbl_picker": "📅 اختر التاريخ المراد عرض بياناته:",
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
+    "success_no_late": "🎉 لا يوجد متأخرين في هذا التاريخ!",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "absent_row": "🔹 **{}** (كود: {})",
-    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
+    "success_no_absent": "🎉 لا يوجد غيابات في هذا التاريخ!",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "info_no_present": "لا يوجد موظفين منتظمين متواجدين حالياً.",
-    "err_db": "خطأ في الاتصال بقاعدة البيانات: {}"
+    "err_db": "خطأ في الاتصال بقاعدة البيانات السحابية: {}"
 }
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 st.markdown(TEXT_CONFIG["style_align"], unsafe_allow_html=True)
 
-# Exclude management codes from visual lists
+# Exclude management codes from visual dashboard lists
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
@@ -44,7 +45,7 @@ def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
-def load_attendance_data(today_str):
+def load_attendance_data(selected_date_str):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
@@ -55,7 +56,7 @@ def load_attendance_data(today_str):
                COUNT(t.id) as punch_count
         FROM personnel_employee e 
         JOIN iclock_transaction t ON e.id = t.emp_id
-        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' 
+        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{selected_date_str}' 
           AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str})
         GROUP BY e.emp_code, e.first_name;
@@ -78,7 +79,7 @@ def load_attendance_data(today_str):
     # Query full absent staff who are active (status = 1)
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
-        WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
+        WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{selected_date_str}')
           AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str}) 
         ORDER BY e.emp_code ASC;
@@ -100,18 +101,22 @@ def load_attendance_data(today_str):
 # 3. INTERFACE RENDERING
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
-today_str = now_syria.strftime('%Y-%m-%d')
+current_today = now_syria.date()
 time_str = now_syria.strftime('%I:%M:%S %p')
 
 st.title(TEXT_CONFIG["title_main"])
 st.subheader(TEXT_CONFIG["title_sub"])
-st.markdown(TEXT_CONFIG["lbl_date"].format(today_str, time_str))
+st.markdown(TEXT_CONFIG["lbl_date"].format(current_today.strftime('%Y-%m-%d'), time_str))
+
+# Interactive local system date picker
+selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
+selected_date_str = selected_date.strftime('%Y-%m-%d')
 
 if st.button(TEXT_CONFIG["btn_refresh"]):
     st.rerun()
 
 try:
-    present_staff, late_staff, full_absent_staff = load_attendance_data(today_str)
+    present_staff, late_staff, full_absent_staff = load_attendance_data(selected_date_str)
     
     col1, col2, col3 = st.columns(3)
     
