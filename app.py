@@ -49,14 +49,14 @@ def load_attendance_data(selected_date_str):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
-    # Query present and late staff who are active (status = 1)
+    # 1. Query present and late staff using raw data comparisons (bypassing timezone math bugs)
     query1 = f"""
         SELECT e.emp_code, e.first_name, 
-               MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
+               MIN(t.punch_time) as first_punch,
                COUNT(t.id) as punch_count
         FROM personnel_employee e 
         JOIN iclock_transaction t ON e.id = t.emp_id
-        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{selected_date_str}' 
+        WHERE t.punch_time::date = '{selected_date_str}' 
           AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str})
         GROUP BY e.emp_code, e.first_name;
@@ -70,16 +70,17 @@ def load_attendance_data(selected_date_str):
         clean_name = clean_txt(name)
         time_in_clean = first_punch.strftime('%I:%M %p')
         
+        # Check hours using the raw local punch time directly
         if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
             late_staff.append((emp_code, clean_name, time_in_clean))
         
         if punch_count % 2 != 0:
             present_staff.append((emp_code, clean_name, time_in_clean))
             
-    # Query full absent staff who are active (status = 1)
+    # 2. Query full absent staff using matching raw date formats
     query0 = f"""
         SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
-        WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{selected_date_str}')
+        WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE punch_time::date = '{selected_date_str}')
           AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str}) 
         ORDER BY e.emp_code ASC;
@@ -96,6 +97,7 @@ def load_attendance_data(selected_date_str):
     cursor.close()
     conn.close()
     return present_staff, late_staff, full_absent_staff
+
 
 # ==========================================
 # 3. INTERFACE RENDERING
