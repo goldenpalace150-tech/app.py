@@ -228,7 +228,7 @@ try:
     st.subheader(TEXT_CONFIG["header_absent"].format(len(absent)))
     if absent:
         for code, name, phone in absent:
-            item_col, action_col = st.columns()
+            item_col, action_col = st.columns(2) # FIXED: Added 2 columns layout spec
             with item_col:
                 st.write(TEXT_CONFIG["absent_row"].format(name, code))
             with action_col:
@@ -247,7 +247,7 @@ try:
     st.subheader(TEXT_CONFIG["header_present"].format(len(no_out)))
     if no_out:
         for code, name, phone, t_time in no_out:
-            item_col, action_col = st.columns()
+            item_col, action_col = st.columns(2) # FIXED: Added 2 columns layout spec
             with item_col:
                 st.write(TEXT_CONFIG["present_row"].format(name, code, t_time))
             with action_col:
@@ -266,3 +266,4 @@ try:
 
 except Exception as err:
     st.error(TEXT_CONFIG["err_db"].format(err))
+
