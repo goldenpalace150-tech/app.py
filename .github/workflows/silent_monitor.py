@@ -10,7 +10,8 @@ from datetime import datetime
 # 0. CLOUD ENGINE ROUTING CONFIGURATION
 # ==========================================
 DATABASE_URL = os.environ.get("NEON_DB_URL")
-EXCLUDED_CODES = ("NONE",)
+# Change this line near the top of silent_monitor.py
+MANAGEMENT_ONLY_CODES = ("10", "20", "40")
 
 # Points straight back to your local office PC network tunnel setup
 OFFICE_PC_BRIDGE_URL = os.environ.get("OFFICE_PC_BRIDGE_URL")
