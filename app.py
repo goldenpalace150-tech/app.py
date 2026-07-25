@@ -133,38 +133,28 @@ def load_attendance_data(today_str):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
+    # UPDATE QUERY 1 (Around Line 60): Add the status filter
     query1 = f"""
-        SELECT e.emp_code, e.first_name, e.mobile,
+        SELECT e.emp_code, e.first_name, 
                MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
-               MAX(t.punch_time AT TIME ZONE 'GMT-3') as last_punch,
                COUNT(t.id) as punch_count
         FROM personnel_employee e 
         JOIN iclock_transaction t ON e.id = t.emp_id
         WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' 
+          AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str})
-        GROUP BY e.emp_code, e.first_name, e.mobile;
+        GROUP BY e.emp_code, e.first_name;
     """
-    cursor.execute(query1)
-    attendance_rows = cursor.fetchall()
-    
-    no_out_staff, late_staff = [], []
-    for row in attendance_rows:
-        emp_code, name, mobile, first_punch, last_punch, punch_count = row
-        clean_name = clean_txt(name)
-        time_in_clean = first_punch.strftime('%I:%M %p')
-        phone_clean = clean_phone(mobile)
-        
-        if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
-            late_staff.append((emp_code, clean_name, phone_clean, time_in_clean))
-        
-        if punch_count == 1 and not (first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)):
-            no_out_staff.append((emp_code, clean_name, phone_clean, time_in_clean))
-            
+
+    # UPDATE QUERY 0 (Around Line 80): Add the status filter
     query0 = f"""
-        SELECT DISTINCT e.emp_code, e.first_name, COALESCE(e.mobile, '') FROM personnel_employee e
+        SELECT DISTINCT e.emp_code, e.first_name FROM personnel_employee e
         WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
+          AND e.status = 1
           AND e.emp_code NOT IN ({mgmt_codes_str}) 
         ORDER BY e.emp_code ASC;
+    """
+
     """
     cursor.execute(query0)
     full_absent_rows = cursor.fetchall()
