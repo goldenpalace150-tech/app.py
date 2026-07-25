@@ -57,8 +57,6 @@ EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
-
-
 # ==========================================
 # 2. HELPER FUNCTIONS & LIVE DATA SERVICES
 # ==========================================
@@ -180,8 +178,6 @@ def load_attendance_data(today_str):
     cursor.close()
     conn.close()
     return no_out_staff, late_staff, full_absent_staff
-
-
 # ==========================================
 # 3. DASHBOARD INTERFACE LAYOUT RENDERER
 # ==========================================
@@ -248,7 +244,6 @@ try:
 
     st.write("---")
 
-    # 3. Render Present Staff Section
     st.subheader(TEXT_CONFIG["header_present"].format(len(no_out)))
     if no_out:
         for code, name, phone, t_time in no_out:
@@ -268,4 +263,6 @@ try:
                     st.caption(TEXT_CONFIG["caption_locked_evening"])
     else:
         st.info(TEXT_CONFIG["info_no_present"])
-except Exception as err:st.error(TEXT_CONFIG["err_db"].format(err))
+
+except Exception as err:
+    st.error(TEXT_CONFIG["err_db"].format(err))
