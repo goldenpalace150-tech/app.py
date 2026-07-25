@@ -33,13 +33,20 @@ def dispatch_to_office_pc(phone, message):
     """Pipes data text rows back to your office PC background tunnel instantly."""
     try:
         payload = {"phone": phone, "message": message}
-        response = requests.post(OFFICE_PC_BRIDGE_URL, json=payload, timeout=15)
+        # THIS CUSTOM HEADER COMPLETELY BYPASSES THE FREE NGROK INTERCEPTION WARNING PAGE:
+        custom_headers = {
+            "ngrok-skip-browser-warning": "69420"
+        }
+        response = requests.post(OFFICE_PC_BRIDGE_URL, json=payload, headers=custom_headers, timeout=15)
         if response.status_code == 200:
             print(f"🚀 Packet successfully routed to office PC for WhatsApp delivery to: {phone}")
+            return True
         else:
             print(f"⚠️ Office PC bridge returned status code: {response.status_code}")
+            return False
     except Exception as e:
         print(f"❌ Failed to reach office PC endpoint across network: {e}")
+        return False
 
 def main():
     print("📡 Connecting to Neon Cloud data streams...")
