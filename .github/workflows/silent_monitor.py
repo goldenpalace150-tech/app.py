@@ -11,8 +11,7 @@ from datetime import datetime
 # ==========================================
 DATABASE_URL = os.environ.get("NEON_DB_URL")
 # Change this line near the top of silent_monitor.py
-MANAGEMENT_ONLY_CODES = ("10", "20", "40")
-
+EXCLUDED_CODES = ("NONE",) 
 # Points straight back to your local office PC network tunnel setup
 OFFICE_PC_BRIDGE_URL = os.environ.get("OFFICE_PC_BRIDGE_URL")
 
@@ -70,13 +69,13 @@ def main():
         try:
             today_str = datetime.now().strftime('%Y-%m-%d')
             
-            query = f"""
-                SELECT t.id, e.emp_code, e.first_name, e.mobile, (t.punch_time AT TIME ZONE 'GMT-3')
-                FROM iclock_transaction t
-                JOIN personnel_employee e ON t.emp_id = e.id
-                WHERE t.id > {last_processed_id} AND e.emp_code NOT IN ({",".join(f"'{c}'" for c in EXCLUDED_CODES)})
-                ORDER BY t.id ASC;
-            """
+query = f"""
+    SELECT t.id, e.emp_code, e.first_name, e.mobile, (t.punch_time AT TIME ZONE 'GMT-3')
+    FROM iclock_transaction t
+    JOIN personnel_employee e ON t.emp_id = e.id
+    WHERE t.id > %s AND e.emp_code NOT IN ({",".join(f"'{c}'" for c in EXCLUDED_CODES)})
+    ORDER BY t.id ASC;
+"""
             cursor.execute(query)
             new_punches = cursor.fetchall()
             
