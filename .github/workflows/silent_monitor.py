@@ -10,7 +10,7 @@ from datetime import datetime
 # 0. CLOUD ENGINE ROUTING CONFIGURATION
 # ==========================================
 DATABASE_URL = os.environ.get("NEON_DB_URL")
-EXCLUDED_CODES = ()
+EXCLUDED_CODES = ("NONE",)
 
 # Points straight back to your local office PC network tunnel setup
 OFFICE_PC_BRIDGE_URL = os.environ.get("OFFICE_PC_BRIDGE_URL")
