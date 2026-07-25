@@ -138,3 +138,37 @@ try:
             
 except Exception as e:
     st.error(TEXT_CONFIG["err_db"].format(str(e)))
+    def sync_live_machine_deletions(local_cursor, neon_conn, neon_cursor):
+    """Compares local active staff strings with cloud table entries and purges deleted records instantly along with constraints."""
+    try:
+        # 1. Pull all active employee codes from your local office machine database
+        local_cursor.execute("SELECT emp_code FROM personnel_employee WHERE emp_code IS NOT NULL;")
+        local_codes = [str(row[0]).strip() for row in local_cursor.fetchall() if row and row[0]]
+        
+        # Guard rail protect: If local database reads 0 records, do nothing to prevent accidental cloud wipes
+        if not local_codes:
+            return
+
+        # 2. Query Neon Cloud to find out if any rows exist that are missing from your unpacked local array
+        format_strings = ','.join('%s' for _ in local_codes)
+        find_query = f"SELECT id, emp_code, first_name FROM personnel_employee WHERE emp_code NOT IN ({format_strings});"
+        neon_cursor.execute(find_query, tuple(local_codes))
+        stale_records = neon_cursor.fetchall()
+
+        # 3. Safely clear privileges first, then delete the profile row completely from your cloud server
+        for row in stale_records:
+            emp_id, deleted_code, first_name = row
+            print(f"🧹 Sync Engine Alert: User '{first_name}' (Code: {deleted_code}) was deleted from local system. Purging cloud records safely...")
+            
+            # Clear historical tracking records that are locking this specific user ID in the cloud database
+            neon_cursor.execute("DELETE FROM acc_accprivilege WHERE employee_id = %s;", (emp_id,))
+            neon_cursor.execute("DELETE FROM iclock_transaction WHERE emp_id = %s;", (emp_id,))
+            
+            # Now delete the main employee profile safely
+            neon_cursor.execute("DELETE FROM personnel_employee WHERE id = %s;", (emp_id,))
+            neon_conn.commit()
+            print(f"✅ Successfully deleted Code {deleted_code} from Neon cluster cache.")
+            
+    except Exception as sync_err:
+        print(f"⚠️ Live hardware deletion sync check skipped temporarily: {sync_err}")
+
