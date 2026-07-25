@@ -1,205 +1,111 @@
-import streamlit as st
+import os
+import time
+import sys
 import psycopg2
-import pandas as pd
 import unicodedata
+import requests
 from datetime import datetime
-import zoneinfo
-import urllib.parse
 
 # ==========================================
-# 1. INITIAL SYSTEM & WINDOW CONFIGURATION
+# 0. CLOUD ENGINE ROUTING CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Golden Palace Attendance", page_icon="📊", layout="wide")
+DATABASE_URL = os.environ.get("NEON_DB_URL")
+EXCLUDED_CODES = ("40", "10", "20")
 
-# Inject clean, universal left-to-right layout alignments for English text
-st.markdown("""
-    <style>
-    .reportview-container .main .block-container { direction: LTR; text-align: left; }
-    h1, h2, h3, h4, p, span, li, div { text-align: left !important; direction: LTR !important; line-height: 1.6 !important; }
-    </style>
-""", unsafe_allow_html=True)
+# Points straight back to your local office PC network tunnel setup
+OFFICE_PC_BRIDGE_URL = os.environ.get("OFFICE_PC_BRIDGE_URL")
 
-# System Constants
-EXCLUDED_MANAGEMENT_CODES = ("40", "10")
-mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
-DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+if not DATABASE_URL or not OFFICE_PC_BRIDGE_URL:
+    print("❌ Critical configuration error: Required cloud environment variables are missing.")
+    sys.exit(1)
 
-# Explicitly lock the system clock to Syrian time boundaries
-SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
+def clean_phone(raw_phone):
+    if not raw_phone: return ""
+    clean_raw = unicodedata.normalize('NFKC', str(raw_phone)).encode('ascii', 'ignore').decode('ascii')
+    phone = clean_raw.strip().replace(" ", "").replace("-", "").replace("+", "").lstrip("0")
+    return f"963{phone}" if phone.startswith('9') and len(phone) == 9 else (f"963{phone[1:]}" if phone.startswith('09') else phone)
 
-
-# ==========================================
-# 2. HELPER FUNCTIONS & LIVE DATA SERVICES
-# ==========================================
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
-def load_device_statuses():
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-    cursor = conn.cursor()
-    device_metrics = []
-    
+def dispatch_to_office_pc(phone, message):
+    """Pipes data text rows back to your office PC background tunnel instantly."""
     try:
-        query = "SELECT alias, is_online, sn FROM iclock_terminal;"
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        for row in rows:
-            alias, is_online, sn = row
-            status_tag = "🟢 Online" if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')) else "🔴 Offline"
-            device_metrics.append((clean_txt(alias), status_tag, sn))
-    except Exception:
-        conn.rollback()
-        try:
-            query = "SELECT alias, last_activity, sn FROM iclock_terminal;"
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            
-            timestamps = [r[1] for r in rows if r and r[1]]
-            latest_system_ping = max(timestamps) if timestamps else None
-            
-            for row in rows:
-                alias, last_act, sn = row
-                if last_act and latest_system_ping:
-                    seconds_elapsed = (latest_system_ping.replace(tzinfo=None) - last_act.replace(tzinfo=None)).total_seconds()
-                    status_tag = "🟢 Online" if seconds_elapsed < 600 else "🔴 Offline"
-                else:
-                    status_tag = "🔴 Offline"
-                device_metrics.append((clean_txt(alias), status_tag, sn))
-        except Exception:
-            pass
-    finally:
-        cursor.close()
-        conn.close()
-    return device_metrics
+        payload = {"phone": phone, "message": message}
+        response = requests.post(OFFICE_PC_BRIDGE_URL, json=payload, timeout=15)
+        if response.status_code == 200:
+            print(f"🚀 Packet successfully routed to office PC for WhatsApp delivery to: {phone}")
+        else:
+            print(f"⚠️ Office PC bridge returned status code: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Failed to reach office PC endpoint across network: {e}")
 
-def load_attendance_data(today_str):
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+def main():
+    print("📡 Connecting to Neon Cloud data streams...")
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
-    # Query 1-Punch and Late Staff
-    query1 = f"""
-        SELECT e.emp_code, e.first_name, 
-               MIN(t.punch_time AT TIME ZONE 'GMT-3') as first_punch,
-               MAX(t.punch_time AT TIME ZONE 'GMT-3') as last_punch,
-               COUNT(t.id) as punch_count
-        FROM personnel_employee e 
-        JOIN iclock_transaction t ON e.id = t.emp_id
-        WHERE (t.punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}' 
-          AND e.emp_code NOT IN ({mgmt_codes_str})
-        GROUP BY e.emp_code, e.first_name;
-    """
-    cursor.execute(query1)
-    attendance_rows = cursor.fetchall()
+    cursor.execute("SELECT MAX(id) FROM iclock_transaction;")
+    res = cursor.fetchone()
+    last_processed_id = res[0] if res and res[0] is not None else 0
+    print(f"✅ Connection successful! Cloud monitoring from transaction ID: {last_processed_id}")
     
-    no_out_staff, late_staff = [], []
-    for row in attendance_rows:
-        emp_code, name, first_punch, last_punch, punch_count = row
-        clean_name = clean_txt(name)
-        time_in_clean = first_punch.strftime('%I:%M %p')
-        
-        # Check Late Arrival (After 09:15 AM)
-        if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
-            late_staff.append((emp_code, clean_name, time_in_clean))
-        
-        # Check Current Presence: Odd number of punches means they are clocked in and still on-site
-        if punch_count % 2 != 0 or first_punch == last_punch:
-            no_out_staff.append((emp_code, clean_name, time_in_clean))
+    start_time = time.time()
+    
+    while True:
+        # Gracefully restart container runner before hitting the 6-hour execution limit (320 minutes)
+        if (time.time() - start_time) > (320 * 60):
+            print("⏳ Reached cloud loop cycle expiration constraints. Refreshing engine...")
+            break
             
-    # Query 0-Punch Staff (Absentees / Forgot to punch)
-    query0 = f"""
-        SELECT DISTINCT e.emp_code, e.first_name, COALESCE(e.mobile, '') FROM personnel_employee e
-        WHERE e.id NOT IN (SELECT DISTINCT emp_id FROM iclock_transaction WHERE (punch_time AT TIME ZONE 'GMT-3')::date = '{today_str}')
-          AND e.emp_code NOT IN ({mgmt_codes_str}) 
-        ORDER BY e.emp_code ASC;
-    """
-    cursor.execute(query0)
-    full_absent_rows = cursor.fetchall()
-    
-    full_absent_staff = []
-    for row in full_absent_rows:
-        if row:
-            emp_code, name, mobile = row
-            full_absent_staff.append((clean_txt(emp_code), clean_txt(name), str(mobile).strip()))
-    
-    cursor.close()
-    conn.close()
-    return no_out_staff, late_staff, full_absent_staff
-
-
-# ==========================================
-# 3. DASHBOARD INTERFACE LAYOUT RENDERER
-# ==========================================
-now_syria = datetime.now(SYRIA_TZ)
-today_syria_str = now_syria.strftime('%Y-%m-%d')
-time_syria_str = now_syria.strftime('%I:%M %p')
-
-# --- 📱 CLEAN NATIVE HEADER BANNER ---
-st.title("✨ Golden Palace Co. ✨")
-st.header("Attendance Management Dashboard")
-st.write(f"📅 Date: **{today_syria_str}**  │  ⏰ Current Time (Syria): **{time_syria_str}**")
-
-if st.button("🔄 Refresh Live Data Now"):
-    st.cache_data.clear()
-
-try:
-    # --- 📠 LIVE HARDWARE COUNTER DASHBOARD ---
-    st.write("---")
-    st.markdown("### 📡 Biometric Device Status:")
-    devices = load_device_statuses()
-    
-    if devices:
-        cols = st.columns(len(devices))
-        for idx, (alias, status, sn) in enumerate(devices):
-            with cols[idx]:
-                st.metric(label=f"Device: {alias}", value=status, delta=f"SN: {sn[:6]}...")
-    else:
-        st.warning("⚠️ No devices detected or connection could not be established.")
-
-    no_out, late, absent = load_attendance_data(today_syria_str)
-    st.write("---")
-    
-    # 1. Render Late Staff Section
-    st.subheader(f"⏰ Late Arrivals Today ({len(late)}) – Checked in after 09:15 AM")
-    if late:
-        for code, name, t_time in late:
-            st.write(f"🔸 **{name}** (Code: {code}) ── Check-in Time: {t_time}")
-    else:
-        st.success("🎉 No late arrivals today!")
-        
-    st.write("---")
-        
-    # 2. Render Absent / Forgot to punch section
-    st.subheader(f"❌ Absent / Missing Punch Records ({len(absent)})")
-    if absent:
-        for code, name, mobile in absent:
-            item_col, action_col = st.columns([5, 1])
-            with item_col:
-                st.write(f"🔹 **{name}** (Code: {code})")
-            with action_col:
-                if mobile and mobile != 'None' and mobile != '':
-                    clean_phone = mobile.lstrip('+').lstrip('0')
-                    phone_formatted = clean_phone if clean_phone.startswith('963') else f"963{clean_phone}"
-                    
-                    msg = f"Hello {name}, please note that no biometric check-in log was recorded for you today ({today_syria_str}). If you are currently at work, please visit HR or confirm your punch records."
-                    encoded_msg = urllib.parse.quote(msg)
-                    wa_url = f"https://wa.me{phone_formatted}?text={encoded_msg}"
-                    
-                    st.link_button("💬 Remind", url=wa_url, use_container_width=True)
+        try:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            
+            query = f"""
+                SELECT t.id, e.emp_code, e.first_name, e.mobile, (t.punch_time AT TIME ZONE 'GMT-3')
+                FROM iclock_transaction t
+                JOIN personnel_employee e ON t.emp_id = e.id
+                WHERE t.id > {last_processed_id} AND e.emp_code NOT IN ({",".join(f"'{c}'" for c in EXCLUDED_CODES)})
+                ORDER BY t.id ASC;
+            """
+            cursor.execute(query)
+            new_punches = cursor.fetchall()
+            
+            for punch in new_punches:
+                t_id, emp_code, first_name, mobile, punch_time = punch
+                name_clean = clean_txt(first_name)
+                phone_clean = clean_phone(mobile)
+                time_str = punch_time.strftime('%I:%M:%S %p')
+                
+                if not phone_clean or phone_clean == "963":
+                    last_processed_id = t_id
+                    continue
+                
+                count_query = f"""
+                    SELECT COUNT(id) FROM iclock_transaction 
+                    WHERE emp_id = (SELECT id FROM personnel_employee WHERE emp_code = %s)
+                    AND (punch_time AT TIME ZONE 'GMT-3')::date = %s AND id <= %s;
+                """
+                cursor.execute(count_query, (emp_code, today_str, t_id))
+                count_res = cursor.fetchone()
+                punch_count = count_res[0] if count_res else 1
+                
+                if punch_count % 2 != 0:
+                    status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الدخول* بنجاح عند الساعة {time_str}. أتمنى لك يوماً سعيداً! ✨"
                 else:
-                    st.caption("🚫 No Phone Number")
-    else:
-        st.success("🎉 No absences tracked today!")
+                    status_msg = f"مرحباً {name_clean}، تم تسجيل بصمة *الخروج* بنجاح عند الساعة {time_str}. رافقتك السلامة! 🏡"
+                
+                dispatch_to_office_pc(phone_clean, status_msg)
+                last_processed_id = t_id
+                
+            time.sleep(5)
+            
+        except psycopg2.DatabaseError as db_err:
+            conn.rollback()
+            time.sleep(5)
+        except Exception:
+            time.sleep(5)
 
-    st.write("---")
-
-    # 3. Render Present Staff Section
-    st.subheader(f"🟢 Staff Currently Active On-Site ({len(no_out)})")
-    if no_out:
-        for code, name, t_time in no_out:
-            st.write(f"🔸 **{name}** (Code: {code}) ── Check-in Time: {t_time}")
-    else:
-        st.info("No active staff records currently marked on site.")
-
-except Exception as err:
-    st.error(f"Cloud database connection error: {err}")
+if __name__ == "__main__":
+    main()
