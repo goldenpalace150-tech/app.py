@@ -53,7 +53,7 @@ st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layou
 st.markdown(TEXT_CONFIG["style_align"], unsafe_allow_html=True)
 
 # Locked constraints optimized for Neon configuration fields
-EXCLUDED_MANAGEMENT_CODES = ("NONE",)
+EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
