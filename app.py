@@ -5,8 +5,9 @@ import unicodedata
 from datetime import datetime
 import zoneinfo
 import urllib.parse
+
 # ==========================================
-# 0. CONFIGURATION DICTIONARY
+# 0. RTL ARABIC TEXT CONSTANTS (SEPARATED)
 # ==========================================
 TEXT_CONFIG = {
     "page_title": "حضور القصر الذهبي",
@@ -48,21 +49,13 @@ TEXT_CONFIG = {
 # ==========================================
 # 1. INITIAL SYSTEM & WINDOW CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="حضور القصر الذهبي", page_icon="📊", layout="wide")
+st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
+st.markdown(TEXT_CONFIG["style_align"], unsafe_allow_html=True)
 
-st.markdown("""
-    <style>
-    .reportview-container .main .block-container { direction: RTL; text-align: right; }
-    h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
-    </style>
-""", unsafe_allow_html=True)
-
-# System Constants
+# Locked constraints optimized for Neon configuration fields
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 mgmt_codes_str = ",".join(f"'{code}'" for code in EXCLUDED_MANAGEMENT_CODES)
 DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
-
-# Explicitly lock the system clock to Syrian time boundaries
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
@@ -80,7 +73,7 @@ def clean_txt(raw_text):
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 
 def load_device_statuses():
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     device_metrics = []
     try:
@@ -89,7 +82,7 @@ def load_device_statuses():
         rows = cursor.fetchall()
         for row in rows:
             alias, is_online, sn = row
-            status_tag = "🟢 متصل" if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')) else "🔴 غير متصل"
+            status_tag = TEXT_CONFIG["status_online"] if is_online and (str(is_online).strip().lower() in ('true', '1', 't', 'y', 'yes')) else TEXT_CONFIG["status_offline"]
             device_metrics.append((clean_txt(alias), status_tag, sn))
     except Exception:
         conn.rollback()
@@ -103,9 +96,9 @@ def load_device_statuses():
                 alias, last_act, sn = row
                 if last_act and latest_system_ping:
                     seconds_elapsed = (latest_system_ping.replace(tzinfo=None) - last_act.replace(tzinfo=None)).total_seconds()
-                    status_tag = "🟢 متصل" if seconds_elapsed < 600 else "🔴 غير متصل"
+                    status_tag = TEXT_CONFIG["status_online"] if seconds_elapsed < 600 else TEXT_CONFIG["status_offline"]
                 else:
-                    status_tag = "🔴 غير متصل"
+                    status_tag = TEXT_CONFIG["status_offline"]
                 device_metrics.append((clean_txt(alias), status_tag, sn))
         except Exception:
             pass
@@ -115,7 +108,7 @@ def load_device_statuses():
     return device_metrics
 
 def load_live_punch_notifications(today_str):
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     recent_punches = []
     try:
@@ -139,7 +132,7 @@ def load_live_punch_notifications(today_str):
     return recent_punches
 
 def load_attendance_data(today_str):
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
     query1 = f"""
@@ -196,7 +189,6 @@ now_syria = datetime.now(SYRIA_TZ)
 today_syria_str = now_syria.strftime('%Y-%m-%d')
 time_syria_str = now_syria.strftime('%I:%M %p')
 
-# Main Banner Layout
 st.title(TEXT_CONFIG["title_main"])
 st.header(TEXT_CONFIG["title_sub"])
 st.write(TEXT_CONFIG["lbl_date"].format(today_syria_str, time_syria_str))
@@ -205,7 +197,6 @@ if st.button(TEXT_CONFIG["btn_refresh"]):
     st.cache_data.clear()
 
 try:
-    # --- Live Ticker Logs ---
     st.write("---")
     st.markdown(TEXT_CONFIG["header_live_log"])
     live_logs = load_live_punch_notifications(today_syria_str)
@@ -215,7 +206,6 @@ try:
     else:
         st.caption(TEXT_CONFIG["caption_no_logs"])
 
-    # --- Biometric Devices Layout ---
     st.write("---")
     st.markdown(TEXT_CONFIG["header_devices"])
     devices = load_device_statuses()
@@ -230,7 +220,6 @@ try:
     no_out, late, absent = load_attendance_data(today_syria_str)
     st.write("---")
     
-    # 1. Late Staff Loop
     st.subheader(TEXT_CONFIG["header_late"].format(len(late)))
     if late:
         for code, name, phone, t_time in late:
@@ -240,11 +229,10 @@ try:
         
     st.write("---")
         
-    # 2. Absent / Forgot to Punch Loop
     st.subheader(TEXT_CONFIG["header_absent"].format(len(absent)))
     if absent:
         for code, name, phone in absent:
-            item_col, action_col = st.columns([4, 1])
+            item_col, action_col = st.columns()
             with item_col:
                 st.write(TEXT_CONFIG["absent_row"].format(name, code))
             with action_col:
@@ -260,11 +248,11 @@ try:
 
     st.write("---")
 
-    # 3. Present Staff / Missing Checkout Loop
+    # 3. Render Present Staff Section
     st.subheader(TEXT_CONFIG["header_present"].format(len(no_out)))
     if no_out:
         for code, name, phone, t_time in no_out:
-            item_col, action_col = st.columns([4, 1])
+            item_col, action_col = st.columns()
             with item_col:
                 st.write(TEXT_CONFIG["present_row"].format(name, code, t_time))
             with action_col:
@@ -280,8 +268,4 @@ try:
                     st.caption(TEXT_CONFIG["caption_locked_evening"])
     else:
         st.info(TEXT_CONFIG["info_no_present"])
-
-except Exception as err:
-    st.error(TEXT_CONFIG["err_db"].format(err))
-
-
+except Exception as err:st.error(TEXT_CONFIG["err_db"].format(err))
