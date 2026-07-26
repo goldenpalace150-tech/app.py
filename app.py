@@ -59,7 +59,8 @@ def get_auth_token():
     }
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        if response.status_code in:
+        # FIXED LINE BELOW
+        if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         else:
             st.error(f"فشل مصادقة API الحساب (Code: {response.status_code})")
@@ -110,7 +111,8 @@ def load_attendance_data_from_api(selected_date_str):
                 p_time = datetime.strptime(punch_time_str, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 p_time = datetime.fromisoformat(punch_time_str.replace("Z", ""))
-                            if code not in emp_punches:
+                
+            if code not in emp_punches:
                 emp_punches[code] = []
             emp_punches[code].append(p_time)
 
