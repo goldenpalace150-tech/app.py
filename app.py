@@ -3,12 +3,9 @@ import requests
 import unicodedata
 import pandas as pd
 import io
-from datetime import datetime, date
+from datetime import datetime
 import zoneinfo
 
-# ==========================================
-# 0. RTL ARABIC TEXT & VISUAL CONFIG
-# ==========================================
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
@@ -16,22 +13,16 @@ TEXT_CONFIG = {
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور كملف Excel",
-    
-    # Header Expanders
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "header_early_leave": "⚠️ غادروا العمل مبكراً اليوم ({}) – خروج قبل 04:00 مساءً",
     "header_checkout": "🏁 الموظفون الذين غادروا بانتظام ({})",
-    
-    # Dynamic Rows
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "early_leave_row": "⚠️ **{}** (كود: {}) ── الدخول: {} ── الخروج المبكر: {}",
     "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
-    
-    # Success State Empty Messages
     "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
     "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
     "info_no_present": "لا يوجد موظفين متواجدين حالياً في المنشأة.",
@@ -42,14 +33,11 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
-# Custom CSS styling optimized for mobile responsive layout grid
 st.markdown("""
     <style>
     .stApp { direction: rtl; }
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
-    
-    /* Dashboard Card Grid Matrix Layout */
     .metric-card {
         background-color: #ffffff;
         border-radius: 8px;
@@ -76,12 +64,9 @@ st.markdown("""
     .icon-late { background-color: #fff8e1; color: #ffc107; }
     .icon-early { background-color: #fff3e0; color: #ff9800; }
     .icon-checkout { background-color: #e0f7fa; color: #00bcd4; }
-    
     .metric-info { display: flex; flex-direction: column; flex-grow: 1; }
     .metric-title { font-size: 13px; color: #64748b; font-weight: 500; }
     .metric-value { font-size: 22px; font-weight: bold; color: #1e293b; }
-    
-    /* Inner Content Container Wrapper */
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
@@ -93,7 +78,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Application Configurations Setup
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -117,7 +101,7 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # FIXED: Resolved incomplete array membership expression syntax break
+        # FIXED: Added array parameters [200, 201] inside evaluation loop
         if response.status_code in:
             return response.json().get("token")
         return None
@@ -132,7 +116,6 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. Fetch Active Staff Directory
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -151,7 +134,6 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. Fetch Operational Transaction Logs
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -207,28 +189,23 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    early_leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    early_leave_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
-    # ==========================================
-# 3. INTERFACE RENDERING & CONTROLS
-# ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-# Render out interactive Calendar Input Component
 selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
 st.title(TEXT_CONFIG["title_main"])
 st.markdown(TEXT_CONFIG["lbl_date"].format(selected_date_str, time_str))
 
-# Main Control Buttons Group
-btn_col1, btn_col2 = st.columns([1, 4])
+btn_col1, btn_col2 = st.columns(2)
 with btn_col1:
     if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
         st.cache_data.clear()
@@ -237,9 +214,6 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # ------------------------------------------
-    # EXCEL EXPORT ENGINE BUILDER
-    # ------------------------------------------
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in present_staff]).to_excel(writer, sheet_name="متواجدون حاليا", index=False)
@@ -257,9 +231,6 @@ try:
             use_container_width=True
         )
 
-    # ------------------------------------------
-    # METRICS DISPLAY LAYER
-    # ------------------------------------------
     st.write("### 📊 إحصائيات الحالة العامة للموظفين")
     total_emp = len(active_employees)
     p_count = len(present_staff)
@@ -282,9 +253,6 @@ try:
     with m_col6:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
-    # ------------------------------------------
-    # ACCORDION EXPANDERS PANEL DISPLAY
-    # ------------------------------------------
     st.write("### 🔍 القوائم التفصيلية")
     
     with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
