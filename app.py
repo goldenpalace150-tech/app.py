@@ -196,6 +196,9 @@ def load_attendance_data_from_api(selected_date_str):
     checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
+# ==========================================
+# 3. INTERFACE RENDERING & CONTROLS (MODIFIED FOR NATIVE EXCEL EXPORT)
+# ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
@@ -214,8 +217,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
+    # محرك تصدير معدل: يستخدم التصدير الافتراضي المتوافق بدون الحاجة لحزمة openpyxl
     excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter' if 'xlsxwriter' in globals() else None) as writer:
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in present_staff]).to_excel(writer, sheet_name="متواجدون حاليا", index=False)
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in late_staff]).to_excel(writer, sheet_name="المتأخرون", index=False)
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t_in, "وقت الانصراف المبكر": t_out} for c, n, t_in, t_out in early_leave_staff]).to_excel(writer, sheet_name="خروج مبكر", index=False)
@@ -305,3 +309,4 @@ except Exception as e:
     if st.checkbox("عرض سجلات الأخطاء البرمجية (Debug Logs)"):
         for log in st.session_state.get("debug_logs", []):
             st.text(log)
+
