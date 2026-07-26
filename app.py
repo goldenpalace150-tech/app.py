@@ -11,14 +11,13 @@ TEXT_CONFIG = {
     "page_title": "حضور القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
     "lbl_date": "📅 التاريخ الحالي في سوريا: **{}**  │  ⏰ الوقت الحالي: **{}**",
-    "lbl_picker": "📅 اختر التاريخ المراد عرض بياناته:",
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "success_no_late": "🎉 لا يوجد متأخرين in هذا التاريخ!",
+    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "absent_row": "🔹 **{}** (كود: {})",
-    "success_no_absent": "🎉 لا يوجد غيابات in هذا التاريخ!",
+    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "info_no_present": "لا يوجد موظفين منتظمين متواجدين حالياً.",
@@ -180,7 +179,6 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            # FIXED LINE: Grabs the single first punch element safely using index 0
             first_punch = user_punches[0]
             punch_count = len(user_punches)
             time_in_clean = first_punch.strftime('%I:%M %p')
@@ -204,13 +202,10 @@ def load_attendance_data_from_api(selected_date_str):
 now_syria = datetime.now(SYRIA_TZ)
 current_today = now_syria.date()
 time_str = now_syria.strftime('%I:%M:%S %p')
+selected_date_str = current_today.strftime('%Y-%m-%d')
 
 st.title(TEXT_CONFIG["title_main"])
-st.markdown(TEXT_CONFIG["lbl_date"].format(current_today.strftime('%Y-%m-%d'), time_str))
-
-# Compact setup control row
-selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
-selected_date_str = selected_date.strftime('%Y-%m-%d')
+st.markdown(TEXT_CONFIG["lbl_date"].format(selected_date_str, time_str))
 
 if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
     st.cache_data.clear()
@@ -224,7 +219,7 @@ try:
     # Function to change state safely on click handlers
     def toggle_accordion(view_name):
         if st.session_state["active_accordion"] == view_name:
-            st.session_state["active_accordion"] = "none" # Hide if clicked again
+            st.session_state["active_accordion"] = "none"
         else:
             st.session_state["active_accordion"] = view_name
 
