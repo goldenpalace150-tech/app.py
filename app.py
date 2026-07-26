@@ -35,7 +35,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 st.markdown(TEXT_CONFIG["style_align"], unsafe_allow_html=True)
 
-# Configurations
+# Application Configurations
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -67,7 +67,7 @@ def get_auth_token():
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
         if response.status_code == 200 or response.status_code == 201:
             token = response.json().get("token")
-            log_debug(f"Auth Success! Token truncated: {token[:10]}...")
+            log_debug(f"Auth Success! Token retrieved.")
             return token
         else:
             st.error(f"فشل مصادقة API الحساب (Code: {response.status_code})")
@@ -88,92 +88,70 @@ def load_attendance_data_from_api(selected_date_str):
         "Content-Type": "application/json"
     }
     
-    st.session_state["debug_logs"] = [] # Reset logs on refresh
+    st.session_state["debug_logs"] = [] # Reset on refresh
     
-    # Fetch Employees (With fallback paths)
-    emp_endpoints = [
-        f"{BASE_URL}/api/personnel/employees/?page_size=1000",
-        f"{BASE_URL}/api/employees/?page_size=1000"
-    ]
+    # 1. Fetch Employee List (Manual Section 5.1)
+    emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
+    log_debug(f"Querying Employees: {emp_url}")
     
     all_employees = []
-    for url in emp_endpoints:
-        log_debug(f"Trying Employee Endpoint: {url}")
-        try:
-            emp_res = requests.get(url, headers=headers, timeout=15)
-            log_debug(f"Employee Endpoint Response Status: {emp_res.status_code}")
-            if emp_res.status_code == 200:
-                res_json = emp_res.json()
-                all_employees = res_json.get("results", res_json if isinstance(res_json, list) else [])
-                log_debug(f"Found {len(all_employees)} raw employee profiles.")
-                if all_employees:
-                    break
-        except Exception as e:
-            log_debug(f"Employee Endpoint Error: {str(e)}")
+    try:
+        emp_res = requests.get(emp_url, headers=headers, timeout=15)
+        log_debug(f"Employees Response Code: {emp_res.status_code}")
+        if emp_res.status_code == 200:
+            all_employees = emp_res.json().get("data", [])
+            log_debug(f"Parsed {len(all_employees)} employee records.")
+    except Exception as e:
+        log_debug(f"Employee Request Error: {str(e)}")
 
     active_employees = {}
     for emp in all_employees:
-        code = str(emp.get("emp_code", emp.get("pin", "")))
+        code = str(emp.get("emp_code", ""))
         if code and code not in EXCLUDED_MANAGEMENT_CODES:
             first_name = emp.get("first_name", "") or ""
             last_name = emp.get("last_name", "") or ""
             full_name = f"{first_name} {last_name}".strip()
-            if not full_name:
-                full_name = emp.get("nickname", "") or emp.get("name", "") or f"User {code}"
-            active_employees[code] = clean_txt(full_name)
+            active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    log_debug(f"Filtered to {len(active_employees)} active processing tracking codes.")
-
-    # Fetch Logs (With fallback paths)
-    logs_endpoints = [
-        f"{BASE_URL}/api/attendance/logs/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000",
-        f"{BASE_URL}/api/iclock/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000",
-        f"{BASE_URL}/api/transactions/?punch_date={selected_date_str}&page_size=5000"
-    ]
+    # 2. Fetch Transaction Logs (Manual Section 9.1)
+    logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
+    log_debug(f"Querying Transaction Logs: {logs_url}")
     
     raw_logs = []
-    for url in logs_endpoints:
-        log_debug(f"Trying Logs Endpoint: {url}")
-        try:
-            logs_res = requests.get(url, headers=headers, timeout=15)
-            log_debug(f"Logs Endpoint Response Status: {logs_res.status_code}")
-            if logs_res.status_code == 200:
-                res_json = logs_res.json()
-                raw_logs = res_json.get("results", res_json if isinstance(res_json, list) else [])
-                log_debug(f"Found {len(raw_logs)} raw punch items.")
-                if raw_logs:
-                    break
-        except Exception as e:
-            log_debug(f"Logs Endpoint Error: {str(e)}")
+    try:
+        logs_res = requests.get(logs_url, headers=headers, timeout=15)
+        log_debug(f"Logs Response Code: {logs_res.status_code}")
+        if logs_res.status_code == 200:
+            raw_logs = logs_res.json().get("data", [])
+            log_debug(f"Parsed {len(raw_logs)} dynamic punch events.")
+    except Exception as e:
+        log_debug(f"Logs Request Error: {str(e)}")
 
+    # Collate timestamps per tracking ID
     emp_punches = {}
     for log in raw_logs:
-        code = str(log.get("emp_code", log.get("pin", log.get("emp_id", ""))))
+        code = str(log.get("emp_code", ""))
         if code in active_employees:
-            punch_time_str = log.get("punch_time", log.get("punch_date", ""))
-            if not punch_time_str:
-                continue
-            try:
-                p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
-            except ValueError:
+            punch_time_str = log.get("punch_time", "")
+            if punch_time_str:
                 try:
-                    p_time = datetime.fromisoformat(punch_time_str.replace("Z", ""))
+                    p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
+                    if code not in emp_punches:
+                        emp_punches[code] = []
+                    emp_punches[code].append(p_time)
                 except Exception:
                     continue
-                
-            if code not in emp_punches:
-                emp_punches[code] = []
-            emp_punches[code].append(p_time)
 
     for code in emp_punches:
         emp_punches[code].sort()
 
     present_staff, late_staff, full_absent_staff = [], [], []
 
+    # Map state structures
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches
+            first_punch = user_punches[0]
             punch_count = len(user_punches)
             time_in_clean = first_punch.strftime('%I:%M %p')
 
@@ -185,9 +163,9 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return present_staff, late_staff, full_absent_staff
 # ==========================================
@@ -205,7 +183,7 @@ selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
 if st.button(TEXT_CONFIG["btn_refresh"]):
-    st.cache_data.clear()  # Clear API query cache records completely
+    st.cache_data.clear()  # Purge old operational values
     st.rerun()
 
 try:
@@ -245,6 +223,6 @@ except Exception as e:
 # ==========================================
 st.write("---")
 with st.expander("🛠️ معلومات التصحيح المباشرة / Live API Debug Logger"):
-    st.write("If values are zero, check which endpoints below returned 0 rows or error codes:")
+    st.write("Review endpoints and server data payloads below:")
     for log in st.session_state.get("debug_logs", []):
         st.text(log)
