@@ -110,8 +110,7 @@ def load_attendance_data_from_api(selected_date_str):
                 p_time = datetime.strptime(punch_time_str, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 p_time = datetime.fromisoformat(punch_time_str.replace("Z", ""))
-                
-            if code not in emp_punches:
+                            if code not in emp_punches:
                 emp_punches[code] = []
             emp_punches[code].append(p_time)
 
