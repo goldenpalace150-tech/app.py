@@ -46,11 +46,17 @@ EMAIL = st.secrets["biotime"]["email"]
 PASSWORD = st.secrets["biotime"]["password"]
 COMPANY = st.secrets["biotime"]["company"]
 
+# Initialize a debug logger list in session state
+if "debug_logs" not in st.session_state:
+    st.session_state["debug_logs"] = []
+
+def log_debug(message):
+    st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
-
-@st.cache_data(ttl=300)  # Cache auth token for 5 minutes to prevent redundant login calls
+@st.cache_data(ttl=300)  # Cache auth token for 5 minutes
 def get_auth_token():
     payload = {
         "email": EMAIL,
@@ -59,14 +65,17 @@ def get_auth_token():
     }
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # FIXED LINE BELOW
         if response.status_code == 200 or response.status_code == 201:
-            return response.json().get("token")
+            token = response.json().get("token")
+            log_debug(f"Auth Success! Token truncated: {token[:10]}...")
+            return token
         else:
             st.error(f"فشل مصادقة API الحساب (Code: {response.status_code})")
+            log_debug(f"Auth Failed Code {response.status_code}: {response.text}")
             return None
     except Exception as e:
         st.error(f"تعذر الاتصال بـ API Token: {e}")
+        log_debug(f"Auth Exception: {str(e)}")
         return None
 
 def load_attendance_data_from_api(selected_date_str):
@@ -79,75 +88,108 @@ def load_attendance_data_from_api(selected_date_str):
         "Content-Type": "application/json"
     }
     
-    # 1. Fetch active employees
-    emp_endpoint = f"{BASE_URL}/api/personnel/employees/?page_size=1000"
-    emp_res = requests.get(emp_endpoint, headers=headers, timeout=15)
-    all_employees = emp_res.json().get("results", []) if emp_res.status_code == 200 else []
+    st.session_state["debug_logs"] = [] # Reset logs on refresh
     
-    # Filter active, non-management personnel locally
+    # Fetch Employees (With fallback paths)
+    emp_endpoints = [
+        f"{BASE_URL}/api/personnel/employees/?page_size=1000",
+        f"{BASE_URL}/api/employees/?page_size=1000"
+    ]
+    
+    all_employees = []
+    for url in emp_endpoints:
+        log_debug(f"Trying Employee Endpoint: {url}")
+        try:
+            emp_res = requests.get(url, headers=headers, timeout=15)
+            log_debug(f"Employee Endpoint Response Status: {emp_res.status_code}")
+            if emp_res.status_code == 200:
+                res_json = emp_res.json()
+                all_employees = res_json.get("results", res_json if isinstance(res_json, list) else [])
+                log_debug(f"Found {len(all_employees)} raw employee profiles.")
+                if all_employees:
+                    break
+        except Exception as e:
+            log_debug(f"Employee Endpoint Error: {str(e)}")
+
     active_employees = {}
     for emp in all_employees:
-        code = str(emp.get("emp_code"))
-        if code not in EXCLUDED_MANAGEMENT_CODES:
+        code = str(emp.get("emp_code", emp.get("pin", "")))
+        if code and code not in EXCLUDED_MANAGEMENT_CODES:
             first_name = emp.get("first_name", "") or ""
             last_name = emp.get("last_name", "") or ""
             full_name = f"{first_name} {last_name}".strip()
             if not full_name:
-                full_name = emp.get("nickname", "") or f"User {code}"
+                full_name = emp.get("nickname", "") or emp.get("name", "") or f"User {code}"
             active_employees[code] = clean_txt(full_name)
 
-    # 2. Fetch specific date transactions logs
-    logs_endpoint = f"{BASE_URL}/api/attendance/logs/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
-    logs_res = requests.get(logs_endpoint, headers=headers, timeout=15)
-    raw_logs = logs_res.json().get("results", []) if logs_res.status_code == 200 else []
+    log_debug(f"Filtered to {len(active_employees)} active processing tracking codes.")
 
-    # Map transaction punches per employee locally
+    # Fetch Logs (With fallback paths)
+    logs_endpoints = [
+        f"{BASE_URL}/api/attendance/logs/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000",
+        f"{BASE_URL}/api/iclock/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000",
+        f"{BASE_URL}/api/transactions/?punch_date={selected_date_str}&page_size=5000"
+    ]
+    
+    raw_logs = []
+    for url in logs_endpoints:
+        log_debug(f"Trying Logs Endpoint: {url}")
+        try:
+            logs_res = requests.get(url, headers=headers, timeout=15)
+            log_debug(f"Logs Endpoint Response Status: {logs_res.status_code}")
+            if logs_res.status_code == 200:
+                res_json = logs_res.json()
+                raw_logs = res_json.get("results", res_json if isinstance(res_json, list) else [])
+                log_debug(f"Found {len(raw_logs)} raw punch items.")
+                if raw_logs:
+                    break
+        except Exception as e:
+            log_debug(f"Logs Endpoint Error: {str(e)}")
+
     emp_punches = {}
     for log in raw_logs:
-        code = str(log.get("emp_code"))
+        code = str(log.get("emp_code", log.get("pin", log.get("emp_id", ""))))
         if code in active_employees:
-            punch_time_str = log.get("punch_time")
+            punch_time_str = log.get("punch_time", log.get("punch_date", ""))
+            if not punch_time_str:
+                continue
             try:
-                p_time = datetime.strptime(punch_time_str, "%Y-%m-%d %H:%M:%S")
+                p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                p_time = datetime.fromisoformat(punch_time_str.replace("Z", ""))
+                try:
+                    p_time = datetime.fromisoformat(punch_time_str.replace("Z", ""))
+                except Exception:
+                    continue
                 
             if code not in emp_punches:
                 emp_punches[code] = []
             emp_punches[code].append(p_time)
 
-    # Sort array punches chronologically per person
     for code in emp_punches:
         emp_punches[code].sort()
 
     present_staff, late_staff, full_absent_staff = [], [], []
 
-    # Process metrics against employee configurations
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches[0]
+            first_punch = user_punches
             punch_count = len(user_punches)
             time_in_clean = first_punch.strftime('%I:%M %p')
 
-            # Late rule check (Entry after 09:15 AM)
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
-            # Odd/Even punch count logic (Odd count means checked in but not checked out yet)
             if punch_count % 2 != 0:
                 present_staff.append((code, name, time_in_clean))
         else:
-            # Employee has 0 logs registered for this date range
             full_absent_staff.append((code, name))
 
-    # Sort results sequentially by employee code
-    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
     
     return present_staff, late_staff, full_absent_staff
-
 # ==========================================
 # 3. INTERFACE RENDERING
 # ==========================================
@@ -159,7 +201,6 @@ st.title(TEXT_CONFIG["title_main"])
 st.subheader(TEXT_CONFIG["title_sub"])
 st.markdown(TEXT_CONFIG["lbl_date"].format(current_today.strftime('%Y-%m-%d'), time_str))
 
-# Interactive local system date picker
 selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
@@ -198,3 +239,12 @@ try:
             
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
+
+# ==========================================
+# 4. LIVE DEVELOPER DEBUG PANEL (BOTTOM)
+# ==========================================
+st.write("---")
+with st.expander("🛠️ معلومات التصحيح المباشرة / Live API Debug Logger"):
+    st.write("If values are zero, check which endpoints below returned 0 rows or error codes:")
+    for log in st.session_state.get("debug_logs", []):
+        st.text(log)
