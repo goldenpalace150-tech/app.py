@@ -16,19 +16,22 @@ TEXT_CONFIG = {
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل (CSV/Excel)",
     
     # رؤوس القوائم
-    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
-    "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
-    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
-    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
-    "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
+    "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
+    "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
+    "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
+    "header_checkout": "🏁 الموظفون الذين انصرفوا وسجلوا خروج ({})",
     
     # نصوص الأسطر التفصيلية
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
-    "all_row": "👤 **{}** (كود: {})",
     
+    # رسائل الحالات الفارغة
+    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
+    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
+    "info_no_present": "لا يوجد موظفين متواجدين حالياً في المنشأة.",
+    "info_no_checkout": "لا توجد عمليات انصراف مسجلة حتى الآن.",
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
 }
 
@@ -40,33 +43,42 @@ st.markdown("""
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* تنسيق الأزرار العلوية لتظهر كبطاقات تفاعلية */
-    div.stButton > button {
-        width: 100% !important;
-        background-color: #ffffff !important;
-        color: #1e293b !important;
-        border: 1px solid #eef2f5 !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.06) !important;
-        border-radius: 8px !important;
-        padding: 15px !important;
-        text-align: right !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
-        margin-bottom: 5px !important;
+    .metric-card {
+        background-color: #ffffff;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+        border: 1px solid #eef2f5;
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
     }
-    div.stButton > button:hover {
-        border-color: #cbd5e1 !important;
-        background-color: #f8fafc !important;
+    .metric-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        margin-left: 12px;
     }
+    .icon-total { background-color: #e2e8f0; color: #475569; }
+    .icon-present { background-color: #e8f5e9; color: #4caf50; }
+    .icon-absent { background-color: #ffebee; color: #f44336; }
+    .icon-late { background-color: #fff8e1; color: #ffc107; }
+    .icon-checkout { background-color: #e0f7fa; color: #00bcd4; }
+    
+    .metric-info { display: flex; flex-direction: column; flex-grow: 1; }
+    .metric-title { font-size: 13px; color: #64748b; font-weight: 500; }
+    .metric-value { font-size: 22px; font-weight: bold; color: #1e293b; }
     
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
         border-radius: 6px;
-        padding: 15px;
-        margin-top: 10px;
-        margin-bottom: 25px;
+        padding: 12px;
+        margin-bottom: 15px;
         direction: rtl;
     }
     </style>
@@ -83,9 +95,6 @@ COMPANY = st.secrets["biotime"]["company"]
 
 if "debug_logs" not in st.session_state:
     st.session_state["debug_logs"] = []
-
-if "selected_view" not in st.session_state:
-    st.session_state["selected_view"] = "present"
 
 def log_debug(message):
     st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -112,6 +121,7 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
+    # 1. جلب الموظفين النشطين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -130,6 +140,7 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
+    # 2. جلب سجلات البصمات
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -165,7 +176,6 @@ def load_attendance_data_from_api(selected_date_str):
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
             
-            # تم الإصلاح النهائي والمؤكد عبر الفهرس [0] لمنع حدوث خطأ استدعاء القوائم نهائياً
             first_punch = user_punches[0]
             last_punch = user_punches[-1]
             punch_count = len(user_punches)
@@ -173,12 +183,15 @@ def load_attendance_data_from_api(selected_date_str):
             time_in_clean = first_punch.strftime('%I:%M %p')
             time_out_clean = last_punch.strftime('%I:%M %p')
 
+            # فحص التأخير الصباحي (بعد 9:15 ص)
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
+            # تصنيف الحالة بناءً على زوجية وفردية عدد البصمات بدون أي قيود زمنية
             if punch_count % 2 != 0:
                 present_staff.append((code, name, time_in_clean))
             else:
+                # أي موظف بصماته زوجية يعتبر انصرف وسجل خروج بشكل كامل بغض النظر عن وقت البصمة
                 checkout_staff.append((code, name, time_out_clean))
         else:
             full_absent_staff.append((code, name))
@@ -194,6 +207,7 @@ def load_attendance_data_from_api(selected_date_str):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
+# تعديل قاطع: استخدام تاريخ اليوم فقط دائماً وإلغاء أداة تفاعيل التواريخ السابقة
 selected_date_str = now_syria.strftime('%Y-%m-%d')
 
 st.title(TEXT_CONFIG["title_main"])
@@ -208,7 +222,7 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # تصدير ملف الـ CSV المشفر المتوافق مع برامج الـ Excel واللغة العربية
+    # تجميع التقارير الإحصائية الموحدة لتصديرها كملف متوافق مع Excel ومحمي برمجياً
     report_rows = []
     for c, n, t in present_staff:
         report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": t, "وقت الانصراف": "متواجد حالياً", "الحالة اليومية": "متواجد في العمل"})
@@ -231,82 +245,68 @@ try:
             use_container_width=True
         )
 
-    # حساب المؤشرات الإحصائية العامة
+    # ------------------------------------------
+    # شبكة المؤشرات الإحصائية الخمسة المحدثة
+    # ------------------------------------------
+    st.write("### 📊 إحصائيات الحالة العامة للموظفين اليوم")
     total_emp = len(active_employees)
     p_count = len(present_staff)
+    a_count = len(full_absent_staff)
     l_count = len(late_staff)
     c_count = len(checkout_staff)
-    a_count = len(full_absent_staff)
     
-    st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين")
-    
-    # تفعيل أزرار البطاقات الطولية التفاعلية المتطابقة مع شكل الجوال
-    if st.button(f"👥 إجمالي عدد موظفي الشركة ── {total_emp}"):
-        st.session_state["selected_view"] = "all"
-        
-    if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count}"):
-        st.session_state["selected_view"] = "present"
-        
-    if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count}"):
-        st.session_state["selected_view"] = "late"
-        
-    if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count}"):
-        st.session_state["selected_view"] = "checkout"
-        
-    if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
-        st.session_state["selected_view"] = "absent"
+    m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+    with m_col1:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-total">👥</div><div class="metric-info"><span class="metric-title">إجمالي العدد</span><span class="metric-value">{total_emp}</span></div></div>', unsafe_allow_html=True)
+    with m_col2:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-present">🟢</div><div class="metric-info"><span class="metric-title">المتواجدون حالياً</span><span class="metric-value">{p_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col3:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-late">⏰</div><div class="metric-info"><span class="metric-title">المتأخرين اليوم</span><span class="metric-value">{l_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col4:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-checkout">✅</div><div class="metric-info"><span class="metric-title">المنصرفون اليوم</span><span class="metric-value">{c_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col5:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل اليوم</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
     # ------------------------------------------
-    # منطق عرض القوائم الحية التفاعلية على الهاتف
+    # لوحات التفاصيل المنسدلة لليوم الحالي
     # ------------------------------------------
-    current_view = st.session_state["selected_view"]
+    st.write("### 🔍 القوائم التفصيلية للحضور والانصراف")
     
-    if current_view == "all":
-        st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x[0]) if x[0].isdigit() else x[0]):
-            st.markdown(TEXT_CONFIG["all_row"].format(name, code))
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-    elif current_view == "present":
-        st.write(f"### {TEXT_CONFIG['header_present'].format(p_count)}")
-        if present_staff:
-            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-            for code, name, time_in in present_staff:
-                st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("لا يوجد موظفين متواجدين حالياً.")
-            
-    elif current_view == "late":
-        st.write(f"### {TEXT_CONFIG['header_late'].format(l_count)}")
+    with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
         if late_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             for code, name, time_in in late_staff:
                 st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in))
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.success("🎉 لا يوجد متأخرين اليوم!")
-            
-    elif current_view == "checkout":
-        st.write(f"### {TEXT_CONFIG['header_checkout'].format(c_count)}")
+            st.success(TEXT_CONFIG["success_no_late"])
+
+    with st.expander(TEXT_CONFIG["header_present"].format(p_count), expanded=False):
+        if present_staff:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name, time_in in present_staff:
+                st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info(TEXT_CONFIG["info_no_present"])
+
+    with st.expander(TEXT_CONFIG["header_checkout"].format(c_count), expanded=False):
         if checkout_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             for code, name, time_out in checkout_staff:
                 st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
-            
-    elif current_view == "absent":
-        st.write(f"### {TEXT_CONFIG['header_absent'].format(a_count)}")
+            st.info(TEXT_CONFIG["info_no_checkout"])
+
+    with st.expander(TEXT_CONFIG["header_absent"].format(a_count), expanded=False):
         if full_absent_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             for code, name in full_absent_staff:
                 st.markdown(TEXT_CONFIG["absent_row"].format(name, code))
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.success("🎉 لا يوجد غيابات اليوم!")
+            st.success(TEXT_CONFIG["success_no_absent"])
 
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
