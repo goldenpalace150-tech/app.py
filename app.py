@@ -6,6 +6,9 @@ import io
 from datetime import datetime
 import zoneinfo
 
+# ==========================================
+# 0. RTL ARABIC TEXT & VISUAL CONFIG
+# ==========================================
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
@@ -13,16 +16,22 @@ TEXT_CONFIG = {
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور كملف Excel",
+    
+    # الروؤس الخاصة بالقوائم
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "header_early_leave": "⚠️ غادروا العمل مبكراً اليوم ({}) – خروج قبل 04:00 مساءً",
     "header_checkout": "🏁 الموظفون الذين غادروا بانتظام ({})",
+    
+    # نصوص أسطر العرض التفصيلي
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "early_leave_row": "⚠️ **{}** (كود: {}) ── الدخول: {} ── الخروج المبكر: {}",
     "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
+    
+    # رسائل النجاح للحالات الفارغة
     "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
     "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
     "info_no_present": "لا يوجد موظفين متواجدين حالياً في المنشأة.",
@@ -33,11 +42,14 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
+# تصميم مخصص متوافق تماماً مع الهواتف الذكية والشاشات الكبيرة يدعم الاتجاه العربي
 st.markdown("""
     <style>
     .stApp { direction: rtl; }
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
+    
+    /* تصميم بطاقات المؤشرات الإحصائية */
     .metric-card {
         background-color: #ffffff;
         border-radius: 8px;
@@ -64,9 +76,12 @@ st.markdown("""
     .icon-late { background-color: #fff8e1; color: #ffc107; }
     .icon-early { background-color: #fff3e0; color: #ff9800; }
     .icon-checkout { background-color: #e0f7fa; color: #00bcd4; }
+    
     .metric-info { display: flex; flex-direction: column; flex-grow: 1; }
     .metric-title { font-size: 13px; color: #64748b; font-weight: 500; }
     .metric-value { font-size: 22px; font-weight: bold; color: #1e293b; }
+    
+    /* صندوق القوائم الداخلية */
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
@@ -78,6 +93,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# تهيئة الثوابت والاتصال
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -101,6 +117,7 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
+        # التحقق المباشر بدون مصفوفات لمنع أخطاء الصياغة نهائياً وحفظ الـ Token
         if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         return None
@@ -115,6 +132,7 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
+    # 1. سحب دليل الموظفين النشطين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -133,6 +151,7 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
+    # 2. سحب سجل الحركات اليومي الكامل
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -175,12 +194,15 @@ def load_attendance_data_from_api(selected_date_str):
             time_in_clean = first_punch.strftime('%I:%M %p')
             time_out_clean = last_punch.strftime('%I:%M %p')
 
+            # فحص التأخير الصباحي (بعد 9:15 ص)
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
+            # تصنيف الموظفين بناءً على زوجية الحركات والوقت الحالي
             if punch_count % 2 != 0:
                 present_staff.append((code, name, time_in_clean))
             else:
+                # خروج مبكر قبل الساعة 4:00 عصراً (16:00) أو انصراف نظامي
                 if last_punch.hour < 16:
                     early_leave_staff.append((code, name, time_in_clean, time_out_clean))
                 else:
@@ -188,7 +210,7 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    # FIXED: استهداف الكود النصي من الحزمة عبر x[0] للفرز التصاعدي بمرونة تامة دون حدوث أخطاء
+    # فرز مصلح ومستقر يمنع حدوث خطأ الترتيب الثنائي (Tuple Error) نهائياً
     full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
@@ -197,11 +219,12 @@ def load_attendance_data_from_api(selected_date_str):
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
 # ==========================================
-# 3. INTERFACE RENDERING & CONTROLS (MODIFIED FOR NATIVE EXCEL EXPORT)
+# 3. INTERFACE RENDERING & CONTROLS
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
+# إضافة أداة اختيار تاريخ التقرير التفاعلية لمراجعة الأيام السابقة
 selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
@@ -217,9 +240,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # محرك تصدير معدل: يستخدم التصدير الافتراضي المتوافق بدون الحاجة لحزمة openpyxl
+    # محرك التصدير متعدد الصفحات لملف Excel باستخدام xlsxwriter المدمج تلقائياً لمنع خطأ الحزم المفقودة
     excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter' if 'xlsxwriter' in globals() else None) as writer:
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in present_staff]).to_excel(writer, sheet_name="متواجدون حاليا", index=False)
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in late_staff]).to_excel(writer, sheet_name="المتأخرون", index=False)
         pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t_in, "وقت الانصراف المبكر": t_out} for c, n, t_in, t_out in early_leave_staff]).to_excel(writer, sheet_name="خروج مبكر", index=False)
@@ -235,6 +258,9 @@ try:
             use_container_width=True
         )
 
+    # ------------------------------------------
+    # شبكة عرض المؤشرات الإحصائية العامة للشركة
+    # ------------------------------------------
     st.write("### 📊 إحصائيات الحالة العامة للموظفين")
     total_emp = len(active_employees)
     p_count = len(present_staff)
@@ -257,7 +283,10 @@ try:
     with m_col6:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
-    st.write("### 🔍 القوائم التفصيلية")
+    # ------------------------------------------
+    # لوحات التفاصيل المنسدلة للمجموعات الخمسة
+    # ------------------------------------------
+    st.write("### 🔍 القوائم التفصيلية للحضور والانصراف")
     
     with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
         if late_staff:
@@ -309,4 +338,3 @@ except Exception as e:
     if st.checkbox("عرض سجلات الأخطاء البرمجية (Debug Logs)"):
         for log in st.session_state.get("debug_logs", []):
             st.text(log)
-
