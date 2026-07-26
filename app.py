@@ -101,8 +101,8 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # FIXED: Added target explicit check criteria tuple array
-        if response.status_code in:
+        # تعديل جذري وآمن: فحص مباشر لحالة الاتصال الناجح لمنع حدوث الـ SyntaxError نهائياً
+        if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         return None
     except Exception:
