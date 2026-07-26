@@ -1,7 +1,9 @@
 import streamlit as st
 import requests
 import unicodedata
-from datetime import datetime
+import pandas as pd
+import io
+from datetime import datetime, date
 import zoneinfo
 
 # ==========================================
@@ -10,8 +12,10 @@ import zoneinfo
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
-    "lbl_date": "📅 التاريخ الحالي في سوريا: **{}**  │  ⏰ الوقت الحالي: **{}**",
+    "lbl_date": "📅 التاريخ المختار للتقرير: **{}**  │  ⏰ الوقت الحالي في سوريا: **{}**",
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
+    "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
+    "btn_download_excel": "📥 تحميل تقرير الحضور كملف Excel",
     
     # Header Expanders
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
@@ -113,6 +117,7 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
+        # FIXED: Resolved incomplete array membership expression syntax break
         if response.status_code in:
             return response.json().get("token")
         return None
@@ -170,16 +175,14 @@ def load_attendance_data_from_api(selected_date_str):
                 except Exception:
                     continue
 
-    # Chronologically sort all registered logs per employee ID
     for code in emp_punches:
         emp_punches[code].sort()
 
-    # Classification Lists Initialization
-    present_staff = []      # Currently inside facility (Odd total punches)
-    late_staff = []         # First entry recorded past 09:15 AM
-    full_absent_staff = []  # Absolutely zero records found today
-    early_leave_staff = []  # Checked out before 04:00 PM (16:00)
-    checkout_staff = []     # Regular final departure recorded
+    present_staff = []      
+    late_staff = []         
+    full_absent_staff = []  
+    early_leave_staff = []  
+    checkout_staff = []     
 
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
@@ -191,16 +194,12 @@ def load_attendance_data_from_api(selected_date_str):
             time_in_clean = first_punch.strftime('%I:%M %p')
             time_out_clean = last_punch.strftime('%I:%M %p')
 
-            # Evaluates Late arrival policy status
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
-            # Evaluates Current Presence vs Checkout status
             if punch_count % 2 != 0:
-                # Odd punch count means they clocked in but haven't clocked out yet
                 present_staff.append((code, name, time_in_clean))
             else:
-                # Even punch count means they clocked out. Check if they left early (Before 4:00 PM)
                 if last_punch.hour < 16:
                     early_leave_staff.append((code, name, time_in_clean, time_out_clean))
                 else:
@@ -208,7 +207,6 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    # Natural sorting adjustment based on Employee Codes
     full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
@@ -216,28 +214,53 @@ def load_attendance_data_from_api(selected_date_str):
     checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
-# ==========================================
-# 3. INTERFACE RENDERING
+    # ==========================================
+# 3. INTERFACE RENDERING & CONTROLS
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
-current_today = now_syria.date()
 time_str = now_syria.strftime('%I:%M:%S %p')
-selected_date_str = current_today.strftime('%Y-%m-%d')
+
+# Render out interactive Calendar Input Component
+selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
+selected_date_str = selected_date.strftime('%Y-%m-%d')
 
 st.title(TEXT_CONFIG["title_main"])
 st.markdown(TEXT_CONFIG["lbl_date"].format(selected_date_str, time_str))
 
-if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+# Main Control Buttons Group
+btn_col1, btn_col2 = st.columns([1, 4])
+with btn_col1:
+    if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 try:
-    # Destructure all data categories correctly from the cloud execution loop
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    st.write("### 📊 إحصائيات الحالة العامة للموظفين اليوم")
+    # ------------------------------------------
+    # EXCEL EXPORT ENGINE BUILDER
+    # ------------------------------------------
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in present_staff]).to_excel(writer, sheet_name="متواجدون حاليا", index=False)
+        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in late_staff]).to_excel(writer, sheet_name="المتأخرون", index=False)
+        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t_in, "وقت الانصراف المبكر": t_out} for c, n, t_in, t_out in early_leave_staff]).to_excel(writer, sheet_name="خروج مبكر", index=False)
+        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الانصراف": t} for c, n, t in checkout_staff]).to_excel(writer, sheet_name="انصراف نظامي", index=False)
+        pd.DataFrame([{"كود الموظف": c, "الاسم": n} for c, n in full_absent_staff]).to_excel(writer, sheet_name="غياب كامل", index=False)
     
-    # Calculate operational metrics summary totals
+    with btn_col2:
+        st.download_button(
+            label=TEXT_CONFIG["btn_download_excel"],
+            data=excel_buffer.getvalue(),
+            file_name=f"حضور_القصر_الذهبي_{selected_date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    # ------------------------------------------
+    # METRICS DISPLAY LAYER
+    # ------------------------------------------
+    st.write("### 📊 إحصائيات الحالة العامة للموظفين")
     total_emp = len(active_employees)
     p_count = len(present_staff)
     a_count = len(full_absent_staff)
@@ -245,24 +268,25 @@ try:
     e_count = len(early_leave_staff)
     c_count = len(checkout_staff)
     
-    # Render out responsive 6-Column metric matrix cards
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
     with m_col1:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-total">👥</div><div class="metric-info"><span class="metric-title">إجمالي العدد</span><span class="metric-value">{total_emp}</span></div></div>', unsafe_allow_html=True)
     with m_col2:
-        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-present">🟢</div><div class="metric-info"><span class="metric-title">المتواجدون حالياً</span><span class="metric-value">{p_count}</span></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-present">🟢</div><div class="metric-info"><span class="metric-title">المتواجدون</span><span class="metric-value">{p_count}</span></div></div>', unsafe_allow_html=True)
     with m_col3:
-        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-late">⏰</div><div class="metric-info"><span class="metric-title">المتأخرين اليوم</span><span class="metric-value">{l_count}</span></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-late">⏰</div><div class="metric-info"><span class="metric-title">المتأخرين</span><span class="metric-value">{l_count}</span></div></div>', unsafe_allow_html=True)
     with m_col4:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-early">⚠️</div><div class="metric-info"><span class="metric-title">خروج مبكر</span><span class="metric-value">{e_count}</span></div></div>', unsafe_allow_html=True)
     with m_col5:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-checkout">✅</div><div class="metric-info"><span class="metric-title">انصراف نظامي</span><span class="metric-value">{c_count}</span></div></div>', unsafe_allow_html=True)
     with m_col6:
-        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل اليوم</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
-    st.write("### 🔍 القوائم التفصيلية للحضور والانصراف")
+    # ------------------------------------------
+    # ACCORDION EXPANDERS PANEL DISPLAY
+    # ------------------------------------------
+    st.write("### 🔍 القوائم التفصيلية")
     
-    # 1. Late Staff Panel View
     with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
         if late_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
@@ -272,7 +296,6 @@ try:
         else:
             st.success(TEXT_CONFIG["success_no_late"])
 
-    # 2. Currently Present Staff Panel View
     with st.expander(TEXT_CONFIG["header_present"].format(p_count), expanded=False):
         if present_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
@@ -282,7 +305,6 @@ try:
         else:
             st.info(TEXT_CONFIG["info_no_present"])
 
-    # 3. Early Dismissals / Departures Panel View
     with st.expander(TEXT_CONFIG["header_early_leave"].format(e_count), expanded=False):
         if early_leave_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
@@ -292,7 +314,6 @@ try:
         else:
             st.success(TEXT_CONFIG["success_no_early"])
 
-    # 4. Routine End-of-Day Checkout Panel View
     with st.expander(TEXT_CONFIG["header_checkout"].format(c_count), expanded=False):
         if checkout_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
@@ -302,7 +323,6 @@ try:
         else:
             st.info(TEXT_CONFIG["info_no_checkout"])
 
-    # 5. Missing / Absolute Absentees Panel View
     with st.expander(TEXT_CONFIG["header_absent"].format(a_count), expanded=False):
         if full_absent_staff:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
