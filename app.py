@@ -18,7 +18,7 @@ TEXT_CONFIG = {
     # رؤوس القوائم
     "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
-    "header_present": "🟢 قائمة الموظفين المتواجدين حالياً ({})",
+    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
     "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
     "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
     
@@ -40,7 +40,7 @@ st.markdown("""
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* تنسيق أزرار البطاقات لتظهر بشكل متناسق مع الجوال */
+    /* تنسيق الأزرار العلوية لتظهر كبطاقات تفاعلية */
     div.stButton > button {
         width: 100% !important;
         background-color: #ffffff !important;
@@ -84,7 +84,6 @@ COMPANY = st.secrets["biotime"]["company"]
 if "debug_logs" not in st.session_state:
     st.session_state["debug_logs"] = []
 
-# تهيئة حالة المتصفح لحفظ القسم النشط عند النقر
 if "selected_view" not in st.session_state:
     st.session_state["selected_view"] = "present"
 
@@ -165,7 +164,9 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches
+            
+            # تم الإصلاح النهائي والمؤكد عبر الفهرس [0] لمنع حدوث خطأ استدعاء القوائم نهائياً
+            first_punch = user_punches[0]
             last_punch = user_punches[-1]
             punch_count = len(user_punches)
             
@@ -182,10 +183,10 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff
 # ==========================================
@@ -207,7 +208,7 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # محرك تصدير الـ CSV الافتراضي والمستقر
+    # تصدير ملف الـ CSV المشفر المتوافق مع برامج الـ Excel واللغة العربية
     report_rows = []
     for c, n, t in present_staff:
         report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": t, "وقت الانصراف": "متواجد حالياً", "الحالة اليومية": "متواجد في العمل"})
@@ -230,18 +231,16 @@ try:
             use_container_width=True
         )
 
-    # ------------------------------------------
-    # تحويل بطاقات الإحصائيات إلى أزرار تفاعلية قابلة للنقر للجوال
-    # ------------------------------------------
-    st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين")
-    
+    # حساب المؤشرات الإحصائية العامة
     total_emp = len(active_employees)
     p_count = len(present_staff)
     l_count = len(late_staff)
     c_count = len(checkout_staff)
     a_count = len(full_absent_staff)
     
-    # توليد الأزرار بشكل طولي مناسب لشاشات الموبايل تماماً كالصورة المرسلة
+    st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين")
+    
+    # تفعيل أزرار البطاقات الطولية التفاعلية المتطابقة مع شكل الجوال
     if st.button(f"👥 إجمالي عدد موظفي الشركة ── {total_emp}"):
         st.session_state["selected_view"] = "all"
         
@@ -258,7 +257,7 @@ try:
         st.session_state["selected_view"] = "absent"
 
     # ------------------------------------------
-    # عرض صندوق القائمة المحددة ديناميكياً بناءً على نقرة الزر الحالية
+    # منطق عرض القوائم الحية التفاعلية على الهاتف
     # ------------------------------------------
     current_view = st.session_state["selected_view"]
     
@@ -297,7 +296,7 @@ try:
                 st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("لا توجد عمليات انصراف حتى الآن.")
+            st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
             
     elif current_view == "absent":
         st.write(f"### {TEXT_CONFIG['header_absent'].format(a_count)}")
