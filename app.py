@@ -17,21 +17,21 @@ TEXT_CONFIG = {
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل (CSV/Excel)",
     
-    # الروؤس الخاصة بالقوائم
+    # رؤوس القوائم
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "header_early_leave": "⚠️ غادروا العمل مبكراً اليوم ({}) – خروج قبل 04:00 مساءً",
     "header_checkout": "🏁 الموظفون الذين غادروا بانتظام ({})",
     
-    # نصوص أسطر العرض التفصيلي
+    # أسطر العرض المخصصة
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "early_leave_row": "⚠️ **{}** (كود: {}) ── الدخول: {} ── الخروج المبكر: {}",
     "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
     
-    # رسائل النجاح للحالات الفارغة
+    # رسائل الحالات الفارغة
     "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
     "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
     "info_no_present": "لا يوجد موظفين متواجدين حالياً في المنشأة.",
@@ -180,7 +180,9 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches
+            
+            # تم الإصلاح القاطع هنا: سحب العنصر الأول بدقة كـ datetime مستقل لتجنب خطأ الـ List object
+            first_punch = user_punches[0]
             last_punch = user_punches[-1]
             punch_count = len(user_punches)
             
@@ -200,11 +202,11 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    early_leave_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    early_leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
 # ==========================================
@@ -228,21 +230,19 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # تعديل جوهري: تجميع كافة الحالات في جدول موحد وتصديره بصيغة CSV مشفرة لفتحها مباشرة داخل Excel بدون أخطاء ومكتبات مفقودة
     report_rows = []
     for c, n, t in present_staff:
-        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t, "حالة الخروج": "متواجد حالياً", "تصنيف الحالة اليومية": "متواجد في العمل"})
+        report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": t, "وقت الانصراف": "متواجد حالياً", "الحالة اليومية": "متواجد في العمل"})
     for c, n, t in late_staff:
-        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t, "حالة الخروج": "-", "تصنيف الحالة اليومية": "متأخر صباحاً"})
+        report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": t, "وقت الانصراف": "-", "الحالة اليومية": "متأخر صباحاً"})
     for c, n, t_in, t_out in early_leave_staff:
-        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t_in, "حالة الخروج": t_out, "تصنيف الحالة اليومية": "خروج مبكر"})
+        report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": t_in, "وقت الانصراف": t_out, "الحالة اليومية": "خروج مبكر"})
     for c, n, t in checkout_staff:
-        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": "-", "حالة الخروج": t, "تصنيف الحالة اليومية": "انصراف نظامي"})
+        report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": "-", "وقت الانصراف": t, "الحالة اليومية": "انصراف نظامي"})
     for c, n in full_absent_staff:
-        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": "-", "حالة الخروج": "-", "تصنيف الحالة اليومية": "غياب كامل"})
+        report_rows.append({"كود الموظف": c, "الاسم": n, "وقت الدخول": "-", "وقت الانصراف": "-", "الحالة اليومية": "غياب كامل"})
         
     df_report = pd.DataFrame(report_rows)
-    # استخدام ترميز utf-8-sig لضمان قراءة الحروف العربية بشكل صحيح داخل جداول Excel
     csv_data = df_report.to_csv(index=False).encode('utf-8-sig')
     
     with btn_col2:
