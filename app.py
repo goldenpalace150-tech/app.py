@@ -8,87 +8,91 @@ import zoneinfo
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
 TEXT_CONFIG = {
-    "page_title": "حضور القصر الذهبي",
+    "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
     "lbl_date": "📅 التاريخ الحالي في سوريا: **{}**  │  ⏰ الوقت الحالي: **{}**",
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
+    
+    # Header Expanders
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
-    "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
-    "absent_row": "🔹 **{}** (كود: {})",
-    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
+    "header_early_leave": "⚠️ غادروا العمل مبكراً اليوم ({}) – خروج قبل 04:00 مساءً",
+    "header_checkout": "🏁 الموظفون الذين غادروا بانتظام ({})",
+    
+    # Dynamic Rows
+    "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
+    "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "info_no_present": "لا يوجد موظفين منتظمين متواجدين حالياً.",
+    "early_leave_row": "⚠️ **{}** (كود: {}) ── الدخول: {} ── الخروج المبكر: {}",
+    "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
+    
+    # Success State Empty Messages
+    "success_no_late": "🎉 لا يوجد متأخرين اليوم!",
+    "success_no_absent": "🎉 لا يوجد غيابات اليوم!",
+    "info_no_present": "لا يوجد موظفين متواجدين حالياً في المنشأة.",
+    "success_no_early": "🎉 لا يوجد حالات خروج مبكر اليوم!",
+    "info_no_checkout": "لا توجد عمليات انصراف مسجلة حتى الآن.",
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
 }
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
-# Custom CSS styling optimized for mobile responsive accordion cards
+# Custom CSS styling optimized for mobile responsive layout grid
 st.markdown("""
     <style>
+    .stApp { direction: rtl; }
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* Dashboard Card Styling */
+    /* Dashboard Card Grid Matrix Layout */
     .metric-card {
         background-color: #ffffff;
         border-radius: 8px;
-        padding: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        padding: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.06);
         border: 1px solid #eef2f5;
         display: flex;
         align-items: center;
-        margin-bottom: 5px;
+        margin-bottom: 12px;
     }
     .metric-icon {
-        width: 45px;
-        height: 45px;
+        width: 40px;
+        height: 40px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 22px;
-        margin-left: 15px;
+        font-size: 20px;
+        margin-left: 12px;
     }
     .icon-total { background-color: #e2e8f0; color: #475569; }
     .icon-present { background-color: #e8f5e9; color: #4caf50; }
     .icon-absent { background-color: #ffebee; color: #f44336; }
     .icon-late { background-color: #fff8e1; color: #ffc107; }
+    .icon-early { background-color: #fff3e0; color: #ff9800; }
+    .icon-checkout { background-color: #e0f7fa; color: #00bcd4; }
     
-    .metric-info {
-        display: flex;
-        flex-direction: column;
-    }
-    .metric-title {
-        font-size: 14px;
-        color: #64748b;
-        font-weight: 500;
-    }
-    .metric-value {
-        font-size: 24px;
-        font-weight: bold;
-        color: #1e293b;
-    }
+    .metric-info { display: flex; flex-direction: column; flex-grow: 1; }
+    .metric-title { font-size: 13px; color: #64748b; font-weight: 500; }
+    .metric-value { font-size: 22px; font-weight: bold; color: #1e293b; }
     
-    /* Inner Data Box Wrapper */
+    /* Inner Content Container Wrapper */
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
         border-radius: 6px;
         padding: 12px;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
+        direction: rtl;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# Configurations
+# Application Configurations Setup
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
-# Retrieve API secrets dynamically from Streamlit Secrets Environment
 BASE_URL = st.secrets["biotime"]["base_url"].rstrip('/')
 TOKEN_URL = st.secrets["biotime"]["token_url"]
 EMAIL = st.secrets["biotime"]["email"]
@@ -97,10 +101,6 @@ COMPANY = st.secrets["biotime"]["company"]
 
 if "debug_logs" not in st.session_state:
     st.session_state["debug_logs"] = []
-
-# Keep track of active accordion views locally
-if "active_accordion" not in st.session_state:
-    st.session_state["active_accordion"] = "none"
 
 def log_debug(message):
     st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -113,22 +113,21 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        if response.status_code == 200 or response.status_code == 201:
+        if response.status_code in:
             return response.json().get("token")
-        else:
-            return None
+        return None
     except Exception:
         return None
 
 def load_attendance_data_from_api(selected_date_str):
     token = get_auth_token()
     if not token:
-        raise Exception("Authentication Token details are missing or invalid.")
+        raise Exception("تفاصيل رمز المصادقة (Token) مفقودة أو غير صالحة.")
         
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. Fetch Employee List
+    # 1. Fetch Active Staff Directory
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -147,7 +146,7 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. Fetch Transaction Logs
+    # 2. Fetch Operational Transaction Logs
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -171,31 +170,52 @@ def load_attendance_data_from_api(selected_date_str):
                 except Exception:
                     continue
 
+    # Chronologically sort all registered logs per employee ID
     for code in emp_punches:
         emp_punches[code].sort()
 
-    present_staff, late_staff, full_absent_staff = [], [], []
+    # Classification Lists Initialization
+    present_staff = []      # Currently inside facility (Odd total punches)
+    late_staff = []         # First entry recorded past 09:15 AM
+    full_absent_staff = []  # Absolutely zero records found today
+    early_leave_staff = []  # Checked out before 04:00 PM (16:00)
+    checkout_staff = []     # Regular final departure recorded
 
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
             first_punch = user_punches[0]
+            last_punch = user_punches[-1]
             punch_count = len(user_punches)
+            
             time_in_clean = first_punch.strftime('%I:%M %p')
+            time_out_clean = last_punch.strftime('%I:%M %p')
 
+            # Evaluates Late arrival policy status
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
+            # Evaluates Current Presence vs Checkout status
             if punch_count % 2 != 0:
+                # Odd punch count means they clocked in but haven't clocked out yet
                 present_staff.append((code, name, time_in_clean))
+            else:
+                # Even punch count means they clocked out. Check if they left early (Before 4:00 PM)
+                if last_punch.hour < 16:
+                    early_leave_staff.append((code, name, time_in_clean, time_out_clean))
+                else:
+                    checkout_staff.append((code, name, time_out_clean))
         else:
             full_absent_staff.append((code, name))
 
+    # Natural sorting adjustment based on Employee Codes
     full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    early_leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
-    return active_employees, present_staff, late_staff, full_absent_staff
+    return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
 # ==========================================
 # 3. INTERFACE RENDERING
 # ==========================================
@@ -212,117 +232,88 @@ if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
     st.rerun()
 
 try:
-    active_employees, present_staff, late_staff, full_absent_staff = load_attendance_data_from_api(selected_date_str)
+    # Destructure all data categories correctly from the cloud execution loop
+    active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    st.write("### 📊 إحصائيات عامة / OVERALL STATISTICS")
+    st.write("### 📊 إحصائيات الحالة العامة للموظفين اليوم")
     
-    # Function to change state safely on click handlers
-    def toggle_accordion(view_name):
-        if st.session_state["active_accordion"] == view_name:
-            st.session_state["active_accordion"] = "none"
-        else:
-            st.session_state["active_accordion"] = view_name
+    # Calculate operational metrics summary totals
+    total_emp = len(active_employees)
+    p_count = len(present_staff)
+    a_count = len(full_absent_staff)
+    l_count = len(late_staff)
+    e_count = len(early_leave_staff)
+    c_count = len(checkout_staff)
+    
+    # Render out responsive 6-Column metric matrix cards
+    m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
+    with m_col1:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-total">👥</div><div class="metric-info"><span class="metric-title">إجمالي العدد</span><span class="metric-value">{total_emp}</span></div></div>', unsafe_allow_html=True)
+    with m_col2:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-present">🟢</div><div class="metric-info"><span class="metric-title">المتواجدون حالياً</span><span class="metric-value">{p_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col3:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-late">⏰</div><div class="metric-info"><span class="metric-title">المتأخرين اليوم</span><span class="metric-value">{l_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col4:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-early">⚠️</div><div class="metric-info"><span class="metric-title">خروج مبكر</span><span class="metric-value">{e_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col5:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-checkout">✅</div><div class="metric-info"><span class="metric-title">انصراف نظامي</span><span class="metric-value">{c_count}</span></div></div>', unsafe_allow_html=True)
+    with m_col6:
+        st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل اليوم</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
-    # ---------------------------------------------
-    # CARD 1: EMPLOYEES
-    # ---------------------------------------------
-    st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-icon icon-total">👥</div>
-            <div class="metric-info">
-                <span class="metric-title">Employees</span>
-                <span class="metric-value">{len(active_employees)}</span>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
-    st.button("📄 استعراض دليل الموظفين الكامل", key="btn_acc_total", on_click=toggle_accordion, args=("total",), use_container_width=True)
+    st.write("### 🔍 القوائم التفصيلية للحضور والانصراف")
     
-    if st.session_state["active_accordion"] == "total":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.markdown("### 📋 قائمة الموظفين الكاملة النشطة")
-        for code, name in active_employees.items():
-            st.markdown(f"🔹 **{name}** (كود: {code})")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------------------------------------------
-    # CARD 2: PRESENT
-    # ---------------------------------------------
-    st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-icon icon-present">👤</div>
-            <div class="metric-info">
-                <span class="metric-title">Present</span>
-                <span class="metric-value">{len(present_staff)}</span>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
-    st.button("🟢 استعراض الموظفين المتواجدين حالياً", key="btn_acc_present", on_click=toggle_accordion, args=("present",), use_container_width=True)
-    
-    if st.session_state["active_accordion"] == "present":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.markdown(TEXT_CONFIG["header_present"].format(len(present_staff)))
-        if present_staff:
-            for emp_code, name, time_in in present_staff:
-                st.markdown(TEXT_CONFIG["present_row"].format(name, emp_code, time_in))
-        else:
-            st.info(TEXT_CONFIG["info_no_present"])
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------------------------------------------
-    # CARD 3: ABSENT
-    # ---------------------------------------------
-    st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-icon icon-absent">📅</div>
-            <div class="metric-info">
-                <span class="metric-title">Absent</span>
-                <span class="metric-value">{len(full_absent_staff)}</span>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
-    st.button("❌ استعراض الموظفين الغائبين اليوم", key="btn_acc_absent", on_click=toggle_accordion, args=("absent",), use_container_width=True)
-    
-    if st.session_state["active_accordion"] == "absent":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.markdown(TEXT_CONFIG["header_absent"].format(len(full_absent_staff)))
-        if full_absent_staff:
-            for emp_code, name in full_absent_staff:
-                st.markdown(TEXT_CONFIG["absent_row"].format(name, emp_code))
-        else:
-            st.success(TEXT_CONFIG["success_no_absent"])
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------------------------------------------
-    # CARD 4: LATE ARRIVAL
-    # ---------------------------------------------
-    st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-icon icon-late">⏳</div>
-            <div class="metric-info">
-                <span class="metric-title">Late Arrival</span>
-                <span class="metric-value">{len(late_staff)}</span>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
-    st.button("⏰ استعراض سجل المتأخرين اليوم", key="btn_acc_late", on_click=toggle_accordion, args=("late",), use_container_width=True)
-    
-    if st.session_state["active_accordion"] == "late":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.markdown(TEXT_CONFIG["header_late"].format(len(late_staff)))
+    # 1. Late Staff Panel View
+    with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
         if late_staff:
-            for emp_code, name, time_in in late_staff:
-                st.markdown(TEXT_CONFIG["late_row"].format(name, emp_code, time_in))
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name, time_in in late_staff:
+                st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in))
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.success(TEXT_CONFIG["success_no_late"])
-        st.markdown('</div>', unsafe_allow_html=True)
-            
+
+    # 2. Currently Present Staff Panel View
+    with st.expander(TEXT_CONFIG["header_present"].format(p_count), expanded=False):
+        if present_staff:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name, time_in in present_staff:
+                st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info(TEXT_CONFIG["info_no_present"])
+
+    # 3. Early Dismissals / Departures Panel View
+    with st.expander(TEXT_CONFIG["header_early_leave"].format(e_count), expanded=False):
+        if early_leave_staff:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name, time_in, time_out in early_leave_staff:
+                st.markdown(TEXT_CONFIG["early_leave_row"].format(name, code, time_in, time_out))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.success(TEXT_CONFIG["success_no_early"])
+
+    # 4. Routine End-of-Day Checkout Panel View
+    with st.expander(TEXT_CONFIG["header_checkout"].format(c_count), expanded=False):
+        if checkout_staff:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name, time_out in checkout_staff:
+                st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info(TEXT_CONFIG["info_no_checkout"])
+
+    # 5. Missing / Absolute Absentees Panel View
+    with st.expander(TEXT_CONFIG["header_absent"].format(a_count), expanded=False):
+        if full_absent_staff:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            for code, name in full_absent_staff:
+                st.markdown(TEXT_CONFIG["absent_row"].format(name, code))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.success(TEXT_CONFIG["success_no_absent"])
+
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
-
-# ==========================================
-# 4. LIVE DEVELOPER DEBUG PANEL (BOTTOM)
-# ==========================================
-st.write("---")
-with st.expander("🛠️ معلومات التصحيح المباشرة / Live API Debug Logger"):
-    for log in st.session_state.get("debug_logs", []):
-        st.text(log)
+    if st.checkbox("عرض سجلات الأخطاء البرمجية (Debug Logs)"):
+        for log in st.session_state.get("debug_logs", []):
+            st.text(log)
