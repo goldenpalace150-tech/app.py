@@ -15,10 +15,10 @@ TEXT_CONFIG = {
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "success_no_late": "🎉 لا يوجد متأخرين في هذا التاريخ!",
+    "success_no_late": "🎉 لا يوجد متأخرين in هذا التاريخ!",
     "header_absent": "❌ غائبون أو نسوا تسجيل الحضور ({})",
     "absent_row": "🔹 **{}** (كود: {})",
-    "success_no_absent": "🎉 لا يوجد غيابات في هذا التاريخ!",
+    "success_no_absent": "🎉 لا يوجد غيابات in هذا التاريخ!",
     "header_present": "🟢 الموظفون المتواجدون حالياً في العمل ({})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "info_no_present": "لا يوجد موظفين منتظمين متواجدين حالياً.",
@@ -180,7 +180,8 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches
+            # FIXED LINE: Grabs the single first punch element safely using index 0
+            first_punch = user_punches[0]
             punch_count = len(user_punches)
             time_in_clean = first_punch.strftime('%I:%M %p')
 
@@ -192,9 +193,9 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff
 # ==========================================
