@@ -15,7 +15,7 @@ TEXT_CONFIG = {
     "lbl_date": "📅 التاريخ المختار للتقرير: **{}**  │  ⏰ الوقت الحالي في سوريا: **{}**",
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
-    "btn_download_excel": "📥 تحميل تقرير الحضور كملف Excel",
+    "btn_download_excel": "📥 تحميل تقرير الحضور الشامل (CSV/Excel)",
     
     # الروؤس الخاصة بالقوائم
     "header_late": "⏰ المتأخرون اليوم ({}) – دخول بعد 09:15 صباحاً",
@@ -42,14 +42,12 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
-# تصميم مخصص متوافق تماماً مع الهواتف الذكية والشاشات الكبيرة يدعم الاتجاه العربي
 st.markdown("""
     <style>
     .stApp { direction: rtl; }
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* تصميم بطاقات المؤشرات الإحصائية */
     .metric-card {
         background-color: #ffffff;
         border-radius: 8px;
@@ -81,7 +79,6 @@ st.markdown("""
     .metric-title { font-size: 13px; color: #64748b; font-weight: 500; }
     .metric-value { font-size: 22px; font-weight: bold; color: #1e293b; }
     
-    /* صندوق القوائم الداخلية */
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
@@ -93,7 +90,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# تهيئة الثوابت والاتصال
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -117,7 +113,6 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # التحقق المباشر بدون مصفوفات لمنع أخطاء الصياغة نهائياً وحفظ الـ Token
         if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         return None
@@ -132,7 +127,6 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. سحب دليل الموظفين النشطين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -151,7 +145,6 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. سحب سجل الحركات اليومي الكامل
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -187,22 +180,19 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches[0]
+            first_punch = user_punches
             last_punch = user_punches[-1]
             punch_count = len(user_punches)
             
             time_in_clean = first_punch.strftime('%I:%M %p')
             time_out_clean = last_punch.strftime('%I:%M %p')
 
-            # فحص التأخير الصباحي (بعد 9:15 ص)
             if first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15):
                 late_staff.append((code, name, time_in_clean))
 
-            # تصنيف الموظفين بناءً على زوجية الحركات والوقت الحالي
             if punch_count % 2 != 0:
                 present_staff.append((code, name, time_in_clean))
             else:
-                # خروج مبكر قبل الساعة 4:00 عصراً (16:00) أو انصراف نظامي
                 if last_punch.hour < 16:
                     early_leave_staff.append((code, name, time_in_clean, time_out_clean))
                 else:
@@ -210,12 +200,11 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    # فرز مصلح ومستقر يمنع حدوث خطأ الترتيب الثنائي (Tuple Error) نهائياً
-    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    early_leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    early_leave_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
 # ==========================================
@@ -224,7 +213,6 @@ def load_attendance_data_from_api(selected_date_str):
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-# إضافة أداة اختيار تاريخ التقرير التفاعلية لمراجعة الأيام السابقة
 selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
@@ -240,27 +228,32 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
     
-    # محرك التصدير متعدد الصفحات لملف Excel باستخدام xlsxwriter المدمج تلقائياً لمنع خطأ الحزم المفقودة
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in present_staff]).to_excel(writer, sheet_name="متواجدون حاليا", index=False)
-        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t} for c, n, t in late_staff]).to_excel(writer, sheet_name="المتأخرون", index=False)
-        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الدخول": t_in, "وقت الانصراف المبكر": t_out} for c, n, t_in, t_out in early_leave_staff]).to_excel(writer, sheet_name="خروج مبكر", index=False)
-        pd.DataFrame([{"كود الموظف": c, "الاسم": n, "وقت الانصراف": t} for c, n, t in checkout_staff]).to_excel(writer, sheet_name="انصراف نظامي", index=False)
-        pd.DataFrame([{"كود الموظف": c, "الاسم": n} for c, n in full_absent_staff]).to_excel(writer, sheet_name="غياب كامل", index=False)
+    # تعديل جوهري: تجميع كافة الحالات في جدول موحد وتصديره بصيغة CSV مشفرة لفتحها مباشرة داخل Excel بدون أخطاء ومكتبات مفقودة
+    report_rows = []
+    for c, n, t in present_staff:
+        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t, "حالة الخروج": "متواجد حالياً", "تصنيف الحالة اليومية": "متواجد في العمل"})
+    for c, n, t in late_staff:
+        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t, "حالة الخروج": "-", "تصنيف الحالة اليومية": "متأخر صباحاً"})
+    for c, n, t_in, t_out in early_leave_staff:
+        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": t_in, "حالة الخروج": t_out, "تصنيف الحالة اليومية": "خروج مبكر"})
+    for c, n, t in checkout_staff:
+        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": "-", "حالة الخروج": t, "تصنيف الحالة اليومية": "انصراف نظامي"})
+    for c, n in full_absent_staff:
+        report_rows.append({"كود الموظف": c, "الاسم": n, "حالة الدخول": "-", "حالة الخروج": "-", "تصنيف الحالة اليومية": "غياب كامل"})
+        
+    df_report = pd.DataFrame(report_rows)
+    # استخدام ترميز utf-8-sig لضمان قراءة الحروف العربية بشكل صحيح داخل جداول Excel
+    csv_data = df_report.to_csv(index=False).encode('utf-8-sig')
     
     with btn_col2:
         st.download_button(
             label=TEXT_CONFIG["btn_download_excel"],
-            data=excel_buffer.getvalue(),
-            file_name=f"حضور_القصر_الذهبي_{selected_date_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            data=csv_data,
+            file_name=f"تقرير_حضور_القصر_الذهبي_{selected_date_str}.csv",
+            mime="text/csv",
             use_container_width=True
         )
 
-    # ------------------------------------------
-    # شبكة عرض المؤشرات الإحصائية العامة للشركة
-    # ------------------------------------------
     st.write("### 📊 إحصائيات الحالة العامة للموظفين")
     total_emp = len(active_employees)
     p_count = len(present_staff)
@@ -283,10 +276,7 @@ try:
     with m_col6:
         st.markdown(f'<div class="metric-card"><div class="metric-icon icon-absent">❌</div><div class="metric-info"><span class="metric-title">غياب كامل</span><span class="metric-value">{a_count}</span></div></div>', unsafe_allow_html=True)
 
-    # ------------------------------------------
-    # لوحات التفاصيل المنسدلة للمجموعات الخمسة
-    # ------------------------------------------
-    st.write("### 🔍 القوائم التفصيلية للحضور والانصراف")
+    st.write("### 🔍 القوائم التفصيلية")
     
     with st.expander(TEXT_CONFIG["header_late"].format(l_count), expanded=True):
         if late_staff:
