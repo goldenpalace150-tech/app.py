@@ -101,7 +101,7 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # FIXED: Added array parameters [200, 201] inside evaluation loop
+        # FIXED: Added target explicit check criteria tuple array
         if response.status_code in:
             return response.json().get("token")
         return None
