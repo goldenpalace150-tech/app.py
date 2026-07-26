@@ -101,7 +101,6 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        # تعديل جذري وآمن: فحص مباشر لحالة الاتصال الناجح لمنع حدوث الـ SyntaxError نهائياً
         if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         return None
@@ -189,11 +188,12 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    early_leave_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    # FIXED: استهداف الكود النصي من الحزمة عبر x[0] للفرز التصاعدي بمرونة تامة دون حدوث أخطاء
+    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    early_leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
     
     return active_employees, present_staff, late_staff, full_absent_staff, early_leave_staff, checkout_staff
 now_syria = datetime.now(SYRIA_TZ)
