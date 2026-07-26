@@ -27,7 +27,7 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
-# Custom CSS styling to recreate the look of the BioTime dashboard cards
+# Custom CSS styling optimized for mobile responsive accordion cards
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
@@ -42,7 +42,7 @@ st.markdown("""
         border: 1px solid #eef2f5;
         display: flex;
         align-items: center;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
     }
     .metric-icon {
         width: 45px;
@@ -54,7 +54,7 @@ st.markdown("""
         font-size: 22px;
         margin-left: 15px;
     }
-    .icon-total { background-color: #e8f5e9; color: #4caf50; }
+    .icon-total { background-color: #e2e8f0; color: #475569; }
     .icon-present { background-color: #e8f5e9; color: #4caf50; }
     .icon-absent { background-color: #ffebee; color: #f44336; }
     .icon-late { background-color: #fff8e1; color: #ffc107; }
@@ -73,6 +73,15 @@ st.markdown("""
         font-weight: bold;
         color: #1e293b;
     }
+    
+    /* Inner Data Box Wrapper */
+    .list-wrapper-box {
+        background-color: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -90,9 +99,9 @@ COMPANY = st.secrets["biotime"]["company"]
 if "debug_logs" not in st.session_state:
     st.session_state["debug_logs"] = []
 
-# Keep track of which card tile is selected clicked
-if "active_view" not in st.session_state:
-    st.session_state["active_view"] = "present"
+# Keep track of active accordion views locally
+if "active_accordion" not in st.session_state:
+    st.session_state["active_accordion"] = "none"
 
 def log_debug(message):
     st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -108,10 +117,8 @@ def get_auth_token():
         if response.status_code == 200 or response.status_code == 201:
             return response.json().get("token")
         else:
-            st.error(f"فشل مصادقة API الحساب (Code: {response.status_code})")
             return None
-    except Exception as e:
-        st.error(f"تعذر الاتصال بـ API Token: {e}")
+    except Exception:
         return None
 
 def load_attendance_data_from_api(selected_date_str):
@@ -173,7 +180,7 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            first_punch = user_punches[0]
+            first_punch = user_punches
             punch_count = len(user_punches)
             time_in_clean = first_punch.strftime('%I:%M %p')
 
@@ -185,11 +192,11 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
-    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else x[0])
+    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
     
-    return len(active_employees), present_staff, late_staff, full_absent_staff
+    return active_employees, present_staff, late_staff, full_absent_staff
 # ==========================================
 # 3. INTERFACE RENDERING
 # ==========================================
@@ -200,113 +207,118 @@ time_str = now_syria.strftime('%I:%M:%S %p')
 st.title(TEXT_CONFIG["title_main"])
 st.markdown(TEXT_CONFIG["lbl_date"].format(current_today.strftime('%Y-%m-%d'), time_str))
 
-# Interactive controls layout
-c_date, c_ref = st.columns([4, 1])
-with c_date:
-    selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
-    selected_date_str = selected_date.strftime('%Y-%m-%d')
-with c_ref:
-    st.write("<br>", unsafe_allow_html=True)
-    if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+# Compact setup control row
+selected_date = st.date_input(TEXT_CONFIG["lbl_picker"], value=current_today)
+selected_date_str = selected_date.strftime('%Y-%m-%d')
+
+if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
 try:
-    total_emp, present_staff, late_staff, full_absent_staff = load_attendance_data_from_api(selected_date_str)
+    active_employees, present_staff, late_staff, full_absent_staff = load_attendance_data_from_api(selected_date_str)
     
-    # ---------------------------------------------
-    # RENDER CLICKABLE STATISTIC CARDS (LIKE BIOTIME)
-    # ---------------------------------------------
     st.write("### 📊 إحصائيات عامة / OVERALL STATISTICS")
-    card_col1, card_col2, card_col3, card_col4 = st.columns(4)
     
-    with card_col1:
-        st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-icon icon-total">👥</div>
-                <div class="metric-info">
-                    <span class="metric-title">Employees</span>
-                    <span class="metric-value">{total_emp}</span>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
-        st.button("📄 عرض جميع الموظفين", key="btn_view_total", on_click=lambda: st.session_state.update({"active_view": "total"}), use_container_width=True)
-
-    with card_col2:
-        st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-icon icon-present">👤</div>
-                <div class="metric-info">
-                    <span class="metric-title">Present</span>
-                    <span class="metric-value">{len(present_staff)}</span>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
-        st.button("🟢 عرض المتواجدين حالياً", key="btn_view_present", on_click=lambda: st.session_state.update({"active_view": "present"}), use_container_width=True)
-
-    with card_col3:
-        st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-icon icon-absent">📅</div>
-                <div class="metric-info">
-                    <span class="metric-title">Absent</span>
-                    <span class="metric-value">{len(full_absent_staff)}</span>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
-        st.button("❌ عرض الغائبين اليوم", key="btn_view_absent", on_click=lambda: st.session_state.update({"active_view": "absent"}), use_container_width=True)
-
-    with card_col4:
-        st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-icon icon-late">⏳</div>
-                <div class="metric-info">
-                    <span class="metric-title">Late Arrival</span>
-                    <span class="metric-value">{len(late_staff)}</span>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
-        st.button("⏰ عرض المتأخرين", key="btn_view_late", on_click=lambda: st.session_state.update({"active_view": "late"}), use_container_width=True)
+    # Function to change state safely on click handlers
+    def toggle_accordion(view_name):
+        if st.session_state["active_accordion"] == view_name:
+            st.session_state["active_accordion"] = "none" # Hide if clicked again
+        else:
+            st.session_state["active_accordion"] = view_name
 
     # ---------------------------------------------
-    # DYNAMIC INTERACTIVE EMPLOYEE VIEW LIST BOX
+    # CARD 1: EMPLOYEES
     # ---------------------------------------------
-    st.write("---")
-    current_view = st.session_state["active_view"]
+    st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-icon icon-total">👥</div>
+            <div class="metric-info">
+                <span class="metric-title">Employees</span>
+                <span class="metric-value">{len(active_employees)}</span>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+    st.button("📄 استعراض دليل الموظفين الكامل", key="btn_acc_total", on_click=toggle_accordion, args=("total",), use_container_width=True)
     
-    if current_view == "present":
+    if st.session_state["active_accordion"] == "total":
+        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+        st.markdown("### 📋 قائمة الموظفين الكاملة النشطة")
+        for code, name in active_employees.items():
+            st.markdown(f"🔹 **{name}** (كود: {code})")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---------------------------------------------
+    # CARD 2: PRESENT
+    # ---------------------------------------------
+    st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-icon icon-present">👤</div>
+            <div class="metric-info">
+                <span class="metric-title">Present</span>
+                <span class="metric-value">{len(present_staff)}</span>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+    st.button("🟢 استعراض الموظفين المتواجدين حالياً", key="btn_acc_present", on_click=toggle_accordion, args=("present",), use_container_width=True)
+    
+    if st.session_state["active_accordion"] == "present":
+        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
         st.markdown(TEXT_CONFIG["header_present"].format(len(present_staff)))
         if present_staff:
             for emp_code, name, time_in in present_staff:
                 st.markdown(TEXT_CONFIG["present_row"].format(name, emp_code, time_in))
         else:
             st.info(TEXT_CONFIG["info_no_present"])
-            
-    elif current_view == "absent":
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---------------------------------------------
+    # CARD 3: ABSENT
+    # ---------------------------------------------
+    st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-icon icon-absent">📅</div>
+            <div class="metric-info">
+                <span class="metric-title">Absent</span>
+                <span class="metric-value">{len(full_absent_staff)}</span>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+    st.button("❌ استعراض الموظفين الغائبين اليوم", key="btn_acc_absent", on_click=toggle_accordion, args=("absent",), use_container_width=True)
+    
+    if st.session_state["active_accordion"] == "absent":
+        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
         st.markdown(TEXT_CONFIG["header_absent"].format(len(full_absent_staff)))
         if full_absent_staff:
             for emp_code, name in full_absent_staff:
                 st.markdown(TEXT_CONFIG["absent_row"].format(name, emp_code))
         else:
             st.success(TEXT_CONFIG["success_no_absent"])
-            
-    elif current_view == "late":
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---------------------------------------------
+    # CARD 4: LATE ARRIVAL
+    # ---------------------------------------------
+    st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-icon icon-late">⏳</div>
+            <div class="metric-info">
+                <span class="metric-title">Late Arrival</span>
+                <span class="metric-value">{len(late_staff)}</span>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+    st.button("⏰ استعراض سجل المتأخرين اليوم", key="btn_acc_late", on_click=toggle_accordion, args=("late",), use_container_width=True)
+    
+    if st.session_state["active_accordion"] == "late":
+        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
         st.markdown(TEXT_CONFIG["header_late"].format(len(late_staff)))
         if late_staff:
             for emp_code, name, time_in in late_staff:
                 st.markdown(TEXT_CONFIG["late_row"].format(name, emp_code, time_in))
         else:
             st.success(TEXT_CONFIG["success_no_late"])
-            
-    elif current_view == "total":
-        st.markdown("### 📋 قائمة الموظفين الكاملة النشطة للتتبع")
-        token = get_auth_token()
-        headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
-        emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers).json().get("data", [])
-        for emp in emp_res:
-            code = str(emp.get("emp_code", ""))
-            if code not in EXCLUDED_MANAGEMENT_CODES:
-                st.markdown(f"🔹 **{emp.get('first_name','')} {emp.get('last_name','') or ''}** (كود الموظف: {code})")
+        st.markdown('</div>', unsafe_allow_html=True)
             
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
