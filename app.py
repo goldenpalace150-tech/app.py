@@ -15,14 +15,14 @@ TEXT_CONFIG = {
     "btn_refresh": "🔄 تحديث البيانات الحية الآن",
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل (CSV/Excel)",
     
-    # رؤوس القوائم
+    # رؤوس القوائم التفصيلية
     "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
     "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
     "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
     "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
     
-    # نصوص الأسطر التفصيلية
+    # نصوص أسطر العرض
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
     "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
@@ -40,7 +40,7 @@ st.markdown("""
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* تنسيق الأزرار العلوية لتظهر كبطاقات تفاعلية */
+    /* تنسيق أزرار بطاقات الحضور */
     div.stButton > button {
         width: 100% !important;
         background-color: #ffffff !important;
@@ -60,6 +60,20 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
+    /* بطاقات حالات الأجهزة المضافة */
+    .device-box {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 10px 15px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .status-online { color: #10b981; font-weight: bold; }
+    .status-offline { color: #ef4444; font-weight: bold; }
+    
     .list-wrapper-box {
         background-color: #f8fafc;
         border: 1px dashed #cbd5e1;
@@ -72,11 +86,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# إعدادات الاستثناءات والإدارة
+# استثناءات الإدارة والموظفين المستقيلين
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
-
-# 📝 ضع هنا أكواد الموظفين المستقيلين ليتم حذفهم من النظام تلقائياً ولا يظهروا في الغياب
-EXCLUDED_RESIGNED_CODES = ("105", "112", "130") 
+EXCLUDED_RESIGNED_CODES = ("105", "112", "130") # 📝 اكتب هنا الأكواد الفردية للمستقيلين
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -117,6 +129,7 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
+    # 1. جلب الموظفين الصافيين غير المستبعدين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -129,13 +142,23 @@ def load_attendance_data_from_api(selected_date_str):
     active_employees = {}
     for emp in all_employees:
         code = str(emp.get("emp_code", ""))
-        # تصفية وفحص: استبعاد الإدارة واستبعاد الموظفين المستقيلين فوراً من سحب البيانات
         if code and code not in EXCLUDED_MANAGEMENT_CODES and code not in EXCLUDED_RESIGNED_CODES:
             first_name = emp.get("first_name", "") or ""
             last_name = emp.get("last_name", "") or ""
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
+    # 2. جلب حالة أجهزة البصمة المضافة حديثاً لمراقبة السيرفر
+    device_url = f"{BASE_URL}/iclock/api/devices/?page_size=100"
+    device_list = []
+    try:
+        dev_res = requests.get(device_url, headers=headers, timeout=10)
+        if dev_res.status_code == 200:
+            device_list = dev_res.json().get("data", [])
+    except Exception as e:
+        log_debug(f"Device Request Error: {str(e)}")
+
+    # 3. جلب حركات البصمات اليومية
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
     raw_logs = []
     try:
@@ -170,8 +193,7 @@ def load_attendance_data_from_api(selected_date_str):
     for code, name in active_employees.items():
         if code in emp_punches and emp_punches[code]:
             user_punches = emp_punches[code]
-            
-            first_punch = user_punches[0]
+            first_punch = user_punches
             last_punch = user_punches[-1]
             punch_count = len(user_punches)
             
@@ -188,12 +210,13 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    full_absent_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    present_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    late_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
-    checkout_staff.sort(key=lambda x: int(x) if x.isdigit() else x)
+    # FIXED: فحص وترتيب آمن يمنع خطأ الـ tuple object has no attribute 'isdigit' نهائياً
+    full_absent_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
+    present_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
+    late_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
+    checkout_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
     
-    return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff
+    return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, device_list
 # ==========================================
 # 3. INTERFACE RENDERING & CONTROLS
 # ==========================================
@@ -211,7 +234,7 @@ with btn_col1:
         st.rerun()
 
 try:
-    active_employees, present_staff, late_staff, full_absent_staff, checkout_staff = load_attendance_data_from_api(selected_date_str)
+    active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, device_list = load_attendance_data_from_api(selected_date_str)
     
     report_rows = []
     for c, n, t in present_staff:
@@ -235,7 +258,7 @@ try:
             use_container_width=True
         )
 
-    # حساب المؤشرات الإحصائية العامة الصافية بعد تصفية المستقيلين
+    # حساب المجاميع الصافية
     total_emp = len(active_employees)
     p_count = len(present_staff)
     l_count = len(late_staff)
@@ -259,13 +282,33 @@ try:
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
 
-    # عرض قوائم الأسماء التفاعلية المصفاة بالكامل
+    # 📡 استعراض حالة أجهزة البصمة المضافة بناءً على طلبك
+    st.write("### 📡 حالة الاتصال الحية لأجهزة البصمة")
+    if device_list:
+        dev_col1, dev_col2 = st.columns(2)
+        for idx, dev in enumerate(device_list):
+            dev_name = dev.get("alias", "جهاز غير مسمى")
+            is_online = dev.get("state", False) or (str(dev.get("status", "")).lower() == "online")
+            
+            status_html = '<span class="status-online">🟢 متصل الآن (Online)</span>' if is_online else '<span class="status-offline">🔴 منقطع (Offline)</span>'
+            card_html = f'<div class="device-box"><span>📟 {dev_name}</span>{status_html}</div>'
+            
+            if idx % 2 == 0:
+                with dev_col1: st.markdown(card_html, unsafe_allow_html=True)
+            else:
+                with dev_col2: st.markdown(card_html, unsafe_allow_html=True)
+    else:
+        st.info("لا توجد أجهزة بصمة مسجلة أو مرئية حالياً في الحساب.")
+
+    # ------------------------------------------
+    # مساحة استعراض القوائم التفاعلية المحدثة والمحمية
+    # ------------------------------------------
     current_view = st.session_state["selected_view"]
     
     if current_view == "all":
         st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
         st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if x.isdigit() else x):
+        for code, name in sorted(active_employees.items(), key=lambda x: int(x[0]) if x[0].isdigit() else x[0]):
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
