@@ -81,7 +81,7 @@ st.markdown("""
 # استثناءات الإدارة والموظفين المستقيلين يدوياً
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 
-# FIXED: Removed '28' from exclusion filter so employee 28 shows up normally again
+# Staff exclusion tuple 
 EXCLUDED_RESIGNED_CODES = ("34",) 
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
@@ -250,7 +250,7 @@ try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str)
     
     # ------------------------------------------
-    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED CRASH)
     # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
@@ -261,7 +261,7 @@ try:
         workbook = writer.book
         worksheet = writer.sheets["Attendance Report"]
         
-        # Header formatting block
+        # Header text strings values definitions
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet["A1"].alignment = Alignment(horizontal="center")
@@ -302,14 +302,17 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # Automatic cell sizing adjustment loop
-        for col in worksheet.columns:
+        # FIXED: Explicit cell column letter calculation tracking loops prevent tuple errors
+        for col_cells in worksheet.columns:
             max_len = 0
-            col_letter = get_column_letter(col.column)
-            for cell in col:
+            # Pull column properties safely from the first cell instance inside the target tuple
+            first_cell = col_cells[0]
+            col_letter = get_column_letter(first_cell.column)
+            
+            for cell in col_cells:
                 if cell.row <= 5:
                     continue
-                if cell.value:
+                if cell.value is not None:
                     max_len = max(max_len, len(str(cell.value)))
             worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
