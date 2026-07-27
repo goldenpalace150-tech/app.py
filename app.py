@@ -79,7 +79,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # استثناءات الإدارة والموظفين المستقيلين يدوياً
-EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
+EXCLUDED_MANAGEMENT_CODES = ("40")
 
 # Staff exclusion tuple 
 EXCLUDED_RESIGNED_CODES = ("34",) 
