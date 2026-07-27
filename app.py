@@ -6,6 +6,10 @@ import io
 from datetime import datetime
 import zoneinfo
 
+# Openpyxl structural engines imported directly for grid alignments
+from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
@@ -76,6 +80,8 @@ st.markdown("""
 
 # استثناءات الإدارة والموظفين المستقيلين يدوياً
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
+
+# FIXED SORTING: Hard string formatting drops 28 and 34 flawlessly without throwing sorting exceptions
 EXCLUDED_RESIGNED_CODES = ("28", "34") 
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
@@ -129,7 +135,7 @@ def load_attendance_data_from_api(selected_date_str):
 
     active_employees = {}
     for emp in all_employees:
-        code = str(emp.get("emp_code", ""))
+        code = str(emp.get("emp_code", "")).strip()
         if code and code not in EXCLUDED_MANAGEMENT_CODES and code not in EXCLUDED_RESIGNED_CODES:
             first_name = emp.get("first_name", "") or ""
             last_name = emp.get("last_name", "") or ""
@@ -148,7 +154,7 @@ def load_attendance_data_from_api(selected_date_str):
 
     emp_punches = {}
     for log in raw_logs:
-        code = str(log.get("emp_code", ""))
+        code = str(log.get("emp_code", "")).strip()
         if code in active_employees:
             punch_time_str = log.get("punch_time", "")
             if punch_time_str:
@@ -195,7 +201,6 @@ def load_attendance_data_from_api(selected_date_str):
                 clock_out_str = last_punch.strftime('%H:%M')
                 checkout_staff.append((code, name, last_punch.strftime('%I:%M %p')))
                 
-                # حساب ساعات العمل بدقة وعرض الفارق بين الدخول والخروج
                 time_diff = last_punch - first_punch
                 total_seconds = int(time_diff.total_seconds())
                 hours = total_seconds // 3600
@@ -213,12 +218,12 @@ def load_attendance_data_from_api(selected_date_str):
                 "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
-    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
-    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
-    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
-    
-    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else row_item["Employee ID"])
+    # FIXED STABLE KEY EVALUATION: Built using string-strip fallbacks to safely bypass mixed-type integer processing
+    full_absent_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
+    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).strip().isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
 # ==========================================
@@ -227,11 +232,9 @@ def load_attendance_data_from_api(selected_date_str):
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-# إضافة أداة اختيار التاريخ التفاعلية بناءً على طلبك
 selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
 selected_date_str = selected_date.strftime('%Y-%m-%d')
 
-# تنسيق التاريخ بصيغة اسم الشهر الطويل لعنوان ملف الإكسيل (مثل: July 26 2026)
 formatted_excel_date = selected_date.strftime('%B %d %Y')
 generated_on_timestamp = now_syria.strftime('%a %b %d %Y %H:%M:%S')
 
@@ -247,28 +250,86 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str)
     
-    # 📝 معالج التصدير: بناء ترويسة ملف الإكسيل متعددة الأسطر لتطابق صورتك تماماً عند التحميل
-    header_lines = [
-        f"Daily Attendance Report(Basic Report),,,,,,\n",
-        f" {formatted_excel_date} ,,,,,,\n",
-        f"Company: Golden Palace,,,,Generated On: {generated_on_timestamp}\n",
-        f"\n",
-        f"Department: Department 1,,,,,,\n"
-    ]
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE
+    # ------------------------------------------
+    excel_buffer = io.BytesIO()
     
+    # Establish a fresh programmatic spreadsheet instance
     df_grid_data = pd.DataFrame(excel_rows)
-    csv_raw_body = df_grid_data.to_csv(index=False)
     
-    # دمج أسطر الترويسة العلوية مع جدول البيانات في ملف واحد منظم ومفهوم لدى برامج Excel
-    complete_excel_output = "".join(header_lines) + csv_raw_body
-    excel_encoded_bytes = complete_excel_output.encode('utf-8-sig')
-    
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        # Write dummy data first to get access to active sheet mapping loops
+        df_grid_data.to_excel(writer, sheet_name="Attendance Report", index=False, startrow=5)
+        
+        workbook = writer.book
+        worksheet = writer.sheets["Attendance Report"]
+        
+        # Inject standard basic top header configurations directly into rows 1-4
+        worksheet["A1"] = "Daily Attendance Report(Basic Report)"
+        worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
+        worksheet["A1"].alignment = Alignment(horizontal="center")
+        worksheet.merge_cells("A1:G1")
+        
+        worksheet["A2"] = formatted_excel_date
+        worksheet["A2"].font = Font(name="Arial", size=12, bold=False)
+        worksheet["A2"].alignment = Alignment(horizontal="center")
+        worksheet.merge_cells("A2:G2")
+        
+        worksheet["A3"] = "Company: Golden Palace"
+        worksheet["A3"].font = Font(name="Arial", size=11, bold=False)
+        worksheet["A3"].alignment = Alignment(horizontal="left")
+        worksheet.merge_cells("A3:C3")
+        
+        worksheet["D3"] = f"Generated On: {generated_on_timestamp}"
+        worksheet["D3"].font = Font(name="Arial", size=11, bold=False)
+        worksheet["D3"].alignment = Alignment(horizontal="right")
+        worksheet.merge_cells("D3:G3")
+        
+        worksheet["A5"] = "Department: Department 1"
+        worksheet["A5"].font = Font(name="Arial", size=11, bold=True)
+        worksheet["A5"].alignment = Alignment(horizontal="left")
+        worksheet.merge_cells("A5:C5")
+        
+        # Generate cell borders styling models
+        thin_border_side = Side(border_style="thin", color="000000")
+        grid_border_format = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+        
+        # Style row 6 headers column headers loop
+        for col_idx in range(1, 8):
+            cell = worksheet.cell(row=6, column=col_idx)
+            cell.font = Font(name="Arial", size=11, bold=True)
+            cell.border = grid_border_format
+            cell.alignment = Alignment(horizontal="center")
+            
+        # Format data blocks rows 7 to infinity + Automatic Grid Border Injection Matrix loop
+        for row in worksheet.iter_rows(min_row=7, max_row=worksheet.max_row, min_col=1, max_col=7):
+            for cell in row:
+                cell.font = Font(name="Arial", size=10)
+                cell.border = grid_border_format
+                cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
+                
+        # 🏎️ AUTOMATIC COLUMN-WIDTH SPACING CALCULATION RULES MATRIX LOOP
+        for col in worksheet.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            
+            for cell in col:
+                # Bypass merged rows 1-5 dimensions calculation limits to prevent extreme formatting stretches
+                if cell.row <= 5:
+                    continue
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            
+            # Apply layout spacing padded cushion margin index rules safely
+            worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
     with btn_col2:
         st.download_button(
             label=TEXT_CONFIG["btn_download_excel"],
-            data=excel_encoded_bytes,
-            file_name=f"Daily_Attendance_Report_{selected_date_str}.csv",
-            mime="text/csv",
+            data=excel_buffer.getvalue(),
+            file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
@@ -289,7 +350,7 @@ try:
     if current_view == "all":
         st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
         st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if x.isdigit() else x):
+        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if str(x).isdigit() else 999):
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
