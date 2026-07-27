@@ -40,7 +40,7 @@ st.markdown("""
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* تنسيق أزرار بطاقات الحضور */
+    /* تنسيق أزرار بطاقات الحضور لتناسب الجوال */
     div.stButton > button {
         width: 100% !important;
         background-color: #ffffff !important;
@@ -60,7 +60,7 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
-    /* بطاقات حالات الأجهزة المضافة */
+    /* بطاقات حالات الأجهزة */
     .device-box {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
@@ -88,7 +88,7 @@ st.markdown("""
 
 # استثناءات الإدارة والموظفين المستقيلين
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
-EXCLUDED_RESIGNED_CODES = ("105", "112", "130") # 📝 اكتب هنا الأكواد الفردية للمستقيلين
+EXCLUDED_RESIGNED_CODES = ("105", "112", "130") # 📝 اكتب هنا الأكواد الفردية للمستقيلين عند الحاجة
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -148,7 +148,7 @@ def load_attendance_data_from_api(selected_date_str):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. جلب حالة أجهزة البصمة المضافة حديثاً لمراقبة السيرفر
+    # 2. جلب حالة أجهزة البصمة
     device_url = f"{BASE_URL}/iclock/api/devices/?page_size=100"
     device_list = []
     try:
@@ -191,11 +191,13 @@ def load_attendance_data_from_api(selected_date_str):
     checkout_staff = []     
 
     for code, name in active_employees.items():
-        if code in emp_punches and emp_punches[code]:
+        if code in emp_punches and len(emp_punches[code]) > 0:
             user_punches = emp_punches[code]
-            first_punch = user_punches
-            last_punch = user_punches[-1]
             punch_count = len(user_punches)
+            
+            # 🛡️ تعديل قاطع ومضمون 100%: استخدام دوال برمجية مباشرة وصريحة لاستخراج عناصر الوقت لمنع أي التباس
+            first_punch = user_punches.copy().pop(0)
+            last_punch = user_punches[-1]
             
             time_in_clean = first_punch.strftime('%I:%M %p')
             time_out_clean = last_punch.strftime('%I:%M %p')
@@ -210,11 +212,11 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    # FIXED: فحص وترتيب آمن يمنع خطأ الـ tuple object has no attribute 'isdigit' نهائياً
-    full_absent_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
-    present_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
-    late_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
-    checkout_staff.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0]))
+    # الترتيب الفرزي الآمن المبني على فرز عناصر النص والشيفرة الفردية من حزم الـ tuple
+    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
+    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
+    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
+    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, device_list
 # ==========================================
@@ -282,7 +284,7 @@ try:
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
 
-    # 📡 استعراض حالة أجهزة البصمة المضافة بناءً على طلبك
+    # 📡 استعراض حالة أجهزة البصمة الحية واكتشاف انقطاع السيرفرات
     st.write("### 📡 حالة الاتصال الحية لأجهزة البصمة")
     if device_list:
         dev_col1, dev_col2 = st.columns(2)
@@ -301,14 +303,14 @@ try:
         st.info("لا توجد أجهزة بصمة مسجلة أو مرئية حالياً في الحساب.")
 
     # ------------------------------------------
-    # مساحة استعراض القوائم التفاعلية المحدثة والمحمية
+    # مساحة استعراض القوائم التفاعلية المحمية والمفلترة
     # ------------------------------------------
     current_view = st.session_state["selected_view"]
     
     if current_view == "all":
         st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
         st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x[0]) if x[0].isdigit() else x[0]):
+        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if x.isdigit() else x):
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
