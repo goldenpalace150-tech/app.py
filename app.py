@@ -60,19 +60,20 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
-    /* بطاقات حالات الأجهزة */
+    /* بطاقات حالات الأجهزة المحدثة */
     .device-box {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 6px;
-        padding: 10px 15px;
+        padding: 12px 15px;
         margin-bottom: 10px;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
-    .status-online { color: #10b981; font-weight: bold; }
-    .status-offline { color: #ef4444; font-weight: bold; }
+    .status-online { color: #10b981; font-weight: bold; background-color: #e8f5e9; padding: 4px 8px; border-radius: 4px; }
+    .status-offline { color: #ef4444; font-weight: bold; background-color: #ffebee; padding: 4px 8px; border-radius: 4px; }
     
     .list-wrapper-box {
         background-color: #f8fafc;
@@ -86,9 +87,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# استثناءات الإدارة والموظفين المستقيلين
+# استثناءات يدوية إضافية عند الحاجة
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
-EXCLUDED_RESIGNED_CODES = ("105", "112", "130") # 📝 اكتب هنا الأكواد الفردية للمستقيلين عند الحاجة
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -129,7 +129,7 @@ def load_attendance_data_from_api(selected_date_str):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. جلب الموظفين الصافيين غير المستبعدين
+    # 1. جلب الموظفين النشطين واستبعاد المستقيلين أو المعطلين تلقائياً عبر فحص الحالات البرمجية
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -142,21 +142,31 @@ def load_attendance_data_from_api(selected_date_str):
     active_employees = {}
     for emp in all_employees:
         code = str(emp.get("emp_code", ""))
-        if code and code not in EXCLUDED_MANAGEMENT_CODES and code not in EXCLUDED_RESIGNED_CODES:
-            first_name = emp.get("first_name", "") or ""
-            last_name = emp.get("last_name", "") or ""
-            full_name = f"{first_name} {last_name}".strip()
-            active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
+        
+        # تصفية برمجية تلقائية: التحقق من حقل الحذف أو التعطيل المقترن بالموظف داخل السيرفر لحذف المستقيلين فوراً
+        is_active_status = emp.get("is_active", True)
+        emp_status = str(emp.get("status", "1")) # في حال كان 2 أو 0 أو مفعل بحالة الاستقالة
+        
+        if code and code not in EXCLUDED_MANAGEMENT_CODES:
+            if is_active_status and emp_status not in ("2", "0", "disabled", "resigned"):
+                first_name = emp.get("first_name", "") or ""
+                last_name = emp.get("last_name", "") or ""
+                full_name = f"{first_name} {last_name}".strip()
+                active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. جلب حالة أجهزة البصمة
-    device_url = f"{BASE_URL}/iclock/api/devices/?page_size=100"
+    # 2. محرك الأجهزة الذكي: فحص مسارين مختلفين لضمان سحب حالة الأجهزة من السيرفر بنجاح
     device_list = []
-    try:
-        dev_res = requests.get(device_url, headers=headers, timeout=10)
-        if dev_res.status_code == 200:
-            device_list = dev_res.json().get("data", [])
-    except Exception as e:
-        log_debug(f"Device Request Error: {str(e)}")
+    endpoints = [f"{BASE_URL}/iclock/api/devices/?page_size=100", f"{BASE_URL}/api/terminal/terminal/?page_size=100"]
+    for url in endpoints:
+        try:
+            dev_res = requests.get(url, headers=headers, timeout=10)
+            if dev_res.status_code == 200:
+                data = dev_res.json().get("data", [])
+                if data:
+                    device_list = data
+                    break
+        except Exception as e:
+            log_debug(f"Device Request Error for {url}: {str(e)}")
 
     # 3. جلب حركات البصمات اليومية
     logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={selected_date_str} 00:00:00&end_time={selected_date_str} 23:59:59&page_size=5000"
@@ -195,7 +205,6 @@ def load_attendance_data_from_api(selected_date_str):
             user_punches = emp_punches[code]
             punch_count = len(user_punches)
             
-            # 🛡️ تعديل قاطع ومضمون 100%: استخدام دوال برمجية مباشرة وصريحة لاستخراج عناصر الوقت لمنع أي التباس
             first_punch = user_punches.copy().pop(0)
             last_punch = user_punches[-1]
             
@@ -212,11 +221,10 @@ def load_attendance_data_from_api(selected_date_str):
         else:
             full_absent_staff.append((code, name))
 
-    # الترتيب الفرزي الآمن المبني على فرز عناصر النص والشيفرة الفردية من حزم الـ tuple
-    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
-    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
-    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
-    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else str(val[0]))
+    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
+    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
+    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
+    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else str(val))
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, device_list
 # ==========================================
@@ -284,15 +292,17 @@ try:
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
 
-    # 📡 استعراض حالة أجهزة البصمة الحية واكتشاف انقطاع السيرفرات
+    # 📡 استعراض حالة أجهزة البصمة الحية (Online / Offline) واكتشاف الانقطاع
     st.write("### 📡 حالة الاتصال الحية لأجهزة البصمة")
     if device_list:
         dev_col1, dev_col2 = st.columns(2)
         for idx, dev in enumerate(device_list):
-            dev_name = dev.get("alias", "جهاز غير مسمى")
-            is_online = dev.get("state", False) or (str(dev.get("status", "")).lower() == "online")
+            dev_name = dev.get("alias") or dev.get("sn") or "جهاز غير مسمى"
             
-            status_html = '<span class="status-online">🟢 متصل الآن (Online)</span>' if is_online else '<span class="status-offline">🔴 منقطع (Offline)</span>'
+            # فحص حالة الاتصال بناء على القيم البرمجية المختلفة للسيرفرات السحابية
+            is_online = dev.get("state", False) or (str(dev.get("status", "")).lower() in ("online", "true", "1"))
+            
+            status_html = '<span class="status-online">متصل (Online) 🟢</span>' if is_online else '<span class="status-offline">منقطع (Offline) 🔴</span>'
             card_html = f'<div class="device-box"><span>📟 {dev_name}</span>{status_html}</div>'
             
             if idx % 2 == 0:
@@ -303,7 +313,7 @@ try:
         st.info("لا توجد أجهزة بصمة مسجلة أو مرئية حالياً في الحساب.")
 
     # ------------------------------------------
-    # مساحة استعراض القوائم التفاعلية المحمية والمفلترة
+    # مساحة استعراض القوائم التفاعلية
     # ------------------------------------------
     current_view = st.session_state["selected_view"]
     
