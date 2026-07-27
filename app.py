@@ -81,8 +81,8 @@ st.markdown("""
 # استثناءات الإدارة والموظفين المستقيلين يدوياً
 EXCLUDED_MANAGEMENT_CODES = ("40", "10", "20")
 
-# FIXED SORTING: Hard string formatting drops 28 and 34 flawlessly without throwing sorting exceptions
-EXCLUDED_RESIGNED_CODES = ("28", "34") 
+# FIXED: Removed '28' from exclusion filter so employee 28 shows up normally again
+EXCLUDED_RESIGNED_CODES = ("34",) 
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -218,7 +218,6 @@ def load_attendance_data_from_api(selected_date_str):
                 "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
             })
 
-    # FIXED STABLE KEY EVALUATION: Built using string-strip fallbacks to safely bypass mixed-type integer processing
     full_absent_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
     present_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
     late_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
@@ -254,18 +253,15 @@ try:
     # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE
     # ------------------------------------------
     excel_buffer = io.BytesIO()
-    
-    # Establish a fresh programmatic spreadsheet instance
     df_grid_data = pd.DataFrame(excel_rows)
     
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        # Write dummy data first to get access to active sheet mapping loops
         df_grid_data.to_excel(writer, sheet_name="Attendance Report", index=False, startrow=5)
         
         workbook = writer.book
         worksheet = writer.sheets["Attendance Report"]
         
-        # Inject standard basic top header configurations directly into rows 1-4
+        # Header formatting block
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet["A1"].alignment = Alignment(horizontal="center")
@@ -291,37 +287,30 @@ try:
         worksheet["A5"].alignment = Alignment(horizontal="left")
         worksheet.merge_cells("A5:C5")
         
-        # Generate cell borders styling models
         thin_border_side = Side(border_style="thin", color="000000")
         grid_border_format = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
         
-        # Style row 6 headers column headers loop
         for col_idx in range(1, 8):
             cell = worksheet.cell(row=6, column=col_idx)
             cell.font = Font(name="Arial", size=11, bold=True)
             cell.border = grid_border_format
             cell.alignment = Alignment(horizontal="center")
             
-        # Format data blocks rows 7 to infinity + Automatic Grid Border Injection Matrix loop
         for row in worksheet.iter_rows(min_row=7, max_row=worksheet.max_row, min_col=1, max_col=7):
             for cell in row:
                 cell.font = Font(name="Arial", size=10)
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # 🏎️ AUTOMATIC COLUMN-WIDTH SPACING CALCULATION RULES MATRIX LOOP
+        # Automatic cell sizing adjustment loop
         for col in worksheet.columns:
             max_len = 0
-            col_letter = get_column_letter(col[0].column)
-            
+            col_letter = get_column_letter(col.column)
             for cell in col:
-                # Bypass merged rows 1-5 dimensions calculation limits to prevent extreme formatting stretches
                 if cell.row <= 5:
                     continue
                 if cell.value:
                     max_len = max(max_len, len(str(cell.value)))
-            
-            # Apply layout spacing padded cushion margin index rules safely
             worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     with btn_col2:
