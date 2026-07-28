@@ -116,7 +116,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. Fetch Employee Profiles
+    # 1. جلب الموظفين الصافيين غير المستبعدين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -135,7 +135,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[code] = clean_txt(full_name if full_name else f"User {code}")
 
-    # 2. Look-Ahead Query Windows setup (+8 hours next morning crossover)
+    # 2. جلب حركات اليوم التالي حتى الـ 8 صباحاً لتغطية الانصراف بعد منتصف الليل
     next_day_obj = selected_date_obj + timedelta(days=1)
     next_day_str = next_day_obj.strftime('%Y-%m-%d')
     
@@ -175,7 +175,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         if code in emp_punches and len(emp_punches[code]) > 0:
             all_user_punches = sorted(emp_punches[code])
             
-            # Isolate punches that occurred strictly on the selected calendar date
+            # عزل البصمات الخاصة باليوم المختار فقط للتحقق الأولي من الدخول والتأخير
             current_day_punches = [p for p in all_user_punches if p.date() == selected_date_obj]
             
             if not current_day_punches:
@@ -186,7 +186,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 })
                 continue
                 
-            # FIXED: Lock first punch details immediately to guard lateness status
+            # تثبيت أول بصمة دخول في اليوم المختار لتحديد حالة التأخير
             first_punch = current_day_punches[0]
             clock_in_str = first_punch.strftime('%H:%M')
             
@@ -196,7 +196,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             if is_late:
                 late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
 
-            # Check next-morning window for a trailing checkout punch
+            # دمج بصمات الخروج المبكر لصباح اليوم التالي إذا وجدت
             next_day_punches = [p for p in all_user_punches if p.date() == next_day_obj and p.hour < 8]
             targeted_shift_punches = current_day_punches + next_day_punches
             punch_count = len(targeted_shift_punches)
@@ -229,10 +229,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val) if str(val).strip().isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).strip().isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).strip().isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).strip().isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).strip().isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).strip().isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -260,6 +260,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED TUPLE ERROR)
+    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -269,6 +272,7 @@ try:
         workbook = writer.book
         worksheet = writer.sheets["Attendance Report"]
         
+        # تصميم الترويسة العلوية للتقرير
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet["A1"].alignment = Alignment(horizontal="center")
@@ -309,9 +313,11 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
+        # FIXED: استخراج رقم العمود الصريح والمباشر من أول خلية داخل حزمة الـ tuple لمنع الانهيار
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells
+            # قراءة الفهرس الأول [0] لاستخراج كود الحرف البرمجي للعمود بأمان
+            first_cell = col_cells[0]
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
@@ -330,6 +336,7 @@ try:
             use_container_width=True
         )
 
+    # حساب العدادات الرقمية الصافية للواجهة
     total_emp = len(active_employees)
     p_count = len(present_staff)
     l_count = len(late_staff)
@@ -339,18 +346,18 @@ try:
     st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين أسفلها مباشرة")
     current_view = st.session_state["selected_view"]
     
-    # 1. Total Count Panel Layout
+    # 1. زر إجمالي الموظفين النشطين
     if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
     if current_view == "all":
         st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
         st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if str(x).isdigit() else 999):
+        for code, name in sorted(active_employees.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 999):
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 2. Present Count Panel Layout
+    # 2. زر المتواجدين حالياً في العمل
     if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count}"):
         st.session_state["selected_view"] = "present"
         st.rerun()
@@ -364,7 +371,7 @@ try:
             st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 3. Late Count Panel Layout
+    # 3. زر المتأخرين اليوم
     if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count}"):
         st.session_state["selected_view"] = "late"
         st.rerun()
@@ -378,7 +385,7 @@ try:
             st.success("🎉 لا يوجد متأخرين اليوم!")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 4. Checked-Out Count Panel Layout
+    # 4. زر المنصرفون وسجلوا خروج
     if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count}"):
         st.session_state["selected_view"] = "checkout"
         st.rerun()
@@ -392,7 +399,7 @@ try:
             st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 5. Absent Count Panel Layout
+    # 5. زر الغيابات الكاملة اليوم
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
         st.rerun()
