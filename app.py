@@ -116,7 +116,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. جلب الموظفين الصافيين غير المستبعدين
+    # 1. جلب الموظفين الصافيين وتنظيف الأكواد
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -138,14 +138,14 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"User {cleaned_code}")
 
-    # 2. جلب حركات اليوم التالي حتى الـ 5 صباحاً لتغطية الانصراف بعد منتصف الليل
+    # 2. توسيع نافذة الجلب الشاملة (يوم الأمس + اليوم المختار + فجر اليوم التالي) لبناء منطق العزل
+    prev_day_obj = selected_date_obj - timedelta(days=1)
     next_day_obj = selected_date_obj + timedelta(days=1)
-    next_day_str = next_day_obj.strftime('%Y-%m-%d')
     
-    start_query_window = f"{selected_date_str} 00:00:00"
-    end_query_window = f"{next_day_str} 05:00:00"
+    start_window_str = prev_day_obj.strftime('%Y-%m-%d') + " 00:00:00"
+    end_window_str = next_day_obj.strftime('%Y-%m-%d') + " 05:00:00"
     
-    logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={start_query_window}&end_time={end_query_window}&page_size=5000"
+    logs_url = f"{BASE_URL}/iclock/api/transactions/?start_time={start_window_str}&end_time={end_window_str}&page_size=5000"
     raw_logs = []
     try:
         logs_res = requests.get(logs_url, headers=headers, timeout=15)
@@ -154,6 +154,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     except Exception as e:
         log_debug(f"Logs Request Error: {str(e)}")
 
+    # تجميع وفرز الحركات الخام حسب الأكواد المنظفة
     emp_punches = {}
     for log in raw_logs:
         raw_code = str(log.get("emp_code", "")).strip()
@@ -178,60 +179,71 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     excel_rows = [] 
 
     for code, name in active_employees.items():
-        if code in emp_punches and len(emp_punches[code]) > 0:
-            all_user_punches = sorted(emp_punches[code])
-            current_day_punches = [p for p in all_user_punches if p.date() == selected_date_obj]
-            
-            if not current_day_punches:
-                full_absent_staff.append((code, name))
-                excel_rows.append({
-                    "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                    "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
-                })
-                continue
-                
-            first_punch = current_day_punches[0]
-            clock_in_str = first_punch.strftime('%H:%M')
-            
-            is_late = first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)
-            status_label = "Late(LT)" if is_late else "Present(P)"
-            
-            if is_late:
-                late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
+        user_all_punches = sorted(emp_punches.get(code, []))
+        
+        # 🛡️ خطوة التطهير الحاسمة: فحص ما إذا كانت أول حركة فجرية اليوم هي خروج متمم لأمس
+        cleaned_current_day_punches = []
+        day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
+        
+        for p in day_raw_punches:
+            # إذا كانت البصمة فجرية (قبل 5 صباحاً)، نتحقق هل يسبقها دخول مفرد في الأمس لم يغلق
+            if p.hour < 5:
+                yesterday_punches = [x for x in user_all_punches if x.date() == prev_day_obj]
+                if yesterday_punches and len(yesterday_punches) % 2 != 0:
+                    # بصمة فجرية تابعة لأمس -> يتم تجاهلها وعزلها تماماً من حسابات اليوم الجديد
+                    continue
+            cleaned_current_day_punches.append(p)
 
-            early_morning_punches_next_day = [p for p in all_user_punches if p.date() == next_day_obj and p.hour < 5]
-            if len(current_day_punches) % 2 != 0 and early_morning_punches_next_day:
-                last_punch = early_morning_punches_next_day[0]
-                punch_count = 2
-            else:
-                last_punch = current_day_punches[-1]
-                punch_count = len(current_day_punches)
-
-            if punch_count % 2 != 0:
-                present_staff.append((code, name, first_punch.strftime('%I:%M %p')))
-                excel_rows.append({
-                    "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                    "Clock In": clock_in_str, "Clock Out": "", "Total WT": "", "Status": status_label
-                })
-            else:
-                clock_out_str = last_punch.strftime('%H:%M')
-                checkout_staff.append((code, name, last_punch.strftime('%I:%M %p')))
-                
-                time_diff = last_punch - first_punch
-                total_seconds = int(time_diff.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                total_wt_str = f"{hours:02d}:{minutes:02d}"
-                
-                excel_rows.append({
-                    "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                    "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label
-                })
-        else:
+        # التحقق من الغياب الكامل لليوم المختار بعد عزل حركات الفجر المتداخلة
+        if not cleaned_current_day_punches:
             full_absent_staff.append((code, name))
             excel_rows.append({
                 "Employee ID": code, "First Name": name, "Date": selected_date_str,
                 "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
+            })
+            continue
+
+        # تثبيت أول بصمة دخول فعلية ونظيفة لليوم الحالي للتحقق من التأخير
+        first_punch = cleaned_current_day_punches
+        clock_in_str = first_punch.strftime('%H:%M')
+        
+        is_late = first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)
+        status_label = "Late(LT)" if is_late else "Present(P)"
+        
+        if is_late:
+            late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
+
+        # فحص هل يمتلك الموظف بصمة خروج متداخلة في فجر اليوم التالي (أقل من 5 صباحاً)
+        early_morning_punches_next_day = [p for p in user_all_punches if p.date() == next_day_obj and p.hour < 5]
+        
+        if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
+            last_punch = early_morning_punches_next_day
+            punch_count = 2  # شفت مكتمل متداخل بعد منتصف الليل
+        else:
+            last_punch = cleaned_current_day_punches[-1]
+            punch_count = len(cleaned_current_day_punches)
+
+        if punch_count % 2 != 0:
+            # الموظف لا يزال متواجداً (لم يبصم خروج اعتيادي ولم يبصم فجر الغد)
+            present_staff.append((code, name, first_punch.strftime('%I:%M %p')))
+            excel_rows.append({
+                "Employee ID": code, "First Name": name, "Date": selected_date_str,
+                "Clock In": clock_in_str, "Clock Out": "", "Total WT": "", "Status": status_label
+            })
+        else:
+            # الموظف أكمل وردية العمل وسجل انصراف
+            clock_out_str = last_punch.strftime('%H:%M')
+            checkout_staff.append((code, name, last_punch.strftime('%I:%M %p')))
+            
+            time_diff = last_punch - first_punch
+            total_seconds = int(time_diff.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            total_wt_str = f"{hours:02d}:{minutes:02d}"
+            
+            excel_rows.append({
+                "Employee ID": code, "First Name": name, "Date": selected_date_str,
+                "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label
             })
 
     full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
@@ -265,9 +277,6 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
-    # ------------------------------------------
-    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED TUPLE ERROR)
-    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -317,10 +326,9 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # FIXED: loop over columns extracting explicit letter attributes from the first row item safely
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells[0]
+            first_cell = col_cells
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
@@ -348,6 +356,7 @@ try:
     st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين أسفلها مباشرة")
     current_view = st.session_state["selected_view"]
     
+    # 1. زر إجمالي الموظفين وعرض القائمة أسفله مباشرة
     if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
@@ -358,6 +367,7 @@ try:
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
+    # 2. زر المتواجدين حالياً وعرض القائمة أسفله مباشرة
     if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count}"):
         st.session_state["selected_view"] = "present"
         st.rerun()
@@ -371,6 +381,7 @@ try:
             st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
         st.markdown('</div>', unsafe_allow_html=True)
         
+    # 3. زر المتأخرين اليوم وعرض القائمة أسفله مباشرة
     if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count}"):
         st.session_state["selected_view"] = "late"
         st.rerun()
@@ -384,6 +395,7 @@ try:
             st.success("🎉 لا يوجد متأخرين اليوم!")
         st.markdown('</div>', unsafe_allow_html=True)
         
+    # 4. زر المنصرفون اليوم وعرض القائمة أسفله مباشرة
     if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count}"):
         st.session_state["selected_view"] = "checkout"
         st.rerun()
@@ -397,6 +409,7 @@ try:
             st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
         st.markdown('</div>', unsafe_allow_html=True)
         
+    # 5. زر الغيابات الكاملة وعرض القائمة أسفله مباشرة
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
         st.rerun()
