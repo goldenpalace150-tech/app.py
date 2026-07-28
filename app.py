@@ -137,7 +137,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             full_name = f"{first_name} {last_name}".strip()
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"User {cleaned_code}")
 
-    # Look back 1 day and look forward 5 hours to track crossover night shifts
     prev_day_obj = selected_date_obj - timedelta(days=1)
     next_day_obj = selected_date_obj + timedelta(days=1)
     
@@ -179,7 +178,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         user_all_punches = sorted(emp_punches.get(code, []))
         
-        # Purge crossover early morning punches that belong to yesterday's shift
         cleaned_current_day_punches = []
         day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
         
@@ -187,7 +185,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             if p.hour < 5:
                 yesterday_punches = [x for x in user_all_punches if x.date() == prev_day_obj]
                 if yesterday_punches and len(yesterday_punches) % 2 != 0:
-                    # This is yesterday's checkout punch, skip it for today's entry
                     continue
             cleaned_current_day_punches.append(p)
 
@@ -199,7 +196,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        # FIXED CRASH: Safely extracted the index 0 element from the punches array list
         first_punch = cleaned_current_day_punches[0]
         clock_in_str = first_punch.strftime('%H:%M')
         
@@ -209,9 +205,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         if is_late:
             late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
 
-        # Check for crossover checkout logs during the next morning's 00:00 - 05:00 window
         early_morning_punches_next_day = [p for p in user_all_punches if p.date() == next_day_obj and p.hour < 5]
-        
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch = early_morning_punches_next_day[0]
             punch_count = 2
@@ -271,6 +265,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (CRASH FIXED)
+    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -320,9 +317,10 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
+        # FIXED FINAL: Safely target the first list item inside the collection tuple array to extract properties
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells
+            first_cell = col_cells[0]
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
