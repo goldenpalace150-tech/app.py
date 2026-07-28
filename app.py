@@ -74,9 +74,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# استثناءات رموز الإدارة والمستقيلين الصارمة
-EXCLUDED_MANAGEMENT_CODES = ("40",)  # تم تنظيف الفحص البرمجي للأكواد بالكامل
-EXCLUDED_RESIGNED_CODES = ("34",)
+EXCLUDED_MANAGEMENT_CODES = ("40",)
+EXCLUDED_RESIGNED_CODES = ("34",) 
 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -117,7 +116,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     st.session_state["debug_logs"] = []
     
-    # 1. جلب الموظفين الصافيين وتطهير الأكواد من الأصفار البادئة والمسافات المخفية
+    # 1. جلب الموظفين الصافيين غير المستبعدين
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
@@ -132,17 +131,14 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         raw_code = str(emp.get("emp_code", "")).strip()
         if not raw_code:
             continue
-            
-        # 🛡️ عملية التنظيف القاطعة: تحويل "010" أو "10 " إلى "10" صافية لمنع اختفاء الموظفين
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-        
         if cleaned_code not in EXCLUDED_MANAGEMENT_CODES and cleaned_code not in EXCLUDED_RESIGNED_CODES:
             first_name = emp.get("first_name", "") or ""
             last_name = emp.get("last_name", "") or ""
             full_name = f"{first_name} {last_name}".strip()
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"User {cleaned_code}")
 
-    # 2. جلب حركات الوردية الحالية وبداية اليوم التالي المتداخل
+    # 2. جلب حركات اليوم التالي حتى الـ 5 صباحاً لتغطية الانصراف بعد منتصف الليل
     next_day_obj = selected_date_obj + timedelta(days=1)
     next_day_str = next_day_obj.strftime('%Y-%m-%d')
     
@@ -158,14 +154,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     except Exception as e:
         log_debug(f"Logs Request Error: {str(e)}")
 
-    # تصنيف حركات البصمات بناءً على الأكواد المنظفة والموحدة
     emp_punches = {}
     for log in raw_logs:
         raw_code = str(log.get("emp_code", "")).strip()
         if not raw_code:
             continue
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-        
         if cleaned_code in active_employees:
             punch_time_str = log.get("punch_time", "")
             if punch_time_str:
@@ -205,9 +199,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             if is_late:
                 late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
 
-            # الفحص الذكي للبصمة الفجرية التابعة للشفيت الممتد بعد منتصف الليل (أقل من 5 صباحاً)
             early_morning_punches_next_day = [p for p in all_user_punches if p.date() == next_day_obj and p.hour < 5]
-            
             if len(current_day_punches) % 2 != 0 and early_morning_punches_next_day:
                 last_punch = early_morning_punches_next_day[0]
                 punch_count = 2
@@ -242,10 +234,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
             })
 
-    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -273,6 +265,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED TUPLE ERROR)
+    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -322,9 +317,10 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
+        # FIXED: loop over columns extracting explicit letter attributes from the first row item safely
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells
+            first_cell = col_cells[0]
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
@@ -352,7 +348,6 @@ try:
     st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين أسفلها مباشرة")
     current_view = st.session_state["selected_view"]
     
-    # 1. زر إجمالي الموظفين وعرض القائمة أسفله مباشرة
     if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
@@ -363,7 +358,6 @@ try:
             st.markdown(TEXT_CONFIG["all_row"].format(name, code))
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 2. زر المتواجدين حالياً وعرض القائمة أسفله مباشرة
     if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count}"):
         st.session_state["selected_view"] = "present"
         st.rerun()
@@ -377,7 +371,6 @@ try:
             st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 3. زر المتأخرين اليوم وعرض القائمة أسفله مباشرة
     if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count}"):
         st.session_state["selected_view"] = "late"
         st.rerun()
@@ -391,7 +384,6 @@ try:
             st.success("🎉 لا يوجد متأخرين اليوم!")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 4. زر المنصرفون اليوم وعرض القائمة أسفله مباشرة
     if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count}"):
         st.session_state["selected_view"] = "checkout"
         st.rerun()
@@ -405,7 +397,6 @@ try:
             st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
         st.markdown('</div>', unsafe_allow_html=True)
         
-    # 5. زر الغيابات الكاملة وعرض القائمة أسفله مباشرة
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
         st.session_state["selected_view"] = "absent"
         st.rerun()
