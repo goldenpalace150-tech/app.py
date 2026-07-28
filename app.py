@@ -20,11 +20,11 @@ TEXT_CONFIG = {
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل كملف Excel النمطي",
     
-    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
-    "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
-    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
-    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
     "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
+    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
+    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
+    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
+    "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
     
     "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
     "absent_row": "🔹 **{}** (كود: {})",
@@ -61,6 +61,21 @@ st.markdown("""
         border-color: #cbd5e1 !important;
         background-color: #f8fafc !important;
     }
+    
+    /* Miracle Banner Card Styling */
+    .miracle-banner {
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        color: #ffffff !important;
+        border-radius: 12px;
+        padding: 25px;
+        text-align: center !important;
+        box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.2);
+        margin-top: 15px;
+        margin-bottom: 25px;
+        direction: rtl;
+    }
+    .miracle-title { font-size: 22px; font-weight: bold; margin-bottom: 10px; color: #ffffff !important; }
+    .miracle-text { font-size: 15px; opacity: 0.95; line-height: 1.8 !important; color: #f0fdf4 !important; }
     
     .list-wrapper-box {
         background-color: #f8fafc;
@@ -265,15 +280,11 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
-    # ------------------------------------------
-    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (CRASH FIXED)
-    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         df_grid_data.to_excel(writer, sheet_name="Attendance Report", index=False, startrow=5)
-        
         workbook = writer.book
         worksheet = writer.sheets["Attendance Report"]
         
@@ -317,12 +328,10 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # FIXED FINAL: Safely target the first list item inside the collection tuple array to extract properties
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells[0]
+            first_cell = col_cells
             col_letter = get_column_letter(first_cell.column)
-            
             for cell in col_cells:
                 if cell.row <= 5:
                     continue
@@ -348,67 +357,102 @@ try:
     st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين أسفلها مباشرة")
     current_view = st.session_state["selected_view"]
     
-    if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp}"):
+    # Check if selected calendar date matches today
+    is_today = (selected_date == now_syria.date())
+    
+    # MIRACLE MESSAGING INJECTOR FUNCTION
+    def show_miracle_message():
+        st.markdown(f"""
+            <div class="miracle-banner">
+                <div class="miracle-title">✨ هذا اليوم مؤرشف ومغلق بالكامل ✨</div>
+                <div class="miracle-text">
+                    لقد تم إغلاق وتأمين كشوفات يوم <b>{selected_date_str}</b> بنجاح داخل النظام. <br>
+                    يمكنك تحميل التقرير الشامل والمطابق للهيكل التنظيمي عبر زر الـ <b>Excel</b> بالأعلى لمراجعة ساعات العمل الإجمالية.
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # 1. Total Count Card Button
+    if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp if is_today else 0}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
     if current_view == "all":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
-        for code, name in sorted(active_employees.items(), key=lambda x: int(x) if str(x).isdigit() else 999):
-            st.markdown(TEXT_CONFIG["all_row"].format(name, code))
-        st.markdown('</div>', unsafe_allow_html=True)
+        if is_today:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            st.write(f"### {TEXT_CONFIG['header_all'].format(total_emp)}")
+            for code, name in sorted(active_employees.items(), key=lambda x: int(x) if str(x).isdigit() else 999):
+                st.markdown(TEXT_CONFIG["all_row"].format(name, code))
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            show_miracle_message()
         
-    if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count}"):
+    # 2. Present Count Card Button
+    if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count if is_today else 0}"):
         st.session_state["selected_view"] = "present"
         st.rerun()
     if current_view == "present":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.write(f"### {TEXT_CONFIG['header_present'].format(p_count)}")
-        if present_staff:
-            for code, name, time_in in present_staff:
-                st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
+        if is_today:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            st.write(f"### {TEXT_CONFIG['header_present'].format(p_count)}")
+            if present_staff:
+                for code, name, time_in in present_staff:
+                    st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
+            else:
+                st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
-        st.markdown('</div>', unsafe_allow_html=True)
+            show_miracle_message()
         
-    if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count}"):
+    # 3. Late Count Card Button
+    if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count if is_today else 0}"):
         st.session_state["selected_view"] = "late"
         st.rerun()
     if current_view == "late":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.write(f"### {TEXT_CONFIG['header_late'].format(l_count)}")
-        if late_staff:
-            for code, name, time_in in late_staff:
-                st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in))
+        if is_today:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            st.write(f"### {TEXT_CONFIG['header_late'].format(l_count)}")
+            if late_staff:
+                for code, name, time_in in late_staff:
+                    st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in))
+            else:
+                st.success("🎉 لا يوجد متأخرين اليوم!")
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.success("🎉 لا يوجد متأخرين اليوم!")
-        st.markdown('</div>', unsafe_allow_html=True)
+            show_miracle_message()
         
-    if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count}"):
+    # 4. Checked-Out Card Button
+    if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count if is_today else 0}"):
         st.session_state["selected_view"] = "checkout"
         st.rerun()
     if current_view == "checkout":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.write(f"### {TEXT_CONFIG['header_checkout'].format(c_count)}")
-        if checkout_staff:
-            for code, name, time_out in checkout_staff:
-                st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
+        if is_today:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            st.write(f"### {TEXT_CONFIG['header_checkout'].format(c_count)}")
+            if checkout_staff:
+                for code, name, time_out in checkout_staff:
+                    st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
+            else:
+                st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
-        st.markdown('</div>', unsafe_allow_html=True)
+            show_miracle_message()
         
-    if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count}"):
+    # 5. Absent Card Button
+    if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count if is_today else 0}"):
         st.session_state["selected_view"] = "absent"
         st.rerun()
     if current_view == "absent":
-        st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
-        st.write(f"### {TEXT_CONFIG['header_absent'].format(a_count)}")
-        if full_absent_staff:
-            for code, name in full_absent_staff:
-                st.markdown(TEXT_CONFIG["absent_row"].format(name, code))
+        if is_today:
+            st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
+            st.write(f"### {TEXT_CONFIG['header_absent'].format(a_count)}")
+            if full_absent_staff:
+                for code, name in full_absent_staff:
+                    st.markdown(TEXT_CONFIG["absent_row"].format(name, code))
+            else:
+                st.success("🎉 لا يوجد غيابات اليوم!")
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.success("🎉 لا يوجد غيابات اليوم!")
-        st.markdown('</div>', unsafe_allow_html=True)
+            show_miracle_message()
 
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
