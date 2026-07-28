@@ -280,6 +280,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED COLUMN WIDTH CRASH)
+    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -328,10 +331,12 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
+        # FIXED: Explicit cell object call index handles column parameters perfectly across all dates
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells
+            first_cell = col_cells[0]
             col_letter = get_column_letter(first_cell.column)
+            
             for cell in col_cells:
                 if cell.row <= 5:
                     continue
@@ -356,11 +361,8 @@ try:
     
     st.write("### 📊 اضغط على أي بطاقة لعرض أسماء الموظفين أسفلها مباشرة")
     current_view = st.session_state["selected_view"]
-    
-    # Check if selected calendar date matches today
     is_today = (selected_date == now_syria.date())
     
-    # MIRACLE MESSAGING INJECTOR FUNCTION
     def show_miracle_message():
         st.markdown(f"""
             <div class="miracle-banner">
@@ -372,7 +374,7 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-    # 1. Total Count Card Button
+    # 1. Total Registered Card Button
     if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp if is_today else 0}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
