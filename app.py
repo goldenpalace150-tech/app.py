@@ -174,7 +174,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code in active_employees:
             punch_time_str = log.get("punch_time", "")
-            # Pull dynamic terminal tracking labels safely
             terminal_alias = clean_txt(log.get("terminal_alias", "") or log.get("terminal_sn", "") or "جهاز البصمة الرئيسي")
             
             if punch_time_str:
@@ -182,7 +181,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                     p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
                     if cleaned_code not in emp_punches:
                         emp_punches[cleaned_code] = []
-                    # Keep both timestamp object and dynamic terminal name mapping intact
                     emp_punches[cleaned_code].append((p_time, terminal_alias))
                 except Exception:
                     continue
@@ -196,13 +194,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         user_all_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
-        # Purge past-day crossover midnight leaks from breaking today's fresh log cycles
         cleaned_current_day_punches = []
+        # FIXED: Explicitly target tuple element index [0] to extract timestamp data safely
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
-            # Absolute hard block for midnight spills from treating it as a new live session
             if p_time.hour < 5:
                 yesterday_raw = [x for x in user_all_punches if x[0].date() == prev_day_obj]
                 yesterday_clean = []
@@ -263,10 +260,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -305,7 +302,7 @@ try:
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet["A1"].alignment = Alignment(horizontal="center")
-        worksheet.merge_cells("A1:H1") # Expanded cell matrix border size to index H
+        worksheet.merge_cells("A1:H1")
         
         worksheet["A2"] = formatted_excel_date
         worksheet["A2"].font = Font(name="Arial", size=12, bold=False)
@@ -344,7 +341,7 @@ try:
                 
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells[0]
+            first_cell = col_cells
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
