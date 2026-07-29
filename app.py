@@ -62,7 +62,6 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
-    /* Miracle Banner Card Styling */
     .miracle-banner {
         background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
         color: #ffffff !important;
@@ -193,14 +192,27 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         user_all_punches = sorted(emp_punches.get(code, []))
         
+        # 🛡️ THE CRITICAL PURGE FIX: If early morning punch belongs to yesterday, wipe it completely from today's timeline
         cleaned_current_day_punches = []
         day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
         
         for p in day_raw_punches:
             if p.hour < 5:
                 yesterday_punches = [x for x in user_all_punches if x.date() == prev_day_obj]
-                if yesterday_punches and len(yesterday_punches) % 2 != 0:
-                    continue
+                if yesterday_punches:
+                    # Clean yesterday's timeline by filtering out next morning crossover logs to check for a single hanging punch
+                    yesterday_clean = []
+                    yesterday_raw = [x for x in user_all_punches if x.date() == prev_day_obj]
+                    for yp in yesterday_raw:
+                        if yp.hour < 5:
+                            day_before_punches = [x for x in user_all_punches if x.date() == (prev_day_obj - timedelta(days=1))]
+                            if day_before_punches and len(day_before_punches) % 2 != 0:
+                                continue
+                        yesterday_clean.append(yp)
+                        
+                    if len(yesterday_clean) % 2 != 0:
+                        # Verified crossover link! Remove it entirely from today's active window layout
+                        continue
             cleaned_current_day_punches.append(p)
 
         if not cleaned_current_day_punches:
@@ -280,9 +292,6 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
-    # ------------------------------------------
-    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (FIXED COLUMN WIDTH CRASH)
-    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -331,7 +340,6 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # FIXED: Explicit cell object call index handles column parameters perfectly across all dates
         for col_cells in worksheet.columns:
             max_len = 0
             first_cell = col_cells[0]
