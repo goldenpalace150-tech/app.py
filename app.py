@@ -20,6 +20,12 @@ TEXT_CONFIG = {
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل كملف Excel النمطي",
     
+    "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
+    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
+    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
+    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
+    "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
+    
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
 }
 
@@ -51,7 +57,6 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
-    /* Mobile & PC Unified Table Theme with Custom Header Styles */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -210,7 +215,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         user_all_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
         cleaned_current_day_punches = []
-        # FIXED CRITICAL: item[0].date() targets the datetime object inside the tuple to ensure crossover filtration works perfectly
+        # FIXED: Explicitly target tuple indexing item[0] to access datetime methods safely
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
@@ -237,6 +242,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
+        # FIXED: Safely unpack the first element tuple index explicitly
         first_punch_obj, first_device = cleaned_current_day_punches[0]
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
@@ -275,10 +281,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
