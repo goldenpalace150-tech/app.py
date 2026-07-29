@@ -31,61 +31,49 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
-# 📱 NATIVE MOBILE APP SHELL OVERRIDE (HTML/CSS DECK)
+# 📱 NATIVE APP GRID & THEMED METRIC CARDS CSS
 st.markdown("""
     <style>
-    /* 1. Eliminate Streamlit Desktop Browser Framework */
+    /* Browser Framework Eraser */
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
     div[data-testid="stDecoration"] { display: none !important; }
     .stApp { direction: rtl; background-color: #f8fafc; }
     
-    /* 2. Absolute Screen Margin Lock for Mobile Viewports */
     .reportview-container .main .block-container {
         padding-top: 15px !important;
-        padding-bottom: 90px !important; 
+        padding-bottom: 40px !important; 
         padding-left: 12px !important;
         padding-right: 12px !important;
         max-width: 100% !important;
     }
     
-    /* 3. Mobile Stat Summary Ring Grid */
-    .kpi-container {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 8px;
-        margin: 15px 0;
-    }
-    .kpi-card {
-        background: #ffffff;
-        border-radius: 10px;
-        padding: 10px 4px;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-        border: 1px solid #e2e8f0;
-    }
-    .kpi-val { font-size: 18px; font-weight: 800; margin-bottom: 2px; }
-    .kpi-lbl { font-size: 11px; color: #64748b; font-weight: bold; }
-    
-    /* 4. Native App Native Sticky Bottom Navigation Bar Matrix */
-    .bottom-navbar {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 65px;
-        background-color: #ffffff;
-        border-top: 1px solid #e2e8f0;
-        display: flex;
-        justify-content: space-around;
-        align-items: center;
-        z-index: 999999;
-        padding-bottom: constant(safe-area-inset-bottom); 
-        padding-bottom: env(safe-area-inset-bottom);
-        box-shadow: 0 -4px 10px rgba(0,0,0,0.04);
+    /* Dynamic Themed Interactive App Cards Buttons */
+    div.kpi-btn-wrapper > div > div > button {
+        width: 100% !important;
+        background-color: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 12px 6px !important;
+        text-align: center !important;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03), 0 2px 4px -1px rgba(0,0,0,0.02) !important;
+        border: 1px solid #e2e8f0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 2px !important;
+        transition: all 0.2s ease-in-out !important;
     }
     
-    /* 5. Mobile Status Badges Layout */
+    div.kpi-btn-wrapper > div > div > button p {
+        font-size: 13px !important;
+        color: #64748b !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        text-align: center !important;
+    }
+    
+    /* 🏷️ Status Badges Layout Tags */
     .badge {
         padding: 4px 8px;
         border-radius: 6px;
@@ -96,7 +84,7 @@ st.markdown("""
     .badge-late { background-color: #fef3c7; color: #9a3412; }
     .badge-absent { background-color: #fee2e2; color: #991b1b; }
     
-    /* 6. Native App Table Framework Rows */
+    /* Grid Tables Base Sheet Styling */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -105,6 +93,7 @@ st.markdown("""
         background-color: #ffffff;
         border-radius: 10px;
         overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     .responsive-grid-table .table-main-title-header {
         background: #1e3a8a;
@@ -216,18 +205,18 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
         
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
+                if abs((current - last_saved).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -242,7 +231,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches[0]
+        first_punch_obj, first_device = cleaned_current_day_punches
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -250,7 +239,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
@@ -279,10 +268,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -292,12 +281,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
+# 📱 COMPACT CONTROL HEADER
 col_left, col_right = st.columns(2)
 with col_left:
     selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
     selected_date_str = selected_date.strftime('%Y-%m-%d')
 with col_right:
-    if st.button("🔄", use_container_width=True):
+    if st.button("🔄 تحديث الصفحة", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -314,15 +304,34 @@ try:
     chk_val = len(checkout_staff) if is_today else 0
     abs_val = len(full_absent_staff) if is_today else 0
 
-    st.markdown(f"""
-        <div class="kpi-container">
-            <div class="kpi-card" style="border-bottom: 3px solid #1e3a8a;"><div class="kpi-val" style="color: #1e3a8a;">{tot_val}</div><div class="kpi-lbl">الكل</div></div>
-            <div class="kpi-card" style="border-bottom: 3px solid #16a34a;"><div class="kpi-val" style="color: #16a34a;">{pre_val}</div><div class="kpi-lbl">بالعمل</div></div>
-            <div class="kpi-card" style="border-bottom: 3px solid #ea580c;"><div class="kpi-val" style="color: #ea580c;">{lat_val}</div><div class="kpi-lbl">متأخر</div></div>
-            <div class="kpi-card" style="border-bottom: 3px solid #dc2626;"><div class="kpi-val" style="color: #dc2626;">{abs_val}</div><div class="kpi-lbl">غياب</div></div>
-        </div>
-    """, unsafe_allow_html=True)
+    # 📱 INTERACTIVE CLICKABLE APP CARDS WITH Dynamic LOGO ICONS
+    st.markdown('<div class="kpi-btn-wrapper">', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    
+    with c1:
+        # Total Card Button
+        if st.button(f"👥 الكل\n\n{tot_val if is_today else 0}", key="kpi_all"):
+            st.session_state["selected_view"] = "all"; st.rerun()
+    with c2:
+        # Present Card Button
+        if st.button(f"🟢 بالعمل\n\n{pre_val}", key="kpi_present"):
+            st.session_state["selected_view"] = "present"; st.rerun()
+    with c3:
+        # Late Card Button
+        if st.button(f"⏰ متأخر\n\n{lat_val}", key="kpi_late"):
+            st.session_state["selected_view"] = "late"; st.rerun()
+    with c4:
+        # Checked-out Card Button
+        if st.button(f"🏁 انصراف\n\n{chk_val}", key="kpi_checkout"):
+            st.session_state["selected_view"] = "checkout"; st.rerun()
+    with c5:
+        # Absent Card Button
+        if st.button(f"❌ غياب\n\n{abs_val}", key="kpi_absent"):
+            st.session_state["selected_view"] = "absent"; st.rerun()
+            
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # In-line filter query 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
 
     def match_search(code, name):
@@ -333,11 +342,11 @@ try:
         st.markdown(f"""
             <div class="miracle-banner">
                 <div class="miracle-title">✨ هذا اليوم مؤرشف بالكامل ✨</div>
-                <div class="miracle-text">تم قفل وحفظ سجلات يوم <b>{selected_date_str}</b> بأمان في قاعدة البيانات السحابية.</div>
+                <div class="miracle-text">تم حفظ وتأمين كشوفات يوم <b>{selected_date_str}</b> بأمان في قاعدة البيانات السحابية. يمكنك تحميل التقرير بالأسفل.</div>
             </div>
         """, unsafe_allow_html=True)
 
-    # FIXED: Cleaned and corrected the max length equation array mapping formula 
+    # Excel building configuration
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -347,17 +356,17 @@ try:
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet.merge_cells("A1:H1")
-        
         for col_cells in worksheet.columns:
             max_len = 0
             for cell in col_cells:
                 if cell.row > 5 and cell.value is not None:
                     max_len = max(max_len, len(str(cell.value)))
-            col_letter = get_column_letter(col_cells[0].column)
+            col_letter = get_column_letter(col_cells.column)
             worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     current_view = st.session_state["selected_view"]
 
+    # Render selected sheet contents
     if current_view == "all":
         if is_today:
             filtered = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge badge-present'>نشط</span></td></tr>" for c, n in active_employees.items() if match_search(c, n)]
@@ -396,31 +405,7 @@ try:
             else: st.success("🎉 لا يوجد غيابات اليوم!")
         else: show_miracle_message()
 
-    # 📱 STICKY NAVIGATION INJECTION DECK
-    st.markdown("""
-        <div class="bottom-navbar">
-            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'all'}, '*')" style="text-decoration:none; text-align:center; color:#64748b;"><div>👤</div><div style="font-size:10px;">الكل</div></a>
-            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'present'}, '*')" style="text-decoration:none; text-align:center; color:#16a34a;"><div>🟢</div><div style="font-size:10px;">بالعمل</div></a>
-            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'late'}, '*')" style="text-decoration:none; text-align:center; color:#ea580c;"><div>⏰</div><div style="font-size:10px;">متأخر</div></a>
-            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'checkout'}, '*')" style="text-decoration:none; text-align:center; color:#2563eb;"><div>🏁</div><div style="font-size:10px;">انصراف</div></a>
-            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'absent'}, '*')" style="text-decoration:none; text-align:center; color:#dc2626;"><div>❌</div><div style="font-size:10px;">غياب</div></a>
-        </div>
-    """, unsafe_allow_html=True)
-    
     st.markdown("---")
-    st.write("⚙️ **لوحة التحكم السريعة:**")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        if st.button("👤 الكل"): st.session_state["selected_view"] = "all"; st.rerun()
-    with c2:
-        if st.button("🟢 بالعمل"): st.session_state["selected_view"] = "present"; st.rerun()
-    with c3:
-        if st.button("⏰ متأخر"): st.session_state["selected_view"] = "late"; st.rerun()
-    with c4:
-        if st.button("🏁 انصراف"): st.session_state["selected_view"] = "checkout"; st.rerun()
-    with c5:
-        if st.button("❌ غياب"): st.session_state["selected_view"] = "absent"; st.rerun()
-        
     st.download_button(label=TEXT_CONFIG["btn_download_excel"], data=excel_buffer.getvalue(), file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 except Exception as e:
