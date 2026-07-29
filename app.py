@@ -31,7 +31,7 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
-# 📱 ULTIMATE NATIVE MOBILE APP SHELL OVERRIDE (HTML/CSS DECK)
+# 📱 NATIVE MOBILE APP SHELL OVERRIDE (HTML/CSS DECK)
 st.markdown("""
     <style>
     /* 1. Eliminate Streamlit Desktop Browser Framework */
@@ -43,7 +43,7 @@ st.markdown("""
     /* 2. Absolute Screen Margin Lock for Mobile Viewports */
     .reportview-container .main .block-container {
         padding-top: 15px !important;
-        padding-bottom: 90px !important; /* Spacing for the sticky bottom navbar */
+        padding-bottom: 90px !important; 
         padding-left: 12px !important;
         padding-right: 12px !important;
         max-width: 100% !important;
@@ -80,7 +80,7 @@ st.markdown("""
         justify-content: space-around;
         align-items: center;
         z-index: 999999;
-        padding-bottom: constant(safe-area-inset-bottom); /* iOS notch optimization */
+        padding-bottom: constant(safe-area-inset-bottom); 
         padding-bottom: env(safe-area-inset-bottom);
         box-shadow: 0 -4px 10px rgba(0,0,0,0.04);
     }
@@ -216,18 +216,18 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current - last_saved).total_seconds()) < 61: continue
+                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -242,7 +242,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches
+        first_punch_obj, first_device = cleaned_current_day_punches[0]
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -250,7 +250,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
@@ -279,11 +279,11 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if row_item["Employee ID"].isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
 # ==========================================
@@ -337,7 +337,7 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-    # FIXED: Clean syntax for Excel dynamic row auto-width calculation
+    # FIXED: Cleaned and corrected the max length equation array mapping formula 
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -347,9 +347,14 @@ try:
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet.merge_cells("A1:H1")
+        
         for col_cells in worksheet.columns:
-            max_len = max([len(str(cell.value or '')) for cell in col_cells if cell.row > 5] +)
-            worksheet.column_dimensions[get_column_letter(col_cells[0].column)].width = max_len + 4
+            max_len = 0
+            for cell in col_cells:
+                if cell.row > 5 and cell.value is not None:
+                    max_len = max(max_len, len(str(cell.value)))
+            col_letter = get_column_letter(col_cells[0].column)
+            worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     current_view = st.session_state["selected_view"]
 
@@ -391,7 +396,7 @@ try:
             else: st.success("🎉 لا يوجد غيابات اليوم!")
         else: show_miracle_message()
 
-    # 📱 FIXED NAVIGATION INJECTION BRIDGE
+    # 📱 STICKY NAVIGATION INJECTION DECK
     st.markdown("""
         <div class="bottom-navbar">
             <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'all'}, '*')" style="text-decoration:none; text-align:center; color:#64748b;"><div>👤</div><div style="font-size:10px;">الكل</div></a>
