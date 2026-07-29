@@ -28,7 +28,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. ROTATING SATELLITE & 3+2 MOBILE GRID CSS
+# 1. EAST-WEST OSCILLATING SATELLITE & WIDE MOBILE BUTTONS CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -45,7 +45,7 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 ROTATING SATELLITE DISH ANIMATION */
+    /* 📡 EAST-WEST ROTATING SATELLITE DISH ANIMATION */
     .satellite-container {
         display: flex;
         align-items: center;
@@ -72,12 +72,12 @@ st.markdown("""
         z-index: 2;
         width: 100%;
         height: 100%;
-        animation: rotate-dish 6s linear infinite;
+        animation: east-west-radar 4s ease-in-out infinite alternate;
         transform-origin: center;
     }
-    @keyframes rotate-dish {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+    @keyframes east-west-radar {
+        0% { transform: rotate(-35deg); }
+        100% { transform: rotate(35deg); }
     }
     
     .signal-waves {
@@ -110,47 +110,28 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
     }
 
-    /* KPI BUTTONS */
+    /* 📱 WIDE & CENTERED MOBILE BUTTONS SOLUTION */
     div[data-testid="stColumn"] button {
         width: 100% !important;
         background: #ffffff !important;
-        border-radius: 10px !important;
-        padding: 10px 4px !important;
+        border-radius: 12px !important;
+        padding: 12px 10px !important;
         text-align: center !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.03) !important;
-        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
+        border: 1px solid #cbd5e1 !important;
+        margin-bottom: 6px !important;
         transition: all 0.2s ease !important;
     }
     div[data-testid="stColumn"] button p {
-        font-size: 12px !important;
+        font-size: 13px !important;
         color: #1e293b !important;
-        font-weight: bold !important;
+        font-weight: 700 !important;
         margin: 0 !important;
         white-space: pre-line !important;
-        line-height: 1.3 !important;
+        line-height: 1.4 !important;
     }
 
-    /* 📱 MOBILE 3+2 GRID FIX FOR KPI BUTTONS */
-    @media (max-width: 768px) {
-        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) {
-            display: grid !important;
-            grid-template-columns: repeat(3, 1fr) !important;
-            gap: 6px !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"] {
-            width: 100% !important;
-            min-width: 0 !important;
-        }
-        /* Make the 4th and 5th buttons span nicely in the second row */
-        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"]:nth-child(4) {
-            grid-column: 1 / span 1 !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"]:nth-child(5) {
-            grid-column: 2 / span 2 !important;
-        }
-    }
-
-    /* TABLE DESIGN */
+    /* TABLE DESIGN (FIXED FOR MOBILE VISIBILITY) */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -176,7 +157,7 @@ st.markdown("""
         text-align: center;
     }
     .responsive-grid-table td { 
-        padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 500;
+        padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 500; color: #1e293b;
     }
     .badge-present { background-color: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
     .badge-late { background-color: #fef3c7; color: #9a3412; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
@@ -222,7 +203,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         raw_code = str(emp.get("emp_code", "")).strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES and cleaned_code not in EXCLUDED_RESIGNED_CODES:
-            # FIX: Safely parse names to prevent literal "None" string
             f_name = emp.get("first_name")
             l_name = emp.get("last_name")
             f_str = str(f_name).strip() if f_name and str(f_name).lower() != "none" else ""
@@ -290,7 +270,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# 📡 ROTATING SATELLITE HEADER
+# 📡 EAST-WEST ROTATING SATELLITE HEADER
 st.markdown(
     """
     <div class="satellite-container">
@@ -309,7 +289,7 @@ st.markdown(
                 <div class="wave"></div>
             </div>
         </div>
-        <span class="satellite-text">الرادار متصل ويقوم بالمسح الحي</span>
+        <span class="satellite-text">الرادار متصل ويقوم بالمسح الحي (شرق - غرب)</span>
     </div>
     """, unsafe_allow_html=True
 )
@@ -318,23 +298,30 @@ c_date, c_ref = st.columns(2)
 with c_date:
     selected_date_str = st.date_input("", value=now_syria.date(), label_visibility="collapsed").strftime('%Y-%m-%d')
 with c_ref:
-    if st.button("🔄 تحديث", use_container_width=True): st.cache_data.clear(); st.rerun()
+    if st.button("🔄 تحديث البيانات", use_container_width=True): st.cache_data.clear(); st.rerun()
 
 try:
     act, pre, lat, abs_s, chk, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
-    # 📱 5 KPI BUTTONS IN A SINGLE CONTAINER (Automatically wraps 3 + 2 on mobile via CSS)
-    b1, b2, b3, b4, b5 = st.columns(5)
-    with b1:
-        if st.button(f"👥 الكل\n\n{len(act)}", key="btn_all"): st.session_state["selected_view"] = "all"; st.rerun()
-    with b2:
-        if st.button(f"🟢 بالعمل\n\n{len(pre)}", key="btn_pre"): st.session_state["selected_view"] = "present"; st.rerun()
-    with b3:
-        if st.button(f"⏰ متأخر\n\n{len(lat)}", key="btn_lat"): st.session_state["selected_view"] = "late"; st.rerun()
-    with b4:
-        if st.button(f"🏁 انصراف\n\n{len(chk)}", key="btn_chk"): st.session_state["selected_view"] = "checkout"; st.rerun()
-    with b5:
-        if st.button(f"❌ غياب\n\n{len(abs_s)}", key="btn_abs"): st.session_state["selected_view"] = "absent"; st.rerun()
+    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT (Each button takes full width nicely)
+    if st.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
+        st.session_state["selected_view"] = "all"
+    
+    col_p, col_l = st.columns(2)
+    with col_p:
+        if st.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): 
+            st.session_state["selected_view"] = "present"
+    with col_l:
+        if st.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
+            st.session_state["selected_view"] = "late"
+
+    col_c, col_a = st.columns(2)
+    with col_c:
+        if st.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
+            st.session_state["selected_view"] = "checkout"
+    with col_a:
+        if st.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
+            st.session_state["selected_view"] = "absent"
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
     match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
