@@ -48,6 +48,9 @@ st.markdown("""
     }
     
     /* Dynamic Themed Interactive App Cards Buttons */
+    div.kpi-btn-wrapper {
+        margin-bottom: 15px !important;
+    }
     div.kpi-btn-wrapper > div > div > button {
         width: 100% !important;
         background-color: #ffffff !important;
@@ -63,13 +66,14 @@ st.markdown("""
         gap: 2px !important;
         transition: all 0.2s ease-in-out !important;
     }
-    
     div.kpi-btn-wrapper > div > div > button p {
-        font-size: 13px !important;
-        color: #64748b !important;
+        font-size: 14px !important;
+        color: #475569 !important;
         font-weight: 700 !important;
         margin: 0 !important;
         text-align: center !important;
+        white-space: pre-line !important;
+        line-height: 1.4 !important;
     }
     
     .badge {
@@ -119,6 +123,21 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+EXCLUDED_MANAGEMENT_CODES = ("40",)
+EXCLUDED_RESIGNED_CODES = ("34",) 
+
+SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
+
+BASE_URL = st.secrets["biotime"]["base_url"].rstrip('/')
+TOKEN_URL = st.secrets["biotime"]["token_url"]
+EMAIL = st.secrets["biotime"]["email"]
+PASSWORD = st.secrets["biotime"]["password"]
+COMPANY = st.secrets["biotime"]["company"]
+
+def clean_txt(raw_text):
+    if not raw_text: return ""
+    return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 @st.cache_data(ttl=300)
 def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
@@ -183,20 +202,18 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
         
-        # FIXED: Targets index [0] to extract the datetime objects from the tuples for subtraction
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
+                if abs((current - last_saved).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
-        # FIXED: Replaced item.date() with item[0].date() to resolve tuple type mapping error
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -211,7 +228,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches[0]
+        first_punch_obj, first_device = cleaned_current_day_punches
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -219,7 +236,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
