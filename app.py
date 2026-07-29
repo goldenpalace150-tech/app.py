@@ -16,8 +16,8 @@ TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
     "lbl_date": "📅 التاريخ للتقرير: **{}**  │  ⏰ الوقت الحالي: **{}**",
-    "btn_refresh": "🔄 تحديث البيانات الحية",
-    "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
+    "btn_refresh": "🔄 تحديث البيانات",
+    "lbl_pick_date": "📅 اختر تاريخ التقرير:",
     "btn_download_excel": "📥 تحميل تقرير Excel النمطي",
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
@@ -31,6 +31,9 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
+# ==========================================
+# 1. ADVANCED CSS FOR MOBILE & RADAR ANIMATION
+# ==========================================
 st.markdown("""
     <style>
     /* Browser Framework Eraser */
@@ -42,20 +45,34 @@ st.markdown("""
     .reportview-container .main .block-container {
         padding-top: 15px !important;
         padding-bottom: 40px !important; 
-        padding-left: 12px !important;
-        padding-right: 12px !important;
+        padding-left: 8px !important;
+        padding-right: 8px !important;
         max-width: 100% !important;
+    }
+
+    /* 🟢 LIVE RADAR ANIMATION */
+    .live-radar {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #10b981;
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        animation: pulse-radar 1.5s infinite cubic-bezier(0.2, 0.8, 0.2, 1);
+        margin-left: 8px;
+    }
+    @keyframes pulse-radar {
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
     
     /* Dynamic Themed Interactive App Cards Buttons */
-    div.kpi-btn-wrapper {
-        margin-bottom: 15px !important;
-    }
-    div.kpi-btn-wrapper > div > div > button {
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button {
         width: 100% !important;
         background-color: #ffffff !important;
         border-radius: 12px !important;
-        padding: 12px 6px !important;
+        padding: 10px 4px !important;
         text-align: center !important;
         box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03), 0 2px 4px -1px rgba(0,0,0,0.02) !important;
         border: 1px solid #e2e8f0 !important;
@@ -66,7 +83,7 @@ st.markdown("""
         gap: 2px !important;
         transition: all 0.2s ease-in-out !important;
     }
-    div.kpi-btn-wrapper > div > div > button p {
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button p {
         font-size: 14px !important;
         color: #475569 !important;
         font-weight: 700 !important;
@@ -75,7 +92,39 @@ st.markdown("""
         white-space: pre-line !important;
         line-height: 1.4 !important;
     }
+
+    /* 📱 MOBILE FIX FOR KPI BUTTONS (PREVENT VERTICAL STACKING) */
+    @media (max-width: 768px) {
+        /* Force the 5-column layout to wrap elegantly in a grid-like flexbox */
+        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            justify-content: center !important;
+            gap: 6px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) > div[data-testid="column"] {
+            min-width: 30% !important; /* 3 Items per row */
+            flex: 1 1 30% !important;
+            width: auto !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button p {
+            font-size: 11px !important; /* Smaller text for mobile screens */
+        }
+        
+        /* Force Top Controls (Date & Refresh Button) to stay side-by-side */
+        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(2):last-child) {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 8px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(2):last-child) > div[data-testid="column"] {
+            min-width: 48% !important;
+            width: 48% !important;
+        }
+    }
     
+    /* Table Styling */
     .badge {
         padding: 4px 8px;
         border-radius: 6px;
@@ -273,14 +322,25 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # 3. INTERFACE RENDERING & CONTROLS MATRIX
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
-time_str = now_syria.strftime('%I:%M:%S %p')
+
+# إضافة مؤشر الرادار الحي ليعطي شعور الاتصال المباشر (Online)
+st.markdown(
+    """
+    <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 12px; margin-top: -10px;">
+        <div style="background: #ecfdf5; border: 1px solid #34d399; color: #059669; padding: 4px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; display: flex; align-items: center;">
+            <div class="live-radar"></div>
+            نظام الحضور متصل │ Live Status
+        </div>
+    </div>
+    """, unsafe_allow_html=True
+)
 
 col_left, col_right = st.columns(2)
 with col_left:
     selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
     selected_date_str = selected_date.strftime('%Y-%m-%d')
 with col_right:
-    if st.button("🔄 تحديث الصفحة", use_container_width=True):
+    if st.button("🔄 تحديث البيانات", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -293,9 +353,7 @@ try:
     chk_val = len(checkout_staff)
     abs_val = len(full_absent_staff)
 
-    st.markdown('<div class="kpi-btn-wrapper">', unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
-    
     with c1:
         if st.button(f"👥 الكل\n\n{tot_val}", key="kpi_all"):
             st.session_state["selected_view"] = "all"; st.rerun()
@@ -311,8 +369,6 @@ try:
     with c5:
         if st.button(f"❌ غياب\n\n{abs_val}", key="kpi_absent"):
             st.session_state["selected_view"] = "absent"; st.rerun()
-            
-    st.markdown('</div>', unsafe_allow_html=True)
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
 
