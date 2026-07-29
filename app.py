@@ -20,25 +20,17 @@ TEXT_CONFIG = {
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
     "btn_download_excel": "📥 تحميل تقرير الحضور الشامل كملف Excel النمطي",
     
-    "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
-    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
-    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
-    "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
-    
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
 }
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
 
-# 🖥️📱 HIGH-PERFORMANCE MOBILE & PC FLUID GRID CSS
 st.markdown("""
     <style>
     .stApp { direction: rtl; }
     .reportview-container .main .block-container { direction: RTL; text-align: right; }
     h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
     
-    /* Fluid Action Buttons Elements */
     div.stButton > button {
         width: 100% !important;
         background-color: #ffffff !important;
@@ -59,7 +51,7 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
     
-    /* Mobile-Optimized Grid Cells Table Theme */
+    /* Mobile & PC Unified Table Theme with Custom Header Styles */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -69,6 +61,14 @@ st.markdown("""
         border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .responsive-grid-table .table-main-title-header {
+        background-color: #1e3a8a !important;
+        color: #ffffff !important;
+        text-align: center !important;
+        font-size: 16px !important;
+        font-weight: bold !important;
+        padding: 12px !important;
     }
     .responsive-grid-table th {
         background-color: #f1f5f9;
@@ -87,7 +87,6 @@ st.markdown("""
         background-color: #f8fafc;
     }
     
-    /* Miracle Banner View Card */
     .miracle-banner {
         background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
         color: #ffffff !important;
@@ -101,16 +100,6 @@ st.markdown("""
     }
     .miracle-title { font-size: 20px; font-weight: bold; margin-bottom: 8px; color: #ffffff !important; }
     .miracle-text { font-size: 14px; opacity: 0.95; line-height: 1.7 !important; color: #f0fdf4 !important; }
-    
-    .list-wrapper-box {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 12px;
-        margin-top: 5px;
-        margin-bottom: 15px;
-        direction: rtl;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -221,6 +210,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         user_all_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
         cleaned_current_day_punches = []
+        # FIXED CRITICAL: item[0].date() targets the datetime object inside the tuple to ensure crossover filtration works perfectly
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
@@ -406,18 +396,18 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-    # 1. Total Registered Card Button + Cell Render
+    # 1. Total Registered Card + Single Unified Title-Body Table Block
     if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp if is_today else 0}"):
         st.session_state["selected_view"] = "all"
         st.rerun()
     if current_view == "all":
         if is_today:
-            html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td></tr>" for code, name in sorted(active_employees.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999)])
-            st.markdown(f'<table class="responsive-grid-table"><tr><th>الكود</th><th>اسم الموظف</th></tr>{html_rows}</table>', unsafe_allow_html=True)
+            html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td></tr>" for code, name in sorted(active_employees.items(), key=lambda x: int(x) if x.isdigit() else 999)])
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="2" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(total_emp)}</th></tr><tr><th>الكود</th><th>اسم الموظف</th></tr>{html_rows}</table>', unsafe_allow_html=True)
         else:
             show_miracle_message()
         
-    # 2. Present Count Card Button + Cell Render
+    # 2. Present Count Card + Single Unified Title-Body Table Block
     if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count if is_today else 0}"):
         st.session_state["selected_view"] = "present"
         st.rerun()
@@ -425,13 +415,13 @@ try:
         if is_today:
             if present_staff:
                 html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in present_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(p_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
             else:
                 st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
         else:
             show_miracle_message()
         
-    # 3. Late Count Card Button + Cell Render
+    # 3. Late Count Card + Single Unified Title-Body Table Block
     if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count if is_today else 0}"):
         st.session_state["selected_view"] = "late"
         st.rerun()
@@ -439,13 +429,13 @@ try:
         if is_today:
             if late_staff:
                 html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in late_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(l_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
             else:
                 st.success("🎉 لا يوجد متأخرين اليوم!")
         else:
             show_miracle_message()
         
-    # 4. Checked-Out Card Button + Cell Render
+    # 4. Checked-Out Card + Single Unified Title-Body Table Block
     if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count if is_today else 0}"):
         st.session_state["selected_view"] = "checkout"
         st.rerun()
@@ -453,13 +443,13 @@ try:
         if is_today:
             if checkout_staff:
                 html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in checkout_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th>الكود</th><th>الاسم</th><th>وقت الانصراف</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(c_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الانصراف</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
             else:
                 st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
         else:
             show_miracle_message()
         
-    # 5. Absent Card Button + Cell Render
+    # 5. Absent Card + Single Unified Title-Body Table Block
     if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count if is_today else 0}"):
         st.session_state["selected_view"] = "absent"
         st.rerun()
@@ -467,7 +457,7 @@ try:
         if is_today:
             if full_absent_staff:
                 html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td></tr>" for code, name in full_absent_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th>الكود</th><th>اسم الغائب</th></tr>{html_rows}</table>', unsafe_allow_html=True)
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="2" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(a_count)}</th></tr><tr><th>الكود</th><th>اسم الغائب</th></tr>{html_rows}</table>', unsafe_allow_html=True)
             else:
                 st.success("🎉 لا يوجد غيابات اليوم!")
         else:
