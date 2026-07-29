@@ -29,7 +29,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. CUSTOM DISH ANIMATION & ONLINE STATUS CSS
+# 1. REALISTIC RADAR SWEEP ANIMATION & CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -46,7 +46,7 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 CUSTOM SATELLITE DISH & ONLINE STATUS HEADER */
+    /* 📡 REALISTIC RADAR HEADER & BLINKING DOT */
     .status-badge {
         display: flex;
         align-items: center;
@@ -62,16 +62,17 @@ st.markdown("""
     }
     
     .animated-dish {
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         object-fit: contain;
-        animation: east-west-radar 4s ease-in-out infinite alternate;
-        transform-origin: center;
+        transform-origin: center center;
+        animation: radar-sweep 4s ease-in-out infinite;
     }
     
-    @keyframes east-west-radar {
+    @keyframes radar-sweep {
         0% { transform: rotate(-25deg); }
-        100% { transform: rotate(25deg); }
+        50% { transform: rotate(25deg); }
+        100% { transform: rotate(-25deg); }
     }
 
     .status-indicator {
@@ -91,18 +92,9 @@ st.markdown("""
     }
 
     @keyframes pulse-green {
-        0% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-        }
-        70% {
-            transform: scale(1);
-            box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
-        }
-        100% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
-        }
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
     }
 
     .online-text {
@@ -112,7 +104,7 @@ st.markdown("""
         letter-spacing: 0.5px;
     }
 
-    /* 📱 WIDE & CENTERED MOBILE BUTTONS SOLUTION */
+    /* 📱 WIDE & CENTERED MOBILE BUTTONS */
     div[data-testid="stColumn"] button {
         width: 100% !important;
         background: #ffffff !important;
@@ -188,6 +180,21 @@ def get_auth_token():
         res = requests.post(TOKEN_URL, json={"email": EMAIL, "password": PASSWORD, "company": COMPANY}, timeout=10)
         if res.status_code in (200, 201): return res.json().get("token")
     except Exception: return None
+
+@st.cache_data(ttl=120)
+def get_biometric_devices():
+    token = get_auth_token()
+    if not token: return []
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+    for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
+        try:
+            res = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                return data.get("data", data) if isinstance(data, (dict, list)) else []
+        except Exception:
+            continue
+    return []
 
 def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     token = get_auth_token()
@@ -272,17 +279,15 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# Try loading the local image file to convert to base64, with fallback if not present yet
 dish_img_tag = ""
 try:
     with open("image_632b3d.jpg", "rb") as img_file:
         encoded_string = base64.b64encode(img_file.read()).decode()
         dish_img_tag = f'<img src="data:image/jpeg;base64,{encoded_string}" class="animated-dish" />'
 except Exception:
-    # Fallback SVG/icon if file is not directly in root folder yet
     dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
 
-# 📡 ANIMATED DISH & ONLINE STATUS HEADER
+# 📡 STATUS HEADER WITH ANIMATED DISH & ONLINE BLINKING DOT
 st.markdown(
     f"""
     <div class="status-badge">
@@ -324,6 +329,20 @@ try:
         if st.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
             st.session_state["selected_view"] = "absent"
 
+    # 🖨️ BIOMETRIC PUNCHING DEVICES SECTION (أجهزة البصمة)
+    with st.expander("🖨️ أجهزة الحضور والانصراف (أجهزة البصمة المرتبطة)", expanded=False):
+        devices = get_biometric_devices()
+        if devices:
+            dev_rows = []
+            for d in devices:
+                d_name = d.get("alias") or d.get("terminal_name") or d.get("sn", "جهاز غير محدد")
+                d_sn = d.get("sn", "N/A")
+                d_ip = d.get("ip_address", "غير متوفر")
+                dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td><span class='badge-present'>متصل</span></td></tr>")
+            st.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
+        else:
+            st.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها من النظام.")
+
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
     match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
 
@@ -353,8 +372,6 @@ try:
         
     elif view == "absent":
         if abs_s:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n, abs_rec in abs_s if match(c, n)] # Fixed unpacked variables to match tuple (code, name)
-            # Wait, let's keep exact loop structure for absent:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n in abs_s if match(c, n)]
             st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
 
