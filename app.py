@@ -212,9 +212,9 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     excel_rows = [] 
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
         
-        # 🛡️ DEDUPLICATOR FIXED: Checks item[0] time parameter explicitly to remove ghost double entries
+        # Deduplication of server payload stamps
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches:
@@ -225,24 +225,17 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                     continue
                 user_all_punches.append(current)
 
+        # Build current reporting day's data frame array
         cleaned_current_day_punches = []
-        # 🛡️ FILTER FIXED: Changed item.date() to item[0].date() to unpack the tuple safely
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
+            # 🛡️ THE ABSOLUTE MIDNIGHT OVERRIDE SHIELD: 
+            # Since Day Change is back to 00:00:00, any log stamped before 05:00 AM on today's report date
+            # is a trailing checkout log from yesterday. Erase it cleanly from today's timeline!
             if p_time.hour < 5:
-                yesterday_raw = [x for x in user_all_punches if x[0].date() == prev_day_obj]
-                yesterday_clean = []
-                for y_item in yesterday_raw:
-                    yp_time, _ = y_item
-                    if yp_time.hour < 5:
-                        day_before_p = [x for x in user_all_punches if x[0].date() == (prev_day_obj - timedelta(days=1))]
-                        if day_before_p and len(day_before_p) % 2 != 0:
-                            continue
-                    yesterday_clean.append(y_item)
-                if yesterday_clean and len(yesterday_clean) % 2 != 0:
-                    continue
+                continue
             cleaned_current_day_punches.append(item)
 
         if not cleaned_current_day_punches:
