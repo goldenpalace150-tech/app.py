@@ -16,7 +16,7 @@ TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
     "lbl_date": "📅 التاريخ للتقرير: **{}**  │  ⏰ الوقت الحالي: **{}**",
-    "btn_refresh": "🔄 تحديث البيانات",
+    "btn_refresh": "🔄 تحديث",
     "lbl_pick_date": "📅 اختر تاريخ التقرير:",
     "btn_download_excel": "📥 تحميل تقرير Excel النمطي",
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
@@ -32,25 +32,25 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. ADVANCED CSS FOR MOBILE & RADAR ANIMATION
+# 1. BULLETPROOF MOBILE CSS & RADAR ANIMATION
 # ==========================================
 st.markdown("""
     <style>
-    /* Browser Framework Eraser */
+    /* 1. Browser Framework Eraser */
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
     div[data-testid="stDecoration"] { display: none !important; }
     .stApp { direction: rtl; background-color: #f8fafc; }
     
     .reportview-container .main .block-container {
-        padding-top: 15px !important;
-        padding-bottom: 40px !important; 
-        padding-left: 8px !important;
-        padding-right: 8px !important;
+        padding-top: 10px !important;
+        padding-bottom: 30px !important; 
+        padding-left: 6px !important;
+        padding-right: 6px !important;
         max-width: 100% !important;
     }
 
-    /* 🟢 LIVE RADAR ANIMATION */
+    /* 2. 🟢 LIVE RADAR ANIMATION */
     .live-radar {
         display: inline-block;
         width: 10px;
@@ -66,69 +66,72 @@ st.markdown("""
         70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
         100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
-    
-    /* Dynamic Themed Interactive App Cards Buttons */
-    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button {
+
+    /* 3. GENERAL BUTTON STYLING */
+    div[data-testid="stColumn"] button {
         width: 100% !important;
         background-color: #ffffff !important;
-        border-radius: 12px !important;
-        padding: 10px 4px !important;
+        border-radius: 10px !important;
+        padding: 8px 2px !important;
         text-align: center !important;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03), 0 2px 4px -1px rgba(0,0,0,0.02) !important;
-        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.04) !important;
+        border: 1px solid #cbd5e1 !important;
         display: flex !important;
         flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 2px !important;
-        transition: all 0.2s ease-in-out !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button p {
-        font-size: 14px !important;
-        color: #475569 !important;
+    div[data-testid="stColumn"] button p {
+        font-size: 13px !important;
+        color: #334155 !important;
         font-weight: 700 !important;
         margin: 0 !important;
-        text-align: center !important;
         white-space: pre-line !important;
-        line-height: 1.4 !important;
+        line-height: 1.3 !important;
     }
 
-    /* 📱 MOBILE FIX FOR KPI BUTTONS (PREVENT VERTICAL STACKING) */
+    /* 4. 📱 HARD OVERRIDE FOR STREAMLIT MOBILE STACKING */
     @media (max-width: 768px) {
-        /* Force the 5-column layout to wrap elegantly in a grid-like flexbox */
-        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) {
+        /* Force horizontal container layout on mobile */
+        div[data-testid="stHorizontalBlock"] {
             display: flex !important;
             flex-direction: row !important;
-            flex-wrap: wrap !important;
-            justify-content: center !important;
-            gap: 6px !important;
+            flex-wrap: nowrap !important;
+            gap: 4px !important;
+            align-items: center !important;
+            justify-content: space-between !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) > div[data-testid="column"] {
-            min-width: 30% !important; /* 3 Items per row */
-            flex: 1 1 30% !important;
-            width: auto !important;
+
+        /* Prevent columns from breaking into 100% full width */
+        div[data-testid="stColumn"], div[data-testid="column"] {
+            width: 100% !important;
+            min-width: 0 !important;
+            flex: 1 1 0 !important;
+            padding: 0 !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5)) button p {
-            font-size: 11px !important; /* Smaller text for mobile screens */
+
+        /* Adjust button text and padding inside mobile cells */
+        div[data-testid="stColumn"] button {
+            padding: 6px 1px !important;
+            min-height: 52px !important;
+            border-radius: 8px !important;
         }
-        
-        /* Force Top Controls (Date & Refresh Button) to stay side-by-side */
-        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(2):last-child) {
-            display: flex !important;
-            flex-direction: row !important;
-            gap: 8px !important;
+        div[data-testid="stColumn"] button p {
+            font-size: 10px !important;
+            line-height: 1.2 !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(2):last-child) > div[data-testid="column"] {
-            min-width: 48% !important;
-            width: 48% !important;
+
+        /* Inputs sizing on mobile */
+        div[data-baseweb="input"] {
+            font-size: 12px !important;
         }
     }
-    
-    /* Table Styling */
+
+    /* 5. TABLE STYLING */
     .badge {
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
+        padding: 3px 6px;
+        border-radius: 4px;
+        font-size: 10px;
         font-weight: bold;
     }
     .badge-present { background-color: #dcfce7; color: #166534; }
@@ -139,9 +142,9 @@ st.markdown("""
         width: 100%;
         border-collapse: collapse;
         margin-top: 10px;
-        font-size: 13px;
+        font-size: 12px;
         background-color: #ffffff;
-        border-radius: 10px;
+        border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
@@ -149,18 +152,24 @@ st.markdown("""
         background: #1e3a8a;
         color: #ffffff !important;
         text-align: center;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: bold;
-        padding: 12px;
+        padding: 10px;
     }
     .responsive-grid-table th {
         background-color: #f1f5f9;
         color: #475569;
-        padding: 10px;
+        padding: 8px 4px;
         font-weight: 700;
         border-bottom: 1px solid #e2e8f0;
+        text-align: center;
     }
-    .responsive-grid-table td { padding: 10px; border-bottom: 1px solid #f8fafc; color: #334155; }
+    .responsive-grid-table td { 
+        padding: 8px 4px; 
+        border-bottom: 1px solid #f8fafc; 
+        color: #334155; 
+        text-align: center;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -323,13 +332,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# إضافة مؤشر الرادار الحي ليعطي شعور الاتصال المباشر (Online)
+# مؤشر الرادار الحي بأسلوب شريط إشعارات أنيق
 st.markdown(
     """
-    <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 12px; margin-top: -10px;">
-        <div style="background: #ecfdf5; border: 1px solid #34d399; color: #059669; padding: 4px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; display: flex; align-items: center;">
+    <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 8px;">
+        <div style="background: #ecfdf5; border: 1px solid #34d399; color: #059669; padding: 3px 12px; border-radius: 16px; font-weight: bold; font-size: 11px; display: flex; align-items: center;">
             <div class="live-radar"></div>
-            نظام الحضور متصل │ Live Status
+            نظام الحضور متصل live
         </div>
     </div>
     """, unsafe_allow_html=True
@@ -340,7 +349,7 @@ with col_left:
     selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
     selected_date_str = selected_date.strftime('%Y-%m-%d')
 with col_right:
-    if st.button("🔄 تحديث البيانات", use_container_width=True):
+    if st.button("🔄 تحديث", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -353,21 +362,22 @@ try:
     chk_val = len(checkout_staff)
     abs_val = len(full_absent_staff)
 
+    # أزرار الـ 5 كروت التي ستصطف أفقياً دائماً حتى على الجوال
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        if st.button(f"👥 الكل\n\n{tot_val}", key="kpi_all"):
+        if st.button(f"👥 الكل\n{tot_val}", key="kpi_all"):
             st.session_state["selected_view"] = "all"; st.rerun()
     with c2:
-        if st.button(f"🟢 بالعمل\n\n{pre_val}", key="kpi_present"):
+        if st.button(f"🟢 بالعمل\n{pre_val}", key="kpi_present"):
             st.session_state["selected_view"] = "present"; st.rerun()
     with c3:
-        if st.button(f"⏰ متأخر\n\n{lat_val}", key="kpi_late"):
+        if st.button(f"⏰ متأخر\n{lat_val}", key="kpi_late"):
             st.session_state["selected_view"] = "late"; st.rerun()
     with c4:
-        if st.button(f"🏁 انصراف\n\n{chk_val}", key="kpi_checkout"):
+        if st.button(f"🏁 انصراف\n{chk_val}", key="kpi_checkout"):
             st.session_state["selected_view"] = "checkout"; st.rerun()
     with c5:
-        if st.button(f"❌ غياب\n\n{abs_val}", key="kpi_absent"):
+        if st.button(f"❌ غياب\n{abs_val}", key="kpi_absent"):
             st.session_state["selected_view"] = "absent"; st.rerun()
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
