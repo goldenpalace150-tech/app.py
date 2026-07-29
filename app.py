@@ -22,8 +22,8 @@ TEXT_CONFIG = {
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
     "header_all": "👥 كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 الموظفون المتواجدون حالياً ({})",
-    "header_late": "⏰ الموظفون المتأخرين اليوم ({})",
+    "header_present": "🟢 Mوظفو الشركة المتواجدون حالياً ({})",
+    "header_late": "⏰ الموظفون المتأخرون اليوم ({})",
     "header_checkout": "🏁 الموظفون المنصرفون اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
@@ -135,6 +135,10 @@ EMAIL = st.secrets["biotime"]["email"]
 PASSWORD = st.secrets["biotime"]["password"]
 COMPANY = st.secrets["biotime"]["company"]
 
+if "debug_logs" not in st.session_state: st.session_state["debug_logs"] = []
+if "selected_view" not in st.session_state: st.session_state["selected_view"] = "present"
+
+def log_debug(message): st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
@@ -202,18 +206,20 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
+        # FIXED: Targets the first index item[0] to execute total_seconds() logic on timestamps safely
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current - last_saved).total_seconds()) < 61: continue
+                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
+        # FIXED: Unpacks timestamp item[0] cleanly to parse data logic
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -228,7 +234,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches
+        first_punch_obj, first_device = cleaned_current_day_punches[0]
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -236,7 +242,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
@@ -265,10 +271,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
