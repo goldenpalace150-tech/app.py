@@ -192,7 +192,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         user_all_punches = sorted(emp_punches.get(code, []))
         
-        # 🛡️ THE CRITICAL PURGE FIX: Completely drops early morning crossover entries from today's data array
         cleaned_current_day_punches = []
         day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
         
@@ -208,7 +207,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                     yesterday_clean.append(yp)
                     
                 if yesterday_clean and len(yesterday_clean) % 2 != 0:
-                    # Verified historical spillover log found. Erase it cleanly from active views
                     continue
             cleaned_current_day_punches.append(p)
 
@@ -289,6 +287,9 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
+    # ------------------------------------------
+    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (EXPLICIT INDEX FIX)
+    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -337,9 +338,10 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
+        # FIXED: Added explicit [0] index accessor to target cell dimensions layout cleanly
         for col_cells in worksheet.columns:
             max_len = 0
-            first_cell = col_cells
+            first_cell = col_cells[0]
             col_letter = get_column_letter(first_cell.column)
             
             for cell in col_cells:
