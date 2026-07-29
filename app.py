@@ -3,6 +3,7 @@ import requests
 import unicodedata
 import pandas as pd
 import io
+import base64
 from datetime import datetime, timedelta
 import zoneinfo
 
@@ -28,7 +29,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. EAST-WEST OSCILLATING SATELLITE & WIDE MOBILE BUTTONS CSS
+# 1. CUSTOM DISH ANIMATION & ONLINE STATUS CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -45,69 +46,70 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 EAST-WEST ROTATING SATELLITE DISH ANIMATION */
-    .satellite-container {
+    /* 📡 CUSTOM SATELLITE DISH & ONLINE STATUS HEADER */
+    .status-badge {
         display: flex;
         align-items: center;
         justify-content: center;
         background: linear-gradient(145deg, #ffffff, #f0f4f8);
-        border: 1px solid #e2e8f0;
+        border: 1px solid #cbd5e1;
         padding: 8px 20px;
         border-radius: 30px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.04);
         margin: 0 auto 15px auto;
         width: fit-content;
         gap: 12px;
     }
-    .dish-icon {
-        position: relative;
-        width: 30px;
-        height: 30px;
-        color: #0ea5e9;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .dish-svg {
-        z-index: 2;
-        width: 100%;
-        height: 100%;
+    
+    .animated-dish {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
         animation: east-west-radar 4s ease-in-out infinite alternate;
         transform-origin: center;
     }
+    
     @keyframes east-west-radar {
-        0% { transform: rotate(-35deg); }
-        100% { transform: rotate(35deg); }
+        0% { transform: rotate(-25deg); }
+        100% { transform: rotate(25deg); }
     }
-    
-    .signal-waves {
-        position: absolute;
-        top: -4px; right: -4px;
-        width: 12px; height: 12px;
+
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
-    .wave {
-        position: absolute;
-        border: 2px solid #0ea5e9;
+
+    .blinking-dot {
+        width: 10px;
+        height: 10px;
+        background-color: #22c55e;
         border-radius: 50%;
-        opacity: 0;
-        animation: emit-signal 2s linear infinite;
+        display: inline-block;
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+        animation: pulse-green 1.5s infinite;
     }
-    .wave:nth-child(1) { width: 8px; height: 8px; top: 8px; left: -4px; animation-delay: 0s; }
-    .wave:nth-child(2) { width: 16px; height: 16px; top: 4px; left: -8px; animation-delay: 0.7s; }
-    
-    @keyframes emit-signal {
-        0% { transform: scale(0.5); opacity: 0; }
-        50% { opacity: 1; }
-        100% { transform: scale(1.6); opacity: 0; }
+
+    @keyframes pulse-green {
+        0% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+        }
+        70% {
+            transform: scale(1);
+            box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+        }
+        100% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+        }
     }
-    
-    .satellite-text {
-        font-size: 13px;
+
+    .online-text {
+        font-size: 14px;
         font-weight: 800;
         color: #0f172a;
-        background: -webkit-linear-gradient(0deg, #0ea5e9, #10b981);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        letter-spacing: 0.5px;
     }
 
     /* 📱 WIDE & CENTERED MOBILE BUTTONS SOLUTION */
@@ -131,7 +133,7 @@ st.markdown("""
         line-height: 1.4 !important;
     }
 
-    /* TABLE DESIGN (FIXED FOR MOBILE VISIBILITY) */
+    /* TABLE DESIGN */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -270,26 +272,25 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# 📡 EAST-WEST ROTATING SATELLITE HEADER
+# Try loading the local image file to convert to base64, with fallback if not present yet
+dish_img_tag = ""
+try:
+    with open("image_632b3d.jpg", "rb") as img_file:
+        encoded_string = base64.b64encode(img_file.read()).decode()
+        dish_img_tag = f'<img src="data:image/jpeg;base64,{encoded_string}" class="animated-dish" />'
+except Exception:
+    # Fallback SVG/icon if file is not directly in root folder yet
+    dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
+
+# 📡 ANIMATED DISH & ONLINE STATUS HEADER
 st.markdown(
-    """
-    <div class="satellite-container">
-        <div class="dish-icon">
-            <svg class="dish-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 10a7.31 7.31 0 0 0 10 10Z"/>
-                <path d="m9 15-1.5 1.5"/>
-                <path d="M12 12a1 1 0 0 0-1-1 1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1Z"/>
-                <path d="M20 4a10.82 10.82 0 0 0-10 10"/>
-                <path d="m16 8-1.5 1.5"/>
-                <path d="M18.8 6.2C19.5 7.1 20 8.3 20 9.5"/>
-                <path d="M21 4c.6.9 1 2 1 3.2"/>
-            </svg>
-            <div class="signal-waves">
-                <div class="wave"></div>
-                <div class="wave"></div>
-            </div>
+    f"""
+    <div class="status-badge">
+        {dish_img_tag}
+        <div class="status-indicator">
+            <span class="blinking-dot"></span>
+            <span class="online-text">Online</span>
         </div>
-        <span class="satellite-text">الرادار متصل ويقوم بالمسح الحي (شرق - غرب)</span>
     </div>
     """, unsafe_allow_html=True
 )
@@ -303,7 +304,7 @@ with c_ref:
 try:
     act, pre, lat, abs_s, chk, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
-    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT (Each button takes full width nicely)
+    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT
     if st.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
         st.session_state["selected_view"] = "all"
     
@@ -352,6 +353,8 @@ try:
         
     elif view == "absent":
         if abs_s:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n, abs_rec in abs_s if match(c, n)] # Fixed unpacked variables to match tuple (code, name)
+            # Wait, let's keep exact loop structure for absent:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n in abs_s if match(c, n)]
             st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
 
