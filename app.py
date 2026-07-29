@@ -15,96 +15,122 @@ from openpyxl.utils import get_column_letter
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
-    "lbl_date": "📅 التاريخ المختار للتقرير: **{}**  │  ⏰ الوقت الحالي في سوريا: **{}**",
-    "btn_refresh": "🔄 تحديث البيانات الحية الآن",
+    "lbl_date": "📅 التاريخ للتقرير: **{}**  │  ⏰ الوقت الحالي: **{}**",
+    "btn_refresh": "🔄 تحديث البيانات الحية",
     "lbl_pick_date": "📅 اختر تاريخ عرض التقرير:",
-    "btn_download_excel": "📥 تحميل تقرير الحضور الشامل كملف Excel النمطي",
+    "btn_download_excel": "📥 تحميل تقرير Excel النمطي",
+    "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
-    "header_all": "👥 قائمة كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 قائمة الموظفين المتواجدون حالياً ({})",
-    "header_late": "⏰ قائمة الموظفين المتأخرين اليوم ({})",
-    "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
+    "header_all": "👥 كافة موظفي الشركة النشطين ({})",
+    "header_present": "🟢 الموظفون المتواجدون حالياً ({})",
+    "header_late": "⏰ الموظفون المتأخرين اليوم ({})",
+    "header_checkout": "🏁 الموظفون المنصرفون اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
-    
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
 }
 
-st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide")
+st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
+# 📱 ULTIMATE NATIVE MOBILE APP SHELL OVERRIDE (HTML/CSS DECK)
 st.markdown("""
     <style>
-    .stApp { direction: rtl; }
-    .reportview-container .main .block-container { direction: RTL; text-align: right; }
-    h1, h2, h3, h4, p, span, li, div { text-align: right !important; direction: RTL !important; line-height: 1.6 !important; }
+    /* 1. Eliminate Streamlit Desktop Browser Framework */
+    header[data-testid="stHeader"] { display: none !important; }
+    footer { display: none !important; }
+    div[data-testid="stDecoration"] { display: none !important; }
+    .stApp { direction: rtl; background-color: #f8fafc; }
     
-    div.stButton > button {
-        width: 100% !important;
-        background-color: #ffffff !important;
-        color: #1e293b !important;
-        border: 1px solid #eef2f5 !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04) !important;
-        border-radius: 8px !important;
-        padding: 14px 20px !important;
-        text-align: right !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
-        margin-bottom: 4px !important;
-        font-weight: 600 !important;
-    }
-    div.stButton > button:hover {
-        border-color: #3b82f6 !important;
-        background-color: #f8fafc !important;
+    /* 2. Absolute Screen Margin Lock for Mobile Viewports */
+    .reportview-container .main .block-container {
+        padding-top: 15px !important;
+        padding-bottom: 90px !important; /* Spacing for the sticky bottom navbar */
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+        max-width: 100% !important;
     }
     
+    /* 3. Mobile Stat Summary Ring Grid */
+    .kpi-container {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin: 15px 0;
+    }
+    .kpi-card {
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 10px 4px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        border: 1px solid #e2e8f0;
+    }
+    .kpi-val { font-size: 18px; font-weight: 800; margin-bottom: 2px; }
+    .kpi-lbl { font-size: 11px; color: #64748b; font-weight: bold; }
+    
+    /* 4. Native App Native Sticky Bottom Navigation Bar Matrix */
+    .bottom-navbar {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 65px;
+        background-color: #ffffff;
+        border-top: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        z-index: 999999;
+        padding-bottom: constant(safe-area-inset-bottom); /* iOS notch optimization */
+        padding-bottom: env(safe-area-inset-bottom);
+        box-shadow: 0 -4px 10px rgba(0,0,0,0.04);
+    }
+    
+    /* 5. Mobile Status Badges Layout */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: bold;
+    }
+    .badge-present { background-color: #dcfce7; color: #166534; }
+    .badge-late { background-color: #fef3c7; color: #9a3412; }
+    .badge-absent { background-color: #fee2e2; color: #991b1b; }
+    
+    /* 6. Native App Table Framework Rows */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
-        margin: 5px 0 15px 0;
-        font-size: 14px;
+        margin-top: 10px;
+        font-size: 13px;
         background-color: #ffffff;
-        border-radius: 8px;
+        border-radius: 10px;
         overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     .responsive-grid-table .table-main-title-header {
-        background-color: #1e3a8a !important;
+        background: #1e3a8a;
         color: #ffffff !important;
-        text-align: center !important;
-        font-size: 16px !important;
-        font-weight: bold !important;
-        padding: 12px !important;
+        text-align: center;
+        font-size: 14px;
+        font-weight: bold;
+        padding: 12px;
     }
     .responsive-grid-table th {
         background-color: #f1f5f9;
-        color: #334155;
-        text-align: right;
-        padding: 10px 12px;
-        font-weight: bold;
-        border-bottom: 2px solid #e2e8f0;
-    }
-    .responsive-grid-table td {
-        padding: 10px 12px;
-        border-bottom: 1px solid #f1f5f9;
         color: #475569;
+        padding: 10px;
+        font-weight: 700;
+        border-bottom: 1px solid #e2e8f0;
     }
-    .responsive-grid-table tr:hover {
-        background-color: #f8fafc;
-    }
+    .responsive-grid-table td { padding: 10px; border-bottom: 1px solid #f8fafc; color: #334155; }
     
     .miracle-banner {
         background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
         color: #ffffff !important;
         border-radius: 12px;
-        padding: 25px;
-        text-align: center !important;
-        box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.2);
-        margin-top: 15px;
-        margin-bottom: 25px;
-        direction: rtl;
+        padding: 20px;
+        text-align: center;
+        margin: 15px 0;
     }
-    .miracle-title { font-size: 20px; font-weight: bold; margin-bottom: 8px; color: #ffffff !important; }
-    .miracle-text { font-size: 14px; opacity: 0.95; line-height: 1.7 !important; color: #f0fdf4 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -119,15 +145,10 @@ EMAIL = st.secrets["biotime"]["email"]
 PASSWORD = st.secrets["biotime"]["password"]
 COMPANY = st.secrets["biotime"]["company"]
 
-if "debug_logs" not in st.session_state:
-    st.session_state["debug_logs"] = []
+if "debug_logs" not in st.session_state: st.session_state["debug_logs"] = []
+if "selected_view" not in st.session_state: st.session_state["selected_view"] = "present"
 
-if "selected_view" not in st.session_state:
-    st.session_state["selected_view"] = "present"
-
-def log_debug(message):
-    st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
-
+def log_debug(message): st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 def clean_txt(raw_text):
     if not raw_text: return ""
     return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
@@ -136,34 +157,26 @@ def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
     try:
         response = requests.post(TOKEN_URL, json=payload, timeout=10)
-        if response.status_code == 200 or response.status_code == 201:
-            return response.json().get("token")
+        if response.status_code in (200, 201): return response.json().get("token")
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     token = get_auth_token()
-    if not token:
-        raise Exception("تفاصيل رمز المصادقة (Token) مفقودة أو غير صالحة.")
-        
+    if not token: raise Exception("رمز المصادقة غير صالح.")
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
-    st.session_state["debug_logs"] = []
     
     emp_url = f"{BASE_URL}/personnel/api/employees/?page_size=1000"
     all_employees = []
     try:
         emp_res = requests.get(emp_url, headers=headers, timeout=15)
-        if emp_res.status_code == 200:
-            all_employees = emp_res.json().get("data", [])
-    except Exception as e:
-        log_debug(f"Employee Request Error: {str(e)}")
+        if emp_res.status_code == 200: all_employees = emp_res.json().get("data", [])
+    except Exception as e: log_debug(f"Employee Request Error: {str(e)}")
 
     active_employees = {}
     for emp in all_employees:
         raw_code = str(emp.get("emp_code", "")).strip()
-        if not raw_code:
-            continue
+        if not raw_code: continue
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code not in EXCLUDED_MANAGEMENT_CODES and cleaned_code not in EXCLUDED_RESIGNED_CODES:
             first_name = emp.get("first_name", "") or ""
@@ -181,16 +194,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     raw_logs = []
     try:
         logs_res = requests.get(logs_url, headers=headers, timeout=15)
-        if logs_res.status_code == 200:
-            raw_logs = logs_res.json().get("data", [])
-    except Exception as e:
-        log_debug(f"Logs Request Error: {str(e)}")
+        if logs_res.status_code == 200: raw_logs = logs_res.json().get("data", [])
+    except Exception as e: log_debug(f"Logs Request Error: {str(e)}")
 
     emp_punches = {}
     for log in raw_logs:
         raw_code = str(log.get("emp_code", "")).strip()
-        if not raw_code:
-            continue
+        if not raw_code: continue
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code in active_employees:
             punch_time_str = log.get("punch_time", "")
@@ -199,39 +209,29 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             if punch_time_str:
                 try:
                     p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
-                    if cleaned_code not in emp_punches:
-                        emp_punches[cleaned_code] = []
+                    if cleaned_code not in emp_punches: emp_punches[cleaned_code] = []
                     emp_punches[cleaned_code].append((p_time, terminal_alias))
-                except Exception:
-                    continue
+                except Exception: continue
 
-    present_staff = []      
-    late_staff = []         
-    full_absent_staff = []  
-    checkout_staff = []     
-    excel_rows = [] 
+    present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
         user_all_punches = []
         for current in raw_user_punches:
-            if not user_all_punches:
-                user_all_punches.append(current)
+            if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current[0] - last_saved[0]).total_seconds()) < 61:
-                    continue
+                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
         cleaned_current_day_punches = []
-        # FIXED: Correctly targeted the first index element of the tuple inside the list comprehension
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
-            if p_time.hour < 5:
-                continue
+            if p_time.hour < 5: continue
             cleaned_current_day_punches.append(item)
 
         if not cleaned_current_day_punches:
@@ -248,8 +248,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
         status_label = "Late(LT)" if is_late else "Present(P)"
         
-        if is_late:
-            late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
+        if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
         early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
@@ -280,197 +279,150 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    # FIXED: Swapped out raw references for index index maps to handle the tuple rows sorting
-    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
-    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if row_item["Employee ID"].isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
 # ==========================================
-# 3. INTERFACE RENDERING & CONTROLS
+# 3. INTERFACE RENDERING & CONTROLS MATRIX
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-selected_date = st.date_input(TEXT_CONFIG["lbl_pick_date"], value=now_syria.date())
-selected_date_str = selected_date.strftime('%Y-%m-%d')
+# 📱 COMPACT MOBILE HEADER SECTION
+col_left, col_right = st.columns([3, 1])
+with col_left:
+    selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
+    selected_date_str = selected_date.strftime('%Y-%m-%d')
+with col_right:
+    if st.button("🔄", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 formatted_excel_date = selected_date.strftime('%B %d %Y')
 generated_on_timestamp = now_syria.strftime('%a %b %d %Y %H:%M:%S')
 
-st.title(TEXT_CONFIG["title_main"])
-st.markdown(TEXT_CONFIG["lbl_date"].format(selected_date_str, time_str))
-
-btn_col1, btn_col2 = st.columns(2)
-with btn_col1:
-    if st.button(TEXT_CONFIG["btn_refresh"], use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
+    is_today = (selected_date == now_syria.date())
     
+    # 📊 NATIVE MOBILE MINI KPI BLOCK ROW
+    tot_val = len(active_employees)
+    pre_val = len(present_staff) if is_today else 0
+    lat_val = len(late_staff) if is_today else 0
+    chk_val = len(checkout_staff) if is_today else 0
+    abs_val = len(full_absent_staff) if is_today else 0
+
+    st.markdown(f"""
+        <div class="kpi-container">
+            <div class="kpi-card" style="border-bottom: 3px solid #1e3a8a;"><div class="kpi-val" style="color: #1e3a8a;">{tot_val}</div><div class="kpi-lbl">الكل</div></div>
+            <div class="kpi-card" style="border-bottom: 3px solid #16a34a;"><div class="kpi-val" style="color: #16a34a;">{pre_val}</div><div class="kpi-lbl">بالعمل</div></div>
+            <div class="kpi-card" style="border-bottom: 3px solid #ea580c;"><div class="kpi-val" style="color: #ea580c;">{lat_val}</div><div class="kpi-lbl">متأخر</div></div>
+            <div class="kpi-card" style="border-bottom: 3px solid #dc2626;"><div class="kpi-val" style="color: #dc2626;">{abs_val}</div><div class="kpi-lbl">غياب</div></div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 🔍 IN-LINE LIVE FILTER INPUT FIELD 
+    search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
+
+    def match_search(code, name):
+        if not search_query: return True
+        return search_query in str(code).lower() or search_query in str(name).lower()
+
+    def show_miracle_message():
+        st.markdown(f"""
+            <div class="miracle-banner">
+                <div class="miracle-title">✨ هذا اليوم مؤرشف بالكامل ✨</div>
+                <div class="miracle-text">تم قفل وحفظ سجلات يوم <b>{selected_date_str}</b> بأمان في قاعدة البيانات السحابية.</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # Excel builder engine background task 
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
-    
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         df_grid_data.to_excel(writer, sheet_name="Attendance Report", index=False, startrow=5)
         workbook = writer.book
         worksheet = writer.sheets["Attendance Report"]
-        
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
-        worksheet["A1"].alignment = Alignment(horizontal="center")
         worksheet.merge_cells("A1:H1")
-        
-        worksheet["A2"] = formatted_excel_date
-        worksheet["A2"].font = Font(name="Arial", size=12, bold=False)
-        worksheet["A2"].alignment = Alignment(horizontal="center")
-        worksheet.merge_cells("A2:H2")
-        
-        worksheet["A3"] = "Company: Golden Palace"
-        worksheet["A3"].font = Font(name="Arial", size=11, bold=False)
-        worksheet["A3"].alignment = Alignment(horizontal="left")
-        worksheet.merge_cells("A3:C3")
-        
-        worksheet["D3"] = f"Generated On: {generated_on_timestamp}"
-        worksheet["D3"].font = Font(name="Arial", size=11, bold=False)
-        worksheet["D3"].alignment = Alignment(horizontal="right")
-        worksheet.merge_cells("D3:H3")
-        
-        worksheet["A5"] = "Department: Department 1"
-        worksheet["A5"].font = Font(name="Arial", size=11, bold=True)
-        worksheet["A5"].alignment = Alignment(horizontal="left")
-        worksheet.merge_cells("A5:C5")
-        
-        thin_border_side = Side(border_style="thin", color="000000")
-        grid_border_format = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
-        
-        for col_idx in range(1, 9):
-            cell = worksheet.cell(row=6, column=col_idx)
-            cell.font = Font(name="Arial", size=11, bold=True)
-            cell.border = grid_border_format
-            cell.alignment = Alignment(horizontal="center")
-            
-        for row in worksheet.iter_rows(min_row=7, max_row=worksheet.max_row, min_col=1, max_col=8):
-            for cell in row:
-                cell.font = Font(name="Arial", size=10)
-                cell.border = grid_border_format
-                cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
-                
         for col_cells in worksheet.columns:
-            max_len = 0
-            first_cell = col_cells[0]
-            col_letter = get_column_letter(first_cell.column)
-            
-            for cell in col_cells:
-                if cell.row <= 5:
-                    continue
-                if cell.value is not None:
-                    max_len = max(max_len, len(str(cell.value)))
-            worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
+            max_len = max([len(str(cell.value or '')) for cell in col_cells if cell.row > 5] +)
+            worksheet.column_dimensions[get_column_letter(col_cells.column)].width = max_len + 4
 
-    with btn_col2:
-        st.download_button(
-            label=TEXT_CONFIG["btn_download_excel"],
-            data=excel_buffer.getvalue(),
-            file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
-    total_emp = len(active_employees)
-    p_count = len(present_staff)
-    l_count = len(late_staff)
-    c_count = len(checkout_staff)
-    a_count = len(full_absent_staff)
-    
-    st.write("### 📊 اضغط على أي بطاقة لعرض الجداول المنسقة")
     current_view = st.session_state["selected_view"]
-    is_today = (selected_date == now_syria.date())
-    
-    def show_miracle_message():
-        st.markdown(f"""
-            <div class="miracle-banner">
-                <div class="miracle-title">✨ هذا اليوم مؤرشف ومغلق بالكامل ✨</div>
-                <div class="miracle-text">
-                    لقد تم إغلاق وتأمين كشوفات يوم <b>{selected_date_str}</b> بنجاح داخل النظام. <br>
-                    يمكنك تحميل التقرير الشامل والمطابق للهيكل التنظيمي عبر زر الـ <b>Excel</b> بالأعلى لمراجعة ساعات العمل الإجمالية.
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
 
-    # 1. Total Registered Card + Single Unified Title-Body Table Block
-    if st.button(f"👥 إجمالي عدد موظفي الشركة النشطين ── {total_emp if is_today else 0}"):
-        st.session_state["selected_view"] = "all"
-        st.rerun()
+    # 🗂️ RENDER SELECTED CELL CONTENT DATA 
     if current_view == "all":
         if is_today:
-            html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td></tr>" for code, name in sorted(active_employees.items(), key=lambda x: int(x) if x.isdigit() else 999)])
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="2" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(total_emp)}</th></tr><tr><th>الكود</th><th>اسم الموظف</th></tr>{html_rows}</table>', unsafe_allow_html=True)
-        else:
-            show_miracle_message()
+            filtered = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge badge-present'>نشط</span></td></tr>" for c, n in active_employees.items() if match_search(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(tot_val)}</th></tr><tr><th>الكود</th><th>اسم الموظف</th><th>الحالة</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
+        else: show_miracle_message()
         
-    # 2. Present Count Card + Single Unified Title-Body Table Block
-    if st.button(f"🟢 الموظفون المتواجدون حالياً في العمل ── {p_count if is_today else 0}"):
-        st.session_state["selected_view"] = "present"
-        st.rerun()
-    if current_view == "present":
+    elif current_view == "present":
         if is_today:
             if present_staff:
-                html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in present_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(p_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
-            else:
-                st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
-        else:
-            show_miracle_message()
+                filtered = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in present_staff if match_search(c, n)]
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(pre_val)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الجهاز</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
+            else: st.info("لا يوجد موظفين متواجدين حالياً.")
+        else: show_miracle_message()
         
-    # 3. Late Count Card + Single Unified Title-Body Table Block
-    if st.button(f"⏰ الموظفون المتأخرون اليوم ── {l_count if is_today else 0}"):
-        st.session_state["selected_view"] = "late"
-        st.rerun()
-    if current_view == "late":
+    elif current_view == "late":
         if is_today:
             if late_staff:
-                html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in late_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(l_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الدخول</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
-            else:
-                st.success("🎉 لا يوجد متأخرين اليوم!")
-        else:
-            show_miracle_message()
+                filtered = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td><span class='badge badge-late'>متأخر</span></td></tr>" for c, n, t, d in late_staff if match_search(c, n)]
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(lat_val)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
+            else: st.success("🎉 لا يوجد متأخرين اليوم!")
+        else: show_miracle_message()
         
-    # 4. Checked-Out Card + Single Unified Title-Body Table Block
-    if st.button(f"✅ الموظفون الذين غادروا وانصرفوا ── {c_count if is_today else 0}"):
-        st.session_state["selected_view"] = "checkout"
-        st.rerun()
-    if current_view == "checkout":
+    elif current_view == "checkout":
         if is_today:
             if checkout_staff:
-                html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td><td>{time}</td><td>{dev}</td></tr>" for code, name, time, dev in checkout_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(c_count)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>وقت الانصراف</th><th>جهاز البصمة</th></tr>{html_rows}</table>', unsafe_allow_html=True)
-            else:
-                st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
-        else:
-            show_miracle_message()
+                filtered = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in checkout_staff if match_search(c, n)]
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(chk_val)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>الجهاز</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
+            else: st.info("لا توجد عمليات انصراف مسجلة.")
+        else: show_miracle_message()
         
-    # 5. Absent Card + Single Unified Title-Body Table Block
-    if st.button(f"❌ الموظفون الغائبون بالكامل اليوم ── {a_count if is_today else 0}"):
-        st.session_state["selected_view"] = "absent"
-        st.rerun()
-    if current_view == "absent":
+    elif current_view == "absent":
         if is_today:
             if full_absent_staff:
-                html_rows = "".join([f"<tr><td>{code}</td><td>{name}</td></tr>" for code, name in full_absent_staff])
-                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="2" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(a_count)}</th></tr><tr><th>الكود</th><th>اسم الغائب</th></tr>{html_rows}</table>', unsafe_allow_html=True)
-            else:
-                st.success("🎉 لا يوجد غيابات اليوم!")
-        else:
-            show_miracle_message()
+                filtered = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge badge-absent'>غياب</span></td></tr>" for c, n in full_absent_staff if match_search(c, n)]
+                st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(abs_val)}</th></tr><tr><th>الكود</th><th>اسم الموظف</th><th>الحالة</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
+            else: st.success("🎉 لا يوجد غيابات اليوم!")
+        else: show_miracle_message()
+
+    # 📱 STICKY BUTTON TAB NAVIGATION BAR FOR ACTIVE TOUCH CONTROL
+    col_t1, col_v2, col_v3, col_v4, col_v5 = st.columns(5)
+    st.markdown("""
+        <div class="bottom-navbar">
+            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'all'}, '*')" style="text-decoration:none; text-align:center; color:#64748b;"><div>👤</div><div style="font-size:10px;">الكل</div></a>
+            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'present'}, '*')" style="text-decoration:none; text-align:center; color:#16a34a;"><div>🟢</div><div style="font-size:10px;">بالعمل</div></a>
+            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'late'}, '*')" style="text-decoration:none; text-align:center; color:#ea580c;"><div>⏰</div><div style="font-size:10px;">متأخر</div></a>
+            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'checkout'}, '*')" style="text-decoration:none; text-align:center; color:#2563eb;"><div>🏁</div><div style="font-size:10px;">انصراف</div></a>
+            <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'absent'}, '*')" style="text-decoration:none; text-align:center; color:#dc2626;"><div>❌</div><div style="font-size:10px;">غياب</div></a>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Standard fallback interaction grid layout for stable device handling
+    st.markdown("---")
+    st.write("⚙️ **لوحة التحكم السريعة:**")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        if st.button("👤 الكل"): st.session_state["selected_view"] = "all"; st.rerun()
+    with c2:
+        if st.button("🟢 بالعمل"): st.session_state["selected_view"] = "present"; st.rerun()
+    with c3:
+        if st.button("⏰ متأخر"): st.session_state["selected_view"] = "late"; st.rerun()
+    with c4:
+        if st.button("🏁 انصراف"): st.session_state["selected_view"] = "checkout"; st.rerun()
+    with c5:
+        if st.button("❌ غياب"): st.session_state["selected_view"] = "absent"; st.rerun()
+        
+    st.download_button(label=TEXT_CONFIG["btn_download_excel"], data=excel_buffer.getvalue(), file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 except Exception as e:
     st.error(TEXT_CONFIG["err_api"].format(str(e)))
-    if st.checkbox("عرض سجلات الأخطاء البرمجية التشغيلية (Debug Logs)"):
-        for log in st.session_state.get("debug_logs", []):
-            st.text(log)
