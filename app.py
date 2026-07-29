@@ -287,9 +287,6 @@ with btn_col1:
 try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     
-    # ------------------------------------------
-    # HIGH-FIDELITY OPENPYXL MATRIX STYLER ENGINE (EXPLICIT INDEX FIX)
-    # ------------------------------------------
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     
@@ -338,7 +335,6 @@ try:
                 cell.border = grid_border_format
                 cell.alignment = Alignment(horizontal="center" if cell.column != 2 else "left")
                 
-        # FIXED: Added explicit [0] index accessor to target cell dimensions layout cleanly
         for col_cells in worksheet.columns:
             max_len = 0
             first_cell = col_cells[0]
