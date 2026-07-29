@@ -26,10 +26,10 @@ TEXT_CONFIG = {
     "header_checkout": "🏁 قائمة الموظفين المنصرفين اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
     
-    "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
+    "late_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {} ── الجهاز: {}",
     "absent_row": "🔹 **{}** (كود: {})",
-    "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {}",
-    "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {}",
+    "present_row": "🔸 **{}** (كود: {}) ── وقت الدخول: {} ── الجهاز: {}",
+    "checkout_row": "✅ **{}** (كود: {}) ── وقت الانصراف: {} ── الجهاز: {}",
     "all_row": "👤 **{}** (كود: {})",
     
     "err_api": "خطأ في الاتصال بواجهة BioTime السحابية: {}"
@@ -174,12 +174,16 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code in active_employees:
             punch_time_str = log.get("punch_time", "")
+            # Pull dynamic terminal tracking labels safely
+            terminal_alias = clean_txt(log.get("terminal_alias", "") or log.get("terminal_sn", "") or "جهاز البصمة الرئيسي")
+            
             if punch_time_str:
                 try:
                     p_time = datetime.strptime(punch_time_str[:19], "%Y-%m-%d %H:%M:%S")
                     if cleaned_code not in emp_punches:
                         emp_punches[cleaned_code] = []
-                    emp_punches[cleaned_code].append(p_time)
+                    # Keep both timestamp object and dynamic terminal name mapping intact
+                    emp_punches[cleaned_code].append((p_time, terminal_alias))
                 except Exception:
                     continue
 
@@ -190,61 +194,65 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     excel_rows = [] 
 
     for code, name in active_employees.items():
-        user_all_punches = sorted(emp_punches.get(code, []))
+        user_all_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
+        # Purge past-day crossover midnight leaks from breaking today's fresh log cycles
         cleaned_current_day_punches = []
-        day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
-        for p in day_raw_punches:
-            if p.hour < 5:
-                yesterday_raw = [x for x in user_all_punches if x.date() == prev_day_obj]
+        for item in day_raw_punches:
+            p_time, dev_name = item
+            # Absolute hard block for midnight spills from treating it as a new live session
+            if p_time.hour < 5:
+                yesterday_raw = [x for x in user_all_punches if x[0].date() == prev_day_obj]
                 yesterday_clean = []
-                for yp in yesterday_raw:
-                    if yp.hour < 5:
-                        day_before_p = [x for x in user_all_punches if x.date() == (prev_day_obj - timedelta(days=1))]
+                for y_item in yesterday_raw:
+                    yp_time, _ = y_item
+                    if yp_time.hour < 5:
+                        day_before_p = [x for x in user_all_punches if x[0].date() == (prev_day_obj - timedelta(days=1))]
                         if day_before_p and len(day_before_p) % 2 != 0:
                             continue
-                    yesterday_clean.append(yp)
+                    yesterday_clean.append(y_item)
                 if yesterday_clean and len(yesterday_clean) % 2 != 0:
                     continue
-            cleaned_current_day_punches.append(p)
+            cleaned_current_day_punches.append(item)
 
         if not cleaned_current_day_punches:
             full_absent_staff.append((code, name))
             excel_rows.append({
                 "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)"
+                "Clock In": "", "Clock Out": "", "Total WT": "", "Status": "Absence(A)", "Device": "-"
             })
             continue
 
-        first_punch = cleaned_current_day_punches[0]
-        clock_in_str = first_punch.strftime('%H:%M')
+        first_punch_obj, first_device = cleaned_current_day_punches[0]
+        clock_in_str = first_punch_obj.strftime('%H:%M')
         
-        is_late = first_punch.hour > 9 or (first_punch.hour == 9 and first_punch.minute > 15)
+        is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
         status_label = "Late(LT)" if is_late else "Present(P)"
         
         if is_late:
-            late_staff.append((code, name, first_punch.strftime('%I:%M %p')))
+            late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [p for p in user_all_punches if p.date() == next_day_obj and p.hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
-            last_punch = early_morning_punches_next_day[0]
+            last_punch_obj, last_device = early_morning_punches_next_day[0]
             punch_count = 2
         else:
-            last_punch = cleaned_current_day_punches[-1]
+            last_punch_obj, last_device = cleaned_current_day_punches[-1]
             punch_count = len(cleaned_current_day_punches)
 
         if punch_count % 2 != 0:
-            present_staff.append((code, name, first_punch.strftime('%I:%M %p')))
+            present_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
             excel_rows.append({
                 "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                "Clock In": clock_in_str, "Clock Out": "", "Total WT": "", "Status": status_label
+                "Clock In": clock_in_str, "Clock Out": "", "Total WT": "", "Status": status_label, "Device": first_device
             })
         else:
-            clock_out_str = last_punch.strftime('%H:%M')
-            checkout_staff.append((code, name, last_punch.strftime('%I:%M %p')))
+            clock_out_str = last_punch_obj.strftime('%H:%M')
+            checkout_staff.append((code, name, last_punch_obj.strftime('%I:%M %p'), last_device))
             
-            time_diff = last_punch - first_punch
+            time_diff = last_punch_obj - first_punch_obj
             total_seconds = int(time_diff.total_seconds())
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
@@ -252,13 +260,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             
             excel_rows.append({
                 "Employee ID": code, "First Name": name, "Date": selected_date_str,
-                "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label
+                "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -297,12 +305,12 @@ try:
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet["A1"].alignment = Alignment(horizontal="center")
-        worksheet.merge_cells("A1:G1")
+        worksheet.merge_cells("A1:H1") # Expanded cell matrix border size to index H
         
         worksheet["A2"] = formatted_excel_date
         worksheet["A2"].font = Font(name="Arial", size=12, bold=False)
         worksheet["A2"].alignment = Alignment(horizontal="center")
-        worksheet.merge_cells("A2:G2")
+        worksheet.merge_cells("A2:H2")
         
         worksheet["A3"] = "Company: Golden Palace"
         worksheet["A3"].font = Font(name="Arial", size=11, bold=False)
@@ -312,7 +320,7 @@ try:
         worksheet["D3"] = f"Generated On: {generated_on_timestamp}"
         worksheet["D3"].font = Font(name="Arial", size=11, bold=False)
         worksheet["D3"].alignment = Alignment(horizontal="right")
-        worksheet.merge_cells("D3:G3")
+        worksheet.merge_cells("D3:H3")
         
         worksheet["A5"] = "Department: Department 1"
         worksheet["A5"].font = Font(name="Arial", size=11, bold=True)
@@ -322,13 +330,13 @@ try:
         thin_border_side = Side(border_style="thin", color="000000")
         grid_border_format = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
         
-        for col_idx in range(1, 8):
+        for col_idx in range(1, 9):
             cell = worksheet.cell(row=6, column=col_idx)
             cell.font = Font(name="Arial", size=11, bold=True)
             cell.border = grid_border_format
             cell.alignment = Alignment(horizontal="center")
             
-        for row in worksheet.iter_rows(min_row=7, max_row=worksheet.max_row, min_col=1, max_col=7):
+        for row in worksheet.iter_rows(min_row=7, max_row=worksheet.max_row, min_col=1, max_col=8):
             for cell in row:
                 cell.font = Font(name="Arial", size=10)
                 cell.border = grid_border_format
@@ -399,8 +407,8 @@ try:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             st.write(f"### {TEXT_CONFIG['header_present'].format(p_count)}")
             if present_staff:
-                for code, name, time_in in present_staff:
-                    st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in))
+                for code, name, time_in, device in present_staff:
+                    st.markdown(TEXT_CONFIG["present_row"].format(name, code, time_in, device))
             else:
                 st.info("لا يوجد موظفين متواجدين حالياً داخل المنشأة.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -416,8 +424,8 @@ try:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             st.write(f"### {TEXT_CONFIG['header_late'].format(l_count)}")
             if late_staff:
-                for code, name, time_in in late_staff:
-                    st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in))
+                for code, name, time_in, device in late_staff:
+                    st.markdown(TEXT_CONFIG["late_row"].format(name, code, time_in, device))
             else:
                 st.success("🎉 لا يوجد متأخرين اليوم!")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -433,8 +441,8 @@ try:
             st.markdown('<div class="list-wrapper-box">', unsafe_allow_html=True)
             st.write(f"### {TEXT_CONFIG['header_checkout'].format(c_count)}")
             if checkout_staff:
-                for code, name, time_out in checkout_staff:
-                    st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out))
+                for code, name, time_out, device in checkout_staff:
+                    st.markdown(TEXT_CONFIG["checkout_row"].format(name, code, time_out, device))
             else:
                 st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
             st.markdown('</div>', unsafe_allow_html=True)
