@@ -29,7 +29,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. REALISTIC RADAR SWEEP ANIMATION & CSS
+# 1. 360 FULL ROTATION DISH ANIMATION & CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -46,7 +46,7 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 REALISTIC RADAR HEADER & BLINKING DOT */
+    /* 📡 360 DEGREE CONTINUOUS ROTATION HEADER */
     .status-badge {
         display: flex;
         align-items: center;
@@ -66,13 +66,12 @@ st.markdown("""
         height: 34px;
         object-fit: contain;
         transform-origin: center center;
-        animation: radar-sweep 4s ease-in-out infinite;
+        animation: rotate-360 5s linear infinite;
     }
     
-    @keyframes radar-sweep {
-        0% { transform: rotate(-25deg); }
-        50% { transform: rotate(25deg); }
-        100% { transform: rotate(-25deg); }
+    @keyframes rotate-360 {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 
     .status-indicator {
@@ -201,6 +200,26 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     if not token: raise Exception("رمز المصادقة غير صالح.")
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     
+    # 1. Fetch Devices & Build Mapping
+    devices = []
+    try:
+        for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
+            dev_res = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
+            if dev_res.status_code == 200:
+                d_data = dev_res.json()
+                devices = d_data.get("data", d_data) if isinstance(d_data, (dict, list)) else []
+                break
+    except Exception:
+        pass
+    
+    terminal_map = {}
+    for d in devices:
+        sn = str(d.get("sn", ""))
+        alias = d.get("alias") or d.get("terminal_name") or sn
+        if sn:
+            terminal_map[sn] = alias
+
+    # 2. Fetch Employees
     all_employees = []
     try:
         emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers, timeout=15)
@@ -220,6 +239,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"موظف {cleaned_code}")
 
+    # 3. Fetch Transactions Logs
     prev_day = (selected_date_obj - timedelta(days=1)).strftime('%Y-%m-%d') + " 00:00:00"
     next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
     
@@ -236,43 +256,45 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         if cleaned_code in active_employees and log.get("punch_time"):
             try:
                 p_time = datetime.strptime(log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S")
-                emp_punches.setdefault(cleaned_code, []).append(p_time)
+                dev_sn = str(log.get("terminal_sn", ""))
+                dev_name = log.get("terminal_alias") or log.get("terminal_name") or terminal_map.get(dev_sn, dev_sn or "جهاز رئيسي")
+                emp_punches.setdefault(cleaned_code, []).append((p_time, dev_name))
             except Exception: continue
 
     present_staff, late_staff, absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        punches = sorted(emp_punches.get(code, []))
+        punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
         filtered_punches = []
-        for p in punches:
-            if not filtered_punches or abs((p - filtered_punches[-1]).total_seconds()) > 60:
-                filtered_punches.append(p)
+        for p_time, d_name in punches:
+            if not filtered_punches or abs((p_time - filtered_punches[-1][0]).total_seconds()) > 60:
+                filtered_punches.append((p_time, d_name))
 
-        day_punches = [p for p in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
+        day_punches = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
         
         if not day_punches:
             absent_staff.append((code, name))
             excel_rows.append({"ID": code, "Name": name, "Status": "Absent"})
             continue
 
-        first_p = day_punches[0]
+        first_p, first_dev = day_punches[0]
         is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
-        if is_late: late_staff.append((code, name, first_p.strftime('%I:%M %p')))
+        if is_late: late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
 
-        next_morning = [p for p in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
+        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
         punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
         if punch_count % 2 != 0:
-            present_staff.append((code, name, first_p.strftime('%I:%M %p')))
+            present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
             excel_rows.append({"ID": code, "Name": name, "Status": "Present"})
         else:
-            last_p = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
-            checkout_staff.append((code, name, last_p.strftime('%I:%M %p')))
+            last_p, last_dev = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
+            checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
             excel_rows.append({"ID": code, "Name": name, "Status": "Checkout"})
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-    return active_employees, present_staff, late_staff, absent_staff, checkout_staff, excel_rows
+    return active_employees, present_staff, late_staff, absent_staff, checkout_staff, devices, excel_rows
 
 # ==========================================
 # 3. INTERFACE RENDERING
@@ -287,7 +309,7 @@ try:
 except Exception:
     dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
 
-# 📡 STATUS HEADER WITH ANIMATED DISH & ONLINE BLINKING DOT
+# 📡 360 ROTATING DISH & ONLINE STATUS HEADER
 st.markdown(
     f"""
     <div class="status-badge">
@@ -307,7 +329,7 @@ with c_ref:
     if st.button("🔄 تحديث البيانات", use_container_width=True): st.cache_data.clear(); st.rerun()
 
 try:
-    act, pre, lat, abs_s, chk, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
+    act, pre, lat, abs_s, chk, devices, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
     # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT
     if st.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
@@ -329,9 +351,8 @@ try:
         if st.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
             st.session_state["selected_view"] = "absent"
 
-    # 🖨️ BIOMETRIC PUNCHING DEVICES SECTION (أجهزة البصمة)
-    with st.expander("🖨️ أجهزة الحضور والانصراف (أجهزة البصمة المرتبطة)", expanded=False):
-        devices = get_biometric_devices()
+    # 🖨️ BIOMETRIC DEVICES EXPANDER
+    with st.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
             dev_rows = []
             for d in devices:
@@ -341,7 +362,7 @@ try:
                 dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td><span class='badge-present'>متصل</span></td></tr>")
             st.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
         else:
-            st.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها من النظام.")
+            st.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها.")
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
     match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
@@ -354,20 +375,20 @@ try:
         
     elif view == "present":
         if pre:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td></tr>" for c, n, t in pre if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in pre if match(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: st.info("لا يوجد موظفين متواجدين حالياً.")
         
     elif view == "late":
         if lat:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td></tr>" for c, n, t in lat if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, t, d in lat if match(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: st.success("لا يوجد متأخرين!")
         
     elif view == "checkout":
         if chk:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td></tr>" for c, n, t in chk if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in chk if match(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: st.info("لا توجد عمليات انصراف مسجلة.")
         
     elif view == "absent":
