@@ -28,7 +28,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. ROTATING SATELLITE & CLEAN UI CSS
+# 1. ROTATING SATELLITE & 3+2 MOBILE GRID CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -130,6 +130,26 @@ st.markdown("""
         line-height: 1.3 !important;
     }
 
+    /* 📱 MOBILE 3+2 GRID FIX FOR KPI BUTTONS */
+    @media (max-width: 768px) {
+        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 6px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"] {
+            width: 100% !important;
+            min-width: 0 !important;
+        }
+        /* Make the 4th and 5th buttons span nicely in the second row */
+        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"]:nth-child(4) {
+            grid-column: 1 / span 1 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[key*="btn_"]) > div[data-testid="column"]:nth-child(5) {
+            grid-column: 2 / span 2 !important;
+        }
+    }
+
     /* TABLE DESIGN */
     .responsive-grid-table {
         width: 100%;
@@ -202,8 +222,14 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         raw_code = str(emp.get("emp_code", "")).strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES and cleaned_code not in EXCLUDED_RESIGNED_CODES:
-            full_name = f"{emp.get('first_name', '')} {emp.get('last_name', '')}".strip()
-            active_employees[cleaned_code] = clean_txt(full_name or f"User {cleaned_code}")
+            # FIX: Safely parse names to prevent literal "None" string
+            f_name = emp.get("first_name")
+            l_name = emp.get("last_name")
+            f_str = str(f_name).strip() if f_name and str(f_name).lower() != "none" else ""
+            l_str = str(l_name).strip() if l_name and str(l_name).lower() != "none" else ""
+            full_name = f"{f_str} {l_str}".strip()
+            
+            active_employees[cleaned_code] = clean_txt(full_name if full_name else f"موظف {cleaned_code}")
 
     prev_day = (selected_date_obj - timedelta(days=1)).strftime('%Y-%m-%d') + " 00:00:00"
     next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
@@ -297,19 +323,17 @@ with c_ref:
 try:
     act, pre, lat, abs_s, chk, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
-    # 📱 2-ROW KPI BUTTONS LAYOUT (Row 1: 3 buttons, Row 2: 2 buttons)
-    r1_c1, r1_c2, r1_c3 = st.columns(3)
-    with r1_c1:
+    # 📱 5 KPI BUTTONS IN A SINGLE CONTAINER (Automatically wraps 3 + 2 on mobile via CSS)
+    b1, b2, b3, b4, b5 = st.columns(5)
+    with b1:
         if st.button(f"👥 الكل\n\n{len(act)}", key="btn_all"): st.session_state["selected_view"] = "all"; st.rerun()
-    with r1_c2:
+    with b2:
         if st.button(f"🟢 بالعمل\n\n{len(pre)}", key="btn_pre"): st.session_state["selected_view"] = "present"; st.rerun()
-    with r1_c3:
+    with b3:
         if st.button(f"⏰ متأخر\n\n{len(lat)}", key="btn_lat"): st.session_state["selected_view"] = "late"; st.rerun()
-
-    r2_c1, r2_c2 = st.columns(2)
-    with r2_c1:
+    with b4:
         if st.button(f"🏁 انصراف\n\n{len(chk)}", key="btn_chk"): st.session_state["selected_view"] = "checkout"; st.rerun()
-    with r2_c2:
+    with b5:
         if st.button(f"❌ غياب\n\n{len(abs_s)}", key="btn_abs"): st.session_state["selected_view"] = "absent"; st.rerun()
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
