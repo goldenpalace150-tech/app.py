@@ -22,7 +22,7 @@ TEXT_CONFIG = {
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
     "header_all": "👥 كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 Mوظفو الشركة المتواجدون حالياً ({})",
+    "header_present": "🟢 الموظفون المتواجدون حالياً ({})",
     "header_late": "⏰ الموظفون المتأخرون اليوم ({})",
     "header_checkout": "🏁 الموظفون المنصرفون اليوم ({})",
     "header_absent": "❌ قائمة الغيابات الكاملة اليوم ({})",
@@ -208,7 +208,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
-        # FIXED: Targets the first index item[0] to execute total_seconds() logic on timestamps safely
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
@@ -217,7 +216,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
-        # FIXED: Unpacks timestamp item[0] cleanly to parse data logic
         cleaned_current_day_punches = []
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
@@ -350,12 +348,14 @@ try:
         worksheet["A1"] = "Daily Attendance Report(Basic Report)"
         worksheet["A1"].font = Font(name="Arial", size=16, bold=True)
         worksheet.merge_cells("A1:H1")
+        
+        # FIXED: Accessing column value through first element tuple index explicitly to fix formatting crash
         for col_cells in worksheet.columns:
             max_len = 0
             for cell in col_cells:
                 if cell.row > 5 and cell.value is not None:
                     max_len = max(max_len, len(str(cell.value)))
-            col_letter = get_column_letter(col_cells.column)
+            col_letter = get_column_letter(col_cells[0].column)
             worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     current_view = st.session_state["selected_view"]
@@ -387,7 +387,7 @@ try:
             if checkout_staff:
                 filtered = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in checkout_staff if match_search(c, n)]
                 st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(chk_val)}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>الجهاز</th></tr>{"".join(filtered)}</table>', unsafe_allow_html=True)
-            else: st.info("لا توجد عمليات انصراف مسجلة.")
+            else: st.info("لا توجد عمليات انصراف مسجلة حتى الآن.")
         else: show_miracle_message()
         
     elif current_view == "absent":
