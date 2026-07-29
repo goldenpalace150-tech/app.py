@@ -32,106 +32,140 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. BULLETPROOF MOBILE CSS & RADAR ANIMATION
+# 1. LUXURY RADAR ANIMATION & RESPONSIVE CSS
 # ==========================================
 st.markdown("""
     <style>
-    /* 1. Browser Framework Eraser */
+    /* Clean Page Eraser */
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
     div[data-testid="stDecoration"] { display: none !important; }
-    .stApp { direction: rtl; background-color: #f8fafc; }
+    .stApp { direction: rtl; background-color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
     
-    .reportview-container .main .block-container {
-        padding-top: 10px !important;
+    .block-container {
+        padding-top: 12px !important;
         padding-bottom: 30px !important; 
-        padding-left: 6px !important;
-        padding-right: 6px !important;
+        padding-left: 10px !important;
+        padding-right: 10px !important;
         max-width: 100% !important;
     }
 
-    /* 2. 🟢 LIVE RADAR ANIMATION */
-    .live-radar {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background-color: #10b981;
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-        animation: pulse-radar 1.5s infinite cubic-bezier(0.2, 0.8, 0.2, 1);
-        margin-left: 8px;
+    /* 🟢 REAL DYNAMIC RADAR SWEEP ANIMATION */
+    .radar-status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        color: #38bdf8;
+        padding: 6px 16px;
+        border-radius: 24px;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25);
+        margin: 0 auto 14px auto;
+        width: fit-content;
+        border: 1px solid rgba(56, 189, 248, 0.3);
     }
-    @keyframes pulse-radar {
-        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-        70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    .radar-dish {
+        position: relative;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1.5px solid #10b981;
+        overflow: hidden;
+    }
+    .radar-ring {
+        position: absolute;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        width: 10px; height: 10px;
+        border: 1px dashed rgba(16, 185, 129, 0.6);
+        border-radius: 50%;
+    }
+    .radar-sweep {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        border-radius: 50%;
+        background: conic-gradient(from 0deg, rgba(16, 185, 129, 0.9) 0deg, rgba(16, 185, 129, 0.05) 90deg, transparent 90deg);
+        animation: radar-spin 1.4s linear infinite;
+    }
+    .radar-dot {
+        position: absolute;
+        top: 4px; right: 5px;
+        width: 4px; height: 4px;
+        background-color: #34d399;
+        border-radius: 50%;
+        box-shadow: 0 0 6px #34d399;
+        animation: blip 1.4s ease-in-out infinite;
+    }
+    @keyframes radar-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    @keyframes blip {
+        0%, 100% { opacity: 0.2; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1.3); }
+    }
+    .radar-text {
+        font-size: 12px;
+        font-weight: 700;
+        color: #e2e8f0;
+        letter-spacing: 0.3px;
     }
 
-    /* 3. GENERAL BUTTON STYLING */
+    /* CARD BUTTONS STYLING */
     div[data-testid="stColumn"] button {
         width: 100% !important;
-        background-color: #ffffff !important;
-        border-radius: 10px !important;
-        padding: 8px 2px !important;
+        background: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 10px 4px !important;
         text-align: center !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04) !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05) !important;
         border: 1px solid #cbd5e1 !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+    div[data-testid="stColumn"] button:active {
+        transform: scale(0.97);
     }
     div[data-testid="stColumn"] button p {
         font-size: 13px !important;
-        color: #334155 !important;
+        color: #1e293b !important;
         font-weight: 700 !important;
         margin: 0 !important;
         white-space: pre-line !important;
         line-height: 1.3 !important;
     }
 
-    /* 4. 📱 HARD OVERRIDE FOR STREAMLIT MOBILE STACKING */
-    @media (max-width: 768px) {
-        /* Force horizontal container layout on mobile */
-        div[data-testid="stHorizontalBlock"] {
-            display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-            gap: 4px !important;
-            align-items: center !important;
-            justify-content: space-between !important;
+    /* 📱 RESPONSIVE MOBILE GRID FIX (PREVENTS SQUEEZING & TIGHTNESS) */
+    @media (max-width: 650px) {
+        /* Re-layout the 5 columns into a spacious 3 + 2 Grid */
+        div[data-testid="stHorizontalBlock"]:has(button[key*="kpi_"]) {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 8px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[key*="kpi_"]) > div[data-testid="column"]:nth-child(4) {
+            grid-column: 1 / span 1 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[key*="kpi_"]) > div[data-testid="column"]:nth-child(5) {
+            grid-column: 2 / span 2 !important;
         }
 
-        /* Prevent columns from breaking into 100% full width */
-        div[data-testid="stColumn"], div[data-testid="column"] {
-            width: 100% !important;
-            min-width: 0 !important;
-            flex: 1 1 0 !important;
-            padding: 0 !important;
-        }
-
-        /* Adjust button text and padding inside mobile cells */
+        /* Prevent button squishing */
         div[data-testid="stColumn"] button {
-            padding: 6px 1px !important;
-            min-height: 52px !important;
-            border-radius: 8px !important;
+            min-height: 56px !important;
+            padding: 8px 4px !important;
         }
         div[data-testid="stColumn"] button p {
-            font-size: 10px !important;
-            line-height: 1.2 !important;
-        }
-
-        /* Inputs sizing on mobile */
-        div[data-baseweb="input"] {
             font-size: 12px !important;
         }
     }
 
-    /* 5. TABLE STYLING */
+    /* TABLE DESIGN */
     .badge {
-        padding: 3px 6px;
-        border-radius: 4px;
-        font-size: 10px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
         font-weight: bold;
     }
     .badge-present { background-color: #dcfce7; color: #166534; }
@@ -141,32 +175,32 @@ st.markdown("""
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 10px;
-        font-size: 12px;
+        margin-top: 12px;
+        font-size: 13px;
         background-color: #ffffff;
-        border-radius: 8px;
+        border-radius: 12px;
         overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     .responsive-grid-table .table-main-title-header {
         background: #1e3a8a;
         color: #ffffff !important;
         text-align: center;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: bold;
-        padding: 10px;
+        padding: 12px;
     }
     .responsive-grid-table th {
-        background-color: #f1f5f9;
+        background-color: #f8fafc;
         color: #475569;
-        padding: 8px 4px;
+        padding: 10px 6px;
         font-weight: 700;
         border-bottom: 1px solid #e2e8f0;
         text-align: center;
     }
     .responsive-grid-table td { 
-        padding: 8px 4px; 
-        border-bottom: 1px solid #f8fafc; 
+        padding: 10px 6px; 
+        border-bottom: 1px solid #f1f5f9; 
         color: #334155; 
         text-align: center;
     }
@@ -332,14 +366,16 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# مؤشر الرادار الحي بأسلوب شريط إشعارات أنيق
+# 🔥 LIVE ANIMATED RADAR SCOPE BAR
 st.markdown(
     """
-    <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 8px;">
-        <div style="background: #ecfdf5; border: 1px solid #34d399; color: #059669; padding: 3px 12px; border-radius: 16px; font-weight: bold; font-size: 11px; display: flex; align-items: center;">
-            <div class="live-radar"></div>
-            نظام الحضور متصل live
+    <div class="radar-status-bar">
+        <div class="radar-dish">
+            <div class="radar-ring"></div>
+            <div class="radar-sweep"></div>
+            <div class="radar-dot"></div>
         </div>
+        <span class="radar-text">نظام المراقبة الحية نشط │ Live Radar</span>
     </div>
     """, unsafe_allow_html=True
 )
@@ -362,22 +398,22 @@ try:
     chk_val = len(checkout_staff)
     abs_val = len(full_absent_staff)
 
-    # أزرار الـ 5 كروت التي ستصطف أفقياً دائماً حتى على الجوال
+    # Dynamic Spacious KPI Grid
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        if st.button(f"👥 الكل\n{tot_val}", key="kpi_all"):
+        if st.button(f"👥 الكل\n\n{tot_val}", key="kpi_all"):
             st.session_state["selected_view"] = "all"; st.rerun()
     with c2:
-        if st.button(f"🟢 بالعمل\n{pre_val}", key="kpi_present"):
+        if st.button(f"🟢 بالعمل\n\n{pre_val}", key="kpi_present"):
             st.session_state["selected_view"] = "present"; st.rerun()
     with c3:
-        if st.button(f"⏰ متأخر\n{lat_val}", key="kpi_late"):
+        if st.button(f"⏰ متأخر\n\n{lat_val}", key="kpi_late"):
             st.session_state["selected_view"] = "late"; st.rerun()
     with c4:
-        if st.button(f"🏁 انصراف\n{chk_val}", key="kpi_checkout"):
+        if st.button(f"🏁 انصراف\n\n{chk_val}", key="kpi_checkout"):
             st.session_state["selected_view"] = "checkout"; st.rerun()
     with c5:
-        if st.button(f"❌ غياب\n{abs_val}", key="kpi_absent"):
+        if st.button(f"❌ غياب\n\n{abs_val}", key="kpi_absent"):
             st.session_state["selected_view"] = "absent"; st.rerun()
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
