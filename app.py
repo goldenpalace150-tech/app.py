@@ -216,18 +216,18 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
         
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
+                if abs((current - last_saved).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -242,7 +242,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches[0]
+        first_punch_obj, first_device = cleaned_current_day_punches
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -250,7 +250,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
@@ -279,10 +279,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val[0]) if val[0].isdigit() else 999)
+    full_absent_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val) if val.isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if row_item["Employee ID"].isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
@@ -292,8 +292,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-# 📱 COMPACT MOBILE HEADER SECTION
-col_left, col_right = st.columns([3, 1])
+col_left, col_right = st.columns(2)
 with col_left:
     selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
     selected_date_str = selected_date.strftime('%Y-%m-%d')
@@ -309,7 +308,6 @@ try:
     active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = load_attendance_data_from_api(selected_date_str, selected_date)
     is_today = (selected_date == now_syria.date())
     
-    # 📊 NATIVE MOBILE MINI KPI BLOCK ROW
     tot_val = len(active_employees)
     pre_val = len(present_staff) if is_today else 0
     lat_val = len(late_staff) if is_today else 0
@@ -325,7 +323,6 @@ try:
         </div>
     """, unsafe_allow_html=True)
 
-    # 🔍 IN-LINE LIVE FILTER INPUT FIELD 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
 
     def match_search(code, name):
@@ -340,7 +337,7 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-    # Excel builder engine background task 
+    # FIXED: Clean syntax for Excel dynamic row auto-width calculation
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -352,11 +349,10 @@ try:
         worksheet.merge_cells("A1:H1")
         for col_cells in worksheet.columns:
             max_len = max([len(str(cell.value or '')) for cell in col_cells if cell.row > 5] +)
-            worksheet.column_dimensions[get_column_letter(col_cells.column)].width = max_len + 4
+            worksheet.column_dimensions[get_column_letter(col_cells[0].column)].width = max_len + 4
 
     current_view = st.session_state["selected_view"]
 
-    # 🗂️ RENDER SELECTED CELL CONTENT DATA 
     if current_view == "all":
         if is_today:
             filtered = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge badge-present'>نشط</span></td></tr>" for c, n in active_employees.items() if match_search(c, n)]
@@ -395,8 +391,7 @@ try:
             else: st.success("🎉 لا يوجد غيابات اليوم!")
         else: show_miracle_message()
 
-    # 📱 STICKY BUTTON TAB NAVIGATION BAR FOR ACTIVE TOUCH CONTROL
-    col_t1, col_v2, col_v3, col_v4, col_v5 = st.columns(5)
+    # 📱 FIXED NAVIGATION INJECTION BRIDGE
     st.markdown("""
         <div class="bottom-navbar">
             <a href="javascript:void(0);" onclick="window.parent.postMessage({type: 'streamlit:set_component_value', value: 'all'}, '*')" style="text-decoration:none; text-align:center; color:#64748b;"><div>👤</div><div style="font-size:10px;">الكل</div></a>
@@ -407,7 +402,6 @@ try:
         </div>
     """, unsafe_allow_html=True)
     
-    # Standard fallback interaction grid layout for stable device handling
     st.markdown("---")
     st.write("⚙️ **لوحة التحكم السريعة:**")
     c1, c2, c3, c4, c5 = st.columns(5)
