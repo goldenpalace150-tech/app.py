@@ -28,7 +28,7 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. ADVANCED SATELLITE ANIMATION & MOBILE GRID CSS
+# 1. ROTATING SATELLITE & CLEAN UI CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -45,7 +45,7 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 SATELLITE DISH ANIMATION */
+    /* 📡 ROTATING SATELLITE DISH ANIMATION */
     .satellite-container {
         display: flex;
         align-items: center;
@@ -61,8 +61,8 @@ st.markdown("""
     }
     .dish-icon {
         position: relative;
-        width: 32px;
-        height: 32px;
+        width: 30px;
+        height: 30px;
         color: #0ea5e9;
         display: flex;
         align-items: center;
@@ -72,12 +72,18 @@ st.markdown("""
         z-index: 2;
         width: 100%;
         height: 100%;
-        animation: subtle-tilt 3s ease-in-out infinite alternate;
+        animation: rotate-dish 6s linear infinite;
+        transform-origin: center;
     }
+    @keyframes rotate-dish {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
     .signal-waves {
         position: absolute;
-        top: -5px; right: -5px;
-        width: 15px; height: 15px;
+        top: -4px; right: -4px;
+        width: 12px; height: 12px;
     }
     .wave {
         position: absolute;
@@ -86,19 +92,15 @@ st.markdown("""
         opacity: 0;
         animation: emit-signal 2s linear infinite;
     }
-    .wave:nth-child(1) { width: 10px; height: 10px; top: 10px; left: -5px; animation-delay: 0s; }
-    .wave:nth-child(2) { width: 20px; height: 20px; top: 5px; left: -10px; animation-delay: 0.6s; }
-    .wave:nth-child(3) { width: 30px; height: 30px; top: 0px; left: -15px; animation-delay: 1.2s; }
+    .wave:nth-child(1) { width: 8px; height: 8px; top: 8px; left: -4px; animation-delay: 0s; }
+    .wave:nth-child(2) { width: 16px; height: 16px; top: 4px; left: -8px; animation-delay: 0.7s; }
     
     @keyframes emit-signal {
         0% { transform: scale(0.5); opacity: 0; }
         50% { opacity: 1; }
-        100% { transform: scale(1.5); opacity: 0; }
+        100% { transform: scale(1.6); opacity: 0; }
     }
-    @keyframes subtle-tilt {
-        0% { transform: rotate(-5deg); }
-        100% { transform: rotate(5deg); }
-    }
+    
     .satellite-text {
         font-size: 13px;
         font-weight: 800;
@@ -108,46 +110,24 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
     }
 
-    /* KPI BUTTONS (CLEAN DESIGN) */
+    /* KPI BUTTONS */
     div[data-testid="stColumn"] button {
         width: 100% !important;
         background: #ffffff !important;
-        border-radius: 12px !important;
-        padding: 12px 4px !important;
+        border-radius: 10px !important;
+        padding: 10px 4px !important;
         text-align: center !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.03) !important;
         border: 1px solid #e2e8f0 !important;
         transition: all 0.2s ease !important;
     }
     div[data-testid="stColumn"] button p {
-        font-size: 13px !important;
+        font-size: 12px !important;
         color: #1e293b !important;
         font-weight: bold !important;
         margin: 0 !important;
         white-space: pre-line !important;
-        line-height: 1.4 !important;
-    }
-
-    /* 📱 ULTIMATE MOBILE GRID FIX */
-    @media (max-width: 768px) {
-        /* Force ANY horizontal block of columns to wrap into a grid */
-        div[data-testid="stHorizontalBlock"] {
-            display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: wrap !important;
-            justify-content: center !important;
-            gap: 6px !important;
-        }
-        /* Make columns take exactly 30% width (3 per row) */
-        div[data-testid="column"] {
-            flex: 1 1 30% !important;
-            width: auto !important;
-            min-width: 30% !important;
-            padding: 0 !important;
-        }
-        /* Make text smaller on mobile to fit perfectly */
-        div[data-testid="stColumn"] button p { font-size: 11px !important; }
-        div[data-testid="stColumn"] button { padding: 8px 2px !important; min-height: 60px !important; }
+        line-height: 1.3 !important;
     }
 
     /* TABLE DESIGN */
@@ -197,7 +177,6 @@ COMPANY = st.secrets["biotime"]["company"]
 if "debug_logs" not in st.session_state: st.session_state["debug_logs"] = []
 if "selected_view" not in st.session_state: st.session_state["selected_view"] = "present"
 
-def log_debug(message): st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 def clean_txt(raw_text): return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip()) if raw_text else ""
 
 @st.cache_data(ttl=300)
@@ -242,39 +221,38 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         if cleaned_code in active_employees and log.get("punch_time"):
             try:
                 p_time = datetime.strptime(log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S")
-                term = clean_txt(log.get("terminal_alias") or log.get("terminal_sn") or "رئيسي")
-                emp_punches.setdefault(cleaned_code, []).append((p_time, term))
+                emp_punches.setdefault(cleaned_code, []).append(p_time)
             except Exception: continue
 
     present_staff, late_staff, absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
+        punches = sorted(emp_punches.get(code, []))
         filtered_punches = []
         for p in punches:
-            if not filtered_punches or abs((p[0] - filtered_punches[-1][0]).total_seconds()) > 60:
+            if not filtered_punches or abs((p - filtered_punches[-1]).total_seconds()) > 60:
                 filtered_punches.append(p)
 
-        day_punches = [p for p in filtered_punches if p[0].date() == selected_date_obj and p[0].hour >= 5]
+        day_punches = [p for p in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
         
         if not day_punches:
             absent_staff.append((code, name))
             excel_rows.append({"ID": code, "Name": name, "Status": "Absent"})
             continue
 
-        first_p, first_d = day_punches[0]
+        first_p = day_punches[0]
         is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
         if is_late: late_staff.append((code, name, first_p.strftime('%I:%M %p')))
 
-        next_morning = [p for p in filtered_punches if p[0].date() == selected_date_obj + timedelta(days=1) and p[0].hour < 5]
+        next_morning = [p for p in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
         punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
         if punch_count % 2 != 0:
-            present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_d))
+            present_staff.append((code, name, first_p.strftime('%I:%M %p')))
             excel_rows.append({"ID": code, "Name": name, "Status": "Present"})
         else:
-            last_p, last_d = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
-            checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_d))
+            last_p = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
+            checkout_staff.append((code, name, last_p.strftime('%I:%M %p')))
             excel_rows.append({"ID": code, "Name": name, "Status": "Checkout"})
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
@@ -286,12 +264,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
 
-# 📡 SATELLITE ANIMATION HEADER
+# 📡 ROTATING SATELLITE HEADER
 st.markdown(
     """
     <div class="satellite-container">
         <div class="dish-icon">
-            <svg class="dish-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="dish-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 10a7.31 7.31 0 0 0 10 10Z"/>
                 <path d="m9 15-1.5 1.5"/>
                 <path d="M12 12a1 1 0 0 0-1-1 1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1Z"/>
@@ -303,10 +281,9 @@ st.markdown(
             <div class="signal-waves">
                 <div class="wave"></div>
                 <div class="wave"></div>
-                <div class="wave"></div>
             </div>
         </div>
-        <span class="satellite-text">الرادار متصل │ بيانات حية</span>
+        <span class="satellite-text">الرادار متصل ويقوم بالمسح الحي</span>
     </div>
     """, unsafe_allow_html=True
 )
@@ -320,17 +297,19 @@ with c_ref:
 try:
     act, pre, lat, abs_s, chk, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
-    # 📱 THE BULLETPROOF KPI GRID (Automated Wrap via CSS)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
+    # 📱 2-ROW KPI BUTTONS LAYOUT (Row 1: 3 buttons, Row 2: 2 buttons)
+    r1_c1, r1_c2, r1_c3 = st.columns(3)
+    with r1_c1:
         if st.button(f"👥 الكل\n\n{len(act)}", key="btn_all"): st.session_state["selected_view"] = "all"; st.rerun()
-    with c2:
+    with r1_c2:
         if st.button(f"🟢 بالعمل\n\n{len(pre)}", key="btn_pre"): st.session_state["selected_view"] = "present"; st.rerun()
-    with c3:
+    with r1_c3:
         if st.button(f"⏰ متأخر\n\n{len(lat)}", key="btn_lat"): st.session_state["selected_view"] = "late"; st.rerun()
-    with c4:
+
+    r2_c1, r2_c2 = st.columns(2)
+    with r2_c1:
         if st.button(f"🏁 انصراف\n\n{len(chk)}", key="btn_chk"): st.session_state["selected_view"] = "checkout"; st.rerun()
-    with c5:
+    with r2_c2:
         if st.button(f"❌ غياب\n\n{len(abs_s)}", key="btn_abs"): st.session_state["selected_view"] = "absent"; st.rerun()
 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
@@ -344,8 +323,8 @@ try:
         
     elif view == "present":
         if pre:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in pre if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الجهاز</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td></tr>" for c, n, t in pre if match(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: st.info("لا يوجد موظفين متواجدين حالياً.")
         
     elif view == "late":
@@ -356,8 +335,9 @@ try:
         
     elif view == "checkout":
         if chk:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in chk if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>الجهاز</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td></tr>" for c, n, t in chk if match(c, n)]
+            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        else: st.info("لا توجد عمليات انصراف مسجلة.")
         
     elif view == "absent":
         if abs_s:
