@@ -214,7 +214,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         raw_user_punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
         
-        # Deduplication of server payload stamps
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches:
@@ -225,15 +224,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                     continue
                 user_all_punches.append(current)
 
-        # Build current reporting day's data frame array
         cleaned_current_day_punches = []
+        # FIXED: Correctly targeted the first index element of the tuple inside the list comprehension
         day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
-            # 🛡️ THE ABSOLUTE MIDNIGHT OVERRIDE SHIELD: 
-            # Since Day Change is back to 00:00:00, any log stamped before 05:00 AM on today's report date
-            # is a trailing checkout log from yesterday. Erase it cleanly from today's timeline!
             if p_time.hour < 5:
                 continue
             cleaned_current_day_punches.append(item)
@@ -257,7 +253,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 
         early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
-            last_punch_obj, last_device = early_morning_punches_next_day[0]
+            last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
         else:
             last_punch_obj, last_device = cleaned_current_day_punches[-1]
@@ -284,10 +280,11 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
                 "Clock In": clock_in_str, "Clock Out": clock_out_str, "Total WT": total_wt_str, "Status": status_label, "Device": last_device
             })
 
-    full_absent_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    present_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    late_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
-    checkout_staff.sort(key=lambda val: int(val) if str(val).isdigit() else 999)
+    # FIXED: Swapped out raw references for index index maps to handle the tuple rows sorting
+    full_absent_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    present_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    late_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
+    checkout_staff.sort(key=lambda val: int(val[0]) if str(val[0]).isdigit() else 999)
     excel_rows.sort(key=lambda row_item: int(row_item["Employee ID"]) if str(row_item["Employee ID"]).isdigit() else 999)
     
     return active_employees, present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows
