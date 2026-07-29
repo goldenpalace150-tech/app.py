@@ -192,27 +192,21 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     for code, name in active_employees.items():
         user_all_punches = sorted(emp_punches.get(code, []))
         
-        # Isolation and cleaning of active transactions array
         cleaned_current_day_punches = []
         day_raw_punches = [p for p in user_all_punches if p.date() == selected_date_obj]
         
         for p in day_raw_punches:
-            # 🛡️ THE CROSSOVER OVERWRITE FIX: Deletes early-morning isolated logs before 5:00 AM 
-            # if they belong to yesterday's night shift
             if p.hour < 5:
                 yesterday_raw = [x for x in user_all_punches if x.date() == prev_day_obj]
-                if not yesterday_raw:
+                yesterday_clean = []
+                for yp in yesterday_raw:
+                    if yp.hour < 5:
+                        day_before_p = [x for x in user_all_punches if x.date() == (prev_day_obj - timedelta(days=1))]
+                        if day_before_p and len(day_before_p) % 2 != 0:
+                            continue
+                    yesterday_clean.append(yp)
+                if yesterday_clean and len(yesterday_clean) % 2 != 0:
                     continue
-                else:
-                    yesterday_clean = []
-                    for yp in yesterday_raw:
-                        if yp.hour < 5:
-                            day_before_p = [x for x in user_all_punches if x.date() == (prev_day_obj - timedelta(days=1))]
-                            if day_before_p and len(day_before_p) % 2 != 0:
-                                continue
-                        yesterday_clean.append(yp)
-                    if yesterday_clean and len(yesterday_clean) % 2 != 0:
-                        continue
             cleaned_current_day_punches.append(p)
 
         if not cleaned_current_day_punches:
