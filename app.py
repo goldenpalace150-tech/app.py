@@ -31,7 +31,6 @@ TEXT_CONFIG = {
 
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
-# 📱 NATIVE APP GRID & THEMED METRIC CARDS CSS
 st.markdown("""
     <style>
     /* Browser Framework Eraser */
@@ -73,7 +72,6 @@ st.markdown("""
         text-align: center !important;
     }
     
-    /* 🏷️ Status Badges Layout Tags */
     .badge {
         padding: 4px 8px;
         border-radius: 6px;
@@ -84,7 +82,6 @@ st.markdown("""
     .badge-late { background-color: #fef3c7; color: #9a3412; }
     .badge-absent { background-color: #fee2e2; color: #991b1b; }
     
-    /* Grid Tables Base Sheet Styling */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -122,25 +119,6 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
-
-EXCLUDED_MANAGEMENT_CODES = ("40",)
-EXCLUDED_RESIGNED_CODES = ("34",) 
-
-SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
-
-BASE_URL = st.secrets["biotime"]["base_url"].rstrip('/')
-TOKEN_URL = st.secrets["biotime"]["token_url"]
-EMAIL = st.secrets["biotime"]["email"]
-PASSWORD = st.secrets["biotime"]["password"]
-COMPANY = st.secrets["biotime"]["company"]
-
-if "debug_logs" not in st.session_state: st.session_state["debug_logs"] = []
-if "selected_view" not in st.session_state: st.session_state["selected_view"] = "present"
-
-def log_debug(message): st.session_state["debug_logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
-def clean_txt(raw_text):
-    if not raw_text: return ""
-    return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip())
 @st.cache_data(ttl=300)
 def get_auth_token():
     payload = {"email": EMAIL, "password": PASSWORD, "company": COMPANY}
@@ -205,18 +183,20 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     present_staff, late_staff, full_absent_staff, checkout_staff, excel_rows = [], [], [], [], []
 
     for code, name in active_employees.items():
-        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item)
+        raw_user_punches = sorted(emp_punches.get(code, []), key=lambda item: item[0])
         
+        # FIXED: Targets index [0] to extract the datetime objects from the tuples for subtraction
         user_all_punches = []
         for current in raw_user_punches:
             if not user_all_punches: user_all_punches.append(current)
             else:
                 last_saved = user_all_punches[-1]
-                if abs((current - last_saved).total_seconds()) < 61: continue
+                if abs((current[0] - last_saved[0]).total_seconds()) < 61: continue
                 user_all_punches.append(current)
 
+        # FIXED: Replaced item.date() with item[0].date() to resolve tuple type mapping error
         cleaned_current_day_punches = []
-        day_raw_punches = [item for item in user_all_punches if item.date() == selected_date_obj]
+        day_raw_punches = [item for item in user_all_punches if item[0].date() == selected_date_obj]
         
         for item in day_raw_punches:
             p_time, dev_name = item
@@ -231,7 +211,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
             })
             continue
 
-        first_punch_obj, first_device = cleaned_current_day_punches
+        first_punch_obj, first_device = cleaned_current_day_punches[0]
         clock_in_str = first_punch_obj.strftime('%H:%M')
         
         is_late = first_punch_obj.hour > 9 or (first_punch_obj.hour == 9 and first_punch_obj.minute > 15)
@@ -239,7 +219,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if is_late: late_staff.append((code, name, first_punch_obj.strftime('%I:%M %p'), first_device))
 
-        early_morning_punches_next_day = [item for item in user_all_punches if item.date() == next_day_obj and item.hour < 5]
+        early_morning_punches_next_day = [item for item in user_all_punches if item[0].date() == next_day_obj and item[0].hour < 5]
         if len(cleaned_current_day_punches) % 2 != 0 and early_morning_punches_next_day:
             last_punch_obj, last_device = early_morning_punches_next_day[-1]
             punch_count = 2
@@ -281,7 +261,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 now_syria = datetime.now(SYRIA_TZ)
 time_str = now_syria.strftime('%I:%M:%S %p')
 
-# 📱 COMPACT CONTROL HEADER
 col_left, col_right = st.columns(2)
 with col_left:
     selected_date = st.date_input("", value=now_syria.date(), label_visibility="collapsed")
@@ -304,34 +283,27 @@ try:
     chk_val = len(checkout_staff) if is_today else 0
     abs_val = len(full_absent_staff) if is_today else 0
 
-    # 📱 INTERACTIVE CLICKABLE APP CARDS WITH Dynamic LOGO ICONS
     st.markdown('<div class="kpi-btn-wrapper">', unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
     
     with c1:
-        # Total Card Button
         if st.button(f"👥 الكل\n\n{tot_val if is_today else 0}", key="kpi_all"):
             st.session_state["selected_view"] = "all"; st.rerun()
     with c2:
-        # Present Card Button
         if st.button(f"🟢 بالعمل\n\n{pre_val}", key="kpi_present"):
             st.session_state["selected_view"] = "present"; st.rerun()
     with c3:
-        # Late Card Button
         if st.button(f"⏰ متأخر\n\n{lat_val}", key="kpi_late"):
             st.session_state["selected_view"] = "late"; st.rerun()
     with c4:
-        # Checked-out Card Button
         if st.button(f"🏁 انصراف\n\n{chk_val}", key="kpi_checkout"):
             st.session_state["selected_view"] = "checkout"; st.rerun()
     with c5:
-        # Absent Card Button
         if st.button(f"❌ غياب\n\n{abs_val}", key="kpi_absent"):
             st.session_state["selected_view"] = "absent"; st.rerun()
             
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # In-line filter query 
     search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
 
     def match_search(code, name):
@@ -346,7 +318,6 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-    # Excel building configuration
     excel_buffer = io.BytesIO()
     df_grid_data = pd.DataFrame(excel_rows)
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -366,7 +337,6 @@ try:
 
     current_view = st.session_state["selected_view"]
 
-    # Render selected sheet contents
     if current_view == "all":
         if is_today:
             filtered = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge badge-present'>نشط</span></td></tr>" for c, n in active_employees.items() if match_search(c, n)]
