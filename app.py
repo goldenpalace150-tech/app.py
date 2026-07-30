@@ -223,13 +223,9 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"موظف {cleaned_code}")
 
-    # 3. Fetch Transactions Logs (Strictly isolated by date if past day)
-    if is_today:
-        prev_day = (selected_date_obj - timedelta(days=1)).strftime('%Y-%m-%d') + " 00:00:00"
-        next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
-    else:
-        prev_day = selected_date_str + " 00:00:00"
-        next_day = selected_date_str + " 23:59:59"
+    # 3. Fetch Transactions Logs (Universal window including post-midnight next morning for ALL dates)
+    prev_day = selected_date_obj.strftime('%Y-%m-%d') + " 00:00:00"
+    next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
     
     raw_logs = []
     try:
@@ -276,7 +272,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         first_p, first_dev = day_punches[0]
         is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
         
-        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5] if is_today else []
+        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
         punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
         last_p = None
@@ -294,7 +290,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             minutes = remainder // 60
             total_wt_str = f"{hours:02d}:{minutes:02d}"
 
-        # Status and categorization logic
         status_str = "Late(LT)" if is_late else "Present(P)"
         
         if is_late:
@@ -325,7 +320,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                     "Status": status_str
                 })
         else:
-            # Past Day historical clean categorization
             if last_p:
                 checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
             else:
@@ -401,7 +395,7 @@ try:
         is_today
     )
     
-    # 📥 PROFESSIONAL EXCEL REPORT GENERATION MATCHING USER SPEC WITH FULL BORDERS & STYLING
+    # 📥 PROFESSIONAL EXCEL REPORT GENERATION (Mobile Optimized: starts directly at Row 1)
     df_excel = pd.DataFrame(exc)
     output = io.BytesIO()
     
@@ -416,34 +410,20 @@ try:
         bottom=Side(style='thin', color='D3D3D3')
     )
 
-    # Title rows matching user's official Excel template
-    ws['B1'] = "Daily Attendance Report(Basic Report)"
-    ws['B1'].font = Font(name='Calibri', size=16, bold=True)
-    
-    ws['C2'] = selected_date_obj_input.strftime('%B %d %Y')
-    ws['C2'].font = Font(name='Calibri', size=12, bold=True)
-    
-    ws['A3'] = f"Company: {COMPANY}"
-    ws['A3'].font = Font(name='Calibri', size=10, bold=True)
-    ws['F3'] = f"Generated On: {datetime.now().strftime('%a %b %d %Y %H:%M:%S')}"
-    ws['F3'].font = Font(name='Calibri', size=10, bold=True)
-
-    ws.append([]) # Row 4 blank spacer
-    
-    # Table headers at Row 5
+    # Table headers at Row 1 for instant mobile visibility
     headers = ["Employee ID", "First Name", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
     ws.append(headers)
-    ws.row_dimensions[5].height = 24
+    ws.row_dimensions[1].height = 24
     
     for col_idx in range(1, len(headers) + 1):
-        cell = ws.cell(row=5, column=col_idx)
+        cell = ws.cell(row=1, column=col_idx)
         cell.font = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    # Data rows with borders and styling
-    for idx, row_data in enumerate(exc, 6):
+    # Data rows with borders and styling starting at Row 2
+    for idx, row_data in enumerate(exc, 2):
         ws.row_dimensions[idx].height = 20
         ws.append([
             row_data["Employee ID"],
@@ -493,26 +473,26 @@ try:
         use_container_width=True
     )
 
-    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT
-    if strlit.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
-        strlit.session_state["selected_view"] = "all"
-    
-    col_p, col_l = strlit.columns(2)
-    with col_p:
-        btn_present_label = f"🟢 المتواجدون ({len(pre)})" if is_today else f"🟢 الحضور ({len(pre)})"
-        if strlit.button(btn_present_label, use_container_width=True): 
-            strlit.session_state["selected_view"] = "present"
-    with col_l:
-        if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
-            strlit.session_state["selected_view"] = "late"
+    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT (Disappears automatically when date is not current day)
+    if is_today:
+        if strlit.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
+            strlit.session_state["selected_view"] = "all"
+        
+        col_p, col_l = strlit.columns(2)
+        with col_p:
+            if strlit.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): 
+                strlit.session_state["selected_view"] = "present"
+        with col_l:
+            if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
+                strlit.session_state["selected_view"] = "late"
 
-    col_c, col_a = strlit.columns(2)
-    with col_c:
-        if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
-            strlit.session_state["selected_view"] = "checkout"
-    with col_a:
-        if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
-            strlit.session_state["selected_view"] = "absent"
+        col_c, col_a = strlit.columns(2)
+        with col_c:
+            if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
+                strlit.session_state["selected_view"] = "checkout"
+        with col_a:
+            if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
+                strlit.session_state["selected_view"] = "absent"
 
     # 🖨️ BIOMETRIC DEVICES EXPANDER
     with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
