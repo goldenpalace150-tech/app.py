@@ -29,11 +29,10 @@ TEXT_CONFIG = {
 st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
-# 1. 360 FULL ROTATION DISH ANIMATION & CSS
+# 1. CSS STYLING & ANIMATIONS
 # ==========================================
 st.markdown("""
     <style>
-    /* Clean UI */
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
     .stApp { direction: rtl; background-color: #f4f7f9; font-family: system-ui, -apple-system, sans-serif; }
@@ -180,21 +179,6 @@ def get_auth_token():
         if res.status_code in (200, 201): return res.json().get("token")
     except Exception: return None
 
-@st.cache_data(ttl=120)
-def get_biometric_devices():
-    token = get_auth_token()
-    if not token: return []
-    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
-    for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
-        try:
-            res = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                return data.get("data", data) if isinstance(data, (dict, list)) else []
-        except Exception:
-            continue
-    return []
-
 def load_attendance_data_from_api(selected_date_str, selected_date_obj):
     token = get_auth_token()
     if not token: raise Exception("رمز المصادقة غير صالح.")
@@ -274,7 +258,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if not day_punches:
             absent_staff.append((code, name))
-            excel_rows.append({"ID": code, "Name": name, "Status": "Absent"})
+            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "غياب", "وقت الدخول": "-", "وقت الانصراف": "-", "الجهاز": "-"})
             continue
 
         first_p, first_dev = day_punches[0]
@@ -286,11 +270,11 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 
         if punch_count % 2 != 0:
             present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
-            excel_rows.append({"ID": code, "Name": name, "Status": "Present"})
+            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "متواجد حالياً", "وقت الدخول": first_p.strftime('%I:%M %p'), "وقت الانصراف": "-", "الجهاز": first_dev})
         else:
             last_p, last_dev = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
             checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
-            excel_rows.append({"ID": code, "Name": name, "Status": "Checkout"})
+            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "منصرف", "وقت الدخول": first_p.strftime('%I:%M %p'), "وقت الانصراف": last_p.strftime('%I:%M %p'), "الجهاز": last_dev})
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
@@ -300,6 +284,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
 # 3. INTERFACE RENDERING
 # ==========================================
 now_syria = datetime.now(SYRIA_TZ)
+today_str = now_syria.strftime('%Y-%m-%d')
 
 dish_img_tag = ""
 try:
@@ -309,28 +294,57 @@ try:
 except Exception:
     dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
 
-# 📡 360 ROTATING DISH & ONLINE STATUS HEADER
-st.markdown(
-    f"""
-    <div class="status-badge">
-        {dish_img_tag}
-        <div class="status-indicator">
-            <span class="blinking-dot"></span>
-            <span class="online-text">Online</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True
-)
-
 c_date, c_ref = st.columns(2)
 with c_date:
     selected_date_str = st.date_input("", value=now_syria.date(), label_visibility="collapsed").strftime('%Y-%m-%d')
 with c_ref:
     if st.button("🔄 تحديث البيانات", use_container_width=True): st.cache_data.clear(); st.rerun()
 
+# 📡 CONDITIONAL HEADER: LIVE BADGE FOR TODAY ONLY, ARCHIVE BADGE FOR OTHER DAYS
+is_today = (selected_date_str == today_str)
+
+if is_today:
+    st.markdown(
+        f"""
+        <div class="status-badge">
+            {dish_img_tag}
+            <div class="status-indicator">
+                <span class="blinking-dot"></span>
+                <span class="online-text">Online (مباشر)</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        f"""
+        <div class="status-badge" style="border-color: #94a3b8; background: #e2e8f0;">
+            {dish_img_tag}
+            <div class="status-indicator">
+                <span style="font-weight: 800; color: #475569; font-size: 14px;">أرشيف تاريخي ({selected_date_str})</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True
+    )
+
 try:
     act, pre, lat, abs_s, chk, devices, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
     
+    # 📥 EXCEL EXPORT BUTTON
+    df_excel = pd.DataFrame(exc)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_excel.to_excel(writer, index=False, sheet_name='Attendance')
+    excel_data = output.getvalue()
+
+    st.download_button(
+        label="📥 تحميل تقرير Excel لهذا اليوم",
+        data=excel_data,
+        file_name=f"Attendance_Report_{selected_date_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
     # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT
     if st.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
         st.session_state["selected_view"] = "all"
@@ -377,7 +391,7 @@ try:
         if pre:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in pre if match(c, n)]
             st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: st.info("لا يوجد موظفين متواجدين حالياً.")
+        else: st.info("لا يوجد موظفين متواجدين في هذا اليوم.")
         
     elif view == "late":
         if lat:
