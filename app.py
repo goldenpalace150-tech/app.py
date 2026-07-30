@@ -19,8 +19,8 @@ TEXT_CONFIG = {
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
     "header_all": "👥 كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 المتواجدون ({})",
-    "header_late": "⏰ المتأخرون ({})",
+    "header_present": "🟢 المتواجدون / الحضور ({})",
+    "header_late": "⏰ الموظفون المتأخرون ({})",
     "header_checkout": "🏁 المنصرفون ({})",
     "header_absent": "❌ الغيابات ({})",
     "err_api": "خطأ في الاتصال بواجهة BioTime: {}"
@@ -223,9 +223,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             
             active_employees[cleaned_code] = clean_txt(full_name if full_name else f"موظف {cleaned_code}")
 
-    # 3. Fetch Transactions Logs
-    prev_day = (selected_date_obj - timedelta(days=1)).strftime('%Y-%m-%d') + " 00:00:00"
-    next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
+    # 3. Fetch Transactions Logs (Strictly isolated by date if past day)
+    if is_today:
+        prev_day = (selected_date_obj - timedelta(days=1)).strftime('%Y-%m-%d') + " 00:00:00"
+        next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
+    else:
+        prev_day = selected_date_str + " 00:00:00"
+        next_day = selected_date_str + " 23:59:59"
     
     raw_logs = []
     try:
@@ -272,11 +276,9 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         first_p, first_dev = day_punches[0]
         is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
         
-        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
+        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5] if is_today else []
         punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
-        # Calculate Total Working Time if checkout exists
-        has_checkout = punch_count % 2 == 0 or (not is_today and len(day_punches) > 1)
         last_p = None
         last_dev = first_dev
         
@@ -292,7 +294,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             minutes = remainder // 60
             total_wt_str = f"{hours:02d}:{minutes:02d}"
 
-        # Status assignment based on live vs past day accuracy
+        # Status and categorization logic
+        status_str = "Late(LT)" if is_late else "Present(P)"
+        
+        if is_late:
+            late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+
         if is_today:
             if punch_count % 2 != 0:
                 present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
@@ -303,7 +310,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                     "Clock In": first_p.strftime('%H:%M'),
                     "Clock Out": "",
                     "Total WT": "",
-                    "Status": "Late(LT)" if is_late else "Present(P)"
+                    "Status": status_str
                 })
             else:
                 last_p_real, last_dev_real = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
@@ -315,17 +322,14 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                     "Clock In": first_p.strftime('%H:%M'),
                     "Clock Out": last_p_real.strftime('%H:%M'),
                     "Total WT": total_wt_str,
-                    "Status": "Late(LT)" if is_late else "Present(P)"
+                    "Status": status_str
                 })
         else:
-            # Past Day: Accurate historical categorization
+            # Past Day historical clean categorization
             if last_p:
                 checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
             else:
                 present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
-                
-            if is_late:
-                late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
 
             excel_rows.append({
                 "Employee ID": code,
@@ -334,11 +338,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                 "Clock In": first_p.strftime('%H:%M'),
                 "Clock Out": last_p.strftime('%H:%M') if last_p else "",
                 "Total WT": total_wt_str,
-                "Status": "Late(LT)" if is_late else "Present(P)"
+                "Status": status_str
             })
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
     return active_employees, present_staff, late_staff, absent_staff, checkout_staff, devices, excel_rows
 
 # ==========================================
@@ -392,45 +397,54 @@ else:
 try:
     act, pre, lat, abs_s, chk, devices, exc = load_attendance_data_from_api(
         selected_date_str, 
-        datetime.strptime(selected_date_str, "%Y-%m-%d").date(), 
+        selected_date_obj_input, 
         is_today
     )
     
-    # 📥 PROFESSIONAL EXCEL REPORT GENERATION MATCHING USER SPEC
+    # 📥 PROFESSIONAL EXCEL REPORT GENERATION MATCHING USER SPEC WITH FULL BORDERS & STYLING
     df_excel = pd.DataFrame(exc)
     output = io.BytesIO()
     
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Attendance Report"
-    ws.sheet_view.rightToLeft = True
 
-    # Title rows
+    thin_border = Border(
+        left=Side(style='thin', color='D3D3D3'),
+        right=Side(style='thin', color='D3D3D3'),
+        top=Side(style='thin', color='D3D3D3'),
+        bottom=Side(style='thin', color='D3D3D3')
+    )
+
+    # Title rows matching user's official Excel template
     ws['B1'] = "Daily Attendance Report(Basic Report)"
-    ws['B1'].font = Font(size=16, bold=True)
-    ws['C2'] = datetime.strptime(selected_date_str, "%Y-%m-%d").strftime('%B %d %Y')
-    ws['C2'].font = Font(size=12, bold=True)
+    ws['B1'].font = Font(name='Calibri', size=16, bold=True)
+    
+    ws['C2'] = selected_date_obj_input.strftime('%B %d %Y')
+    ws['C2'].font = Font(name='Calibri', size=12, bold=True)
     
     ws['A3'] = f"Company: {COMPANY}"
+    ws['A3'].font = Font(name='Calibri', size=10, bold=True)
     ws['F3'] = f"Generated On: {datetime.now().strftime('%a %b %d %Y %H:%M:%S')}"
-    ws['A3'].font = Font(bold=True)
-    ws['F3'].font = Font(bold=True)
+    ws['F3'].font = Font(name='Calibri', size=10, bold=True)
 
     ws.append([]) # Row 4 blank spacer
     
-    # Table headers
+    # Table headers at Row 5
     headers = ["Employee ID", "First Name", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
     ws.append(headers)
+    ws.row_dimensions[5].height = 24
     
-    header_row_idx = 5
     for col_idx in range(1, len(headers) + 1):
-        cell = ws.cell(row=header_row_idx, column=col_idx)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+        cell = ws.cell(row=5, column=col_idx)
+        cell.font = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
 
-    # Data rows
-    for row_data in exc:
+    # Data rows with borders and styling
+    for idx, row_data in enumerate(exc, 6):
+        ws.row_dimensions[idx].height = 20
         ws.append([
             row_data["Employee ID"],
             row_data["First Name"],
@@ -440,12 +454,39 @@ try:
             row_data["Total WT"],
             row_data["Status"]
         ])
+        for col_idx in range(1, 8):
+            cell = ws.cell(row=idx, column=col_idx)
+            cell.font = Font(name='Calibri', size=11)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+            # Highlight Status column
+            if col_idx == 7:
+                val = str(cell.value)
+                if "Late" in val or "LT" in val:
+                    cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
+                    cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                elif "Present" in val or "P" in val:
+                    cell.font = Font(name='Calibri', size=11, bold=True, color="006100")
+                    cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                elif "Absence" in val or "A" in val:
+                    cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
+                    cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+
+    # Auto-fit column widths perfectly
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max(max_len + 5, 14)
 
     wb.save(output)
     excel_data = output.getvalue()
 
     strlit.download_button(
-        label="📥 تحميل تقرير Excel مطابق للنموذج الرسمي",
+        label="📥 تحميل تقرير Excel مطابق للنموذج الرسمي (جاهز للطباعة)",
         data=excel_data,
         file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
