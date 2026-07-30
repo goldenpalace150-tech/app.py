@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as strlit
 import requests
 import unicodedata
 import pandas as pd
@@ -6,8 +6,8 @@ import io
 import base64
 from datetime import datetime, timedelta
 import zoneinfo
-
-from openpyxl.styles import Font, Alignment, Border, Side
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # ==========================================
@@ -19,19 +19,19 @@ TEXT_CONFIG = {
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
     
     "header_all": "👥 كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 المتواجدون حالياً ({})",
+    "header_present": "🟢 المتواجدون ({})",
     "header_late": "⏰ المتأخرون ({})",
     "header_checkout": "🏁 المنصرفون ({})",
     "header_absent": "❌ الغيابات ({})",
     "err_api": "خطأ في الاتصال بواجهة BioTime: {}"
 }
 
-st.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
+strlit.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
 # ==========================================
 # 1. CSS STYLING & ANIMATIONS
 # ==========================================
-st.markdown("""
+strlit.markdown("""
     <style>
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
@@ -161,25 +161,25 @@ EXCLUDED_MANAGEMENT_CODES = ("40",)
 EXCLUDED_RESIGNED_CODES = ("34",) 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
-BASE_URL = st.secrets["biotime"]["base_url"].rstrip('/')
-TOKEN_URL = st.secrets["biotime"]["token_url"]
-EMAIL = st.secrets["biotime"]["email"]
-PASSWORD = st.secrets["biotime"]["password"]
-COMPANY = st.secrets["biotime"]["company"]
+BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip('/')
+TOKEN_URL = strlit.secrets["biotime"]["token_url"]
+EMAIL = strlit.secrets["biotime"]["email"]
+PASSWORD = strlit.secrets["biotime"]["password"]
+COMPANY = strlit.secrets["biotime"]["company"]
 
-if "debug_logs" not in st.session_state: st.session_state["debug_logs"] = []
-if "selected_view" not in st.session_state: st.session_state["selected_view"] = "present"
+if "debug_logs" not in strlit.session_state: strlit.session_state["debug_logs"] = []
+if "selected_view" not in strlit.session_state: strlit.session_state["selected_view"] = "present"
 
 def clean_txt(raw_text): return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip()) if raw_text else ""
 
-@st.cache_data(ttl=300)
+@strlit.cache_data(ttl=300)
 def get_auth_token():
     try:
         res = requests.post(TOKEN_URL, json={"email": EMAIL, "password": PASSWORD, "company": COMPANY}, timeout=10)
         if res.status_code in (200, 201): return res.json().get("token")
     except Exception: return None
 
-def load_attendance_data_from_api(selected_date_str, selected_date_obj):
+def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
     token = get_auth_token()
     if not token: raise Exception("رمز المصادقة غير صالح.")
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
@@ -258,23 +258,84 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj):
         
         if not day_punches:
             absent_staff.append((code, name))
-            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "غياب", "وقت الدخول": "-", "وقت الانصراف": "-", "الجهاز": "-"})
+            excel_rows.append({
+                "Employee ID": code,
+                "First Name": name,
+                "Date": selected_date_str,
+                "Clock In": "",
+                "Clock Out": "",
+                "Total WT": "",
+                "Status": "Absence(A)"
+            })
             continue
 
         first_p, first_dev = day_punches[0]
         is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
-        if is_late: late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
-
+        
         next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
         punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
-        if punch_count % 2 != 0:
-            present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
-            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "متواجد حالياً", "وقت الدخول": first_p.strftime('%I:%M %p'), "وقت الانصراف": "-", "الجهاز": first_dev})
-        else:
+        # Calculate Total Working Time if checkout exists
+        has_checkout = punch_count % 2 == 0 or (not is_today and len(day_punches) > 1)
+        last_p = None
+        last_dev = first_dev
+        
+        if punch_count % 2 == 0:
             last_p, last_dev = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
-            checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
-            excel_rows.append({"الكود": code, "اسم الموظف": name, "الحالة": "منصرف", "وقت الدخول": first_p.strftime('%I:%M %p'), "وقت الانصراف": last_p.strftime('%I:%M %p'), "الجهاز": last_dev})
+        elif not is_today and len(day_punches) > 1:
+            last_p, last_dev = day_punches[-1]
+
+        total_wt_str = ""
+        if last_p and first_p:
+            diff = last_p - first_p
+            hours, remainder = divmod(int(diff.total_seconds()), 3600)
+            minutes = remainder // 60
+            total_wt_str = f"{hours:02d}:{minutes:02d}"
+
+        # Status assignment based on live vs past day accuracy
+        if is_today:
+            if punch_count % 2 != 0:
+                present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+                excel_rows.append({
+                    "Employee ID": code,
+                    "First Name": name,
+                    "Date": selected_date_str,
+                    "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": "",
+                    "Total WT": "",
+                    "Status": "Late(LT)" if is_late else "Present(P)"
+                })
+            else:
+                last_p_real, last_dev_real = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
+                checkout_staff.append((code, name, last_p_real.strftime('%I:%M %p'), last_dev_real))
+                excel_rows.append({
+                    "Employee ID": code,
+                    "First Name": name,
+                    "Date": selected_date_str,
+                    "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": last_p_real.strftime('%H:%M'),
+                    "Total WT": total_wt_str,
+                    "Status": "Late(LT)" if is_late else "Present(P)"
+                })
+        else:
+            # Past Day: Accurate historical categorization
+            if last_p:
+                checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
+            else:
+                present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+                
+            if is_late:
+                late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+
+            excel_rows.append({
+                "Employee ID": code,
+                "First Name": name,
+                "Date": selected_date_str,
+                "Clock In": first_p.strftime('%H:%M'),
+                "Clock Out": last_p.strftime('%H:%M') if last_p else "",
+                "Total WT": total_wt_str,
+                "Status": "Late(LT)" if is_late else "Present(P)"
+            })
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
     present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
@@ -294,17 +355,18 @@ try:
 except Exception:
     dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
 
-c_date, c_ref = st.columns(2)
+c_date, c_ref = strlit.columns(2)
 with c_date:
-    selected_date_str = st.date_input("", value=now_syria.date(), label_visibility="collapsed").strftime('%Y-%m-%d')
+    selected_date_obj_input = strlit.date_input("", value=now_syria.date(), label_visibility="collapsed")
+    selected_date_str = selected_date_obj_input.strftime('%Y-%m-%d')
 with c_ref:
-    if st.button("🔄 تحديث البيانات", use_container_width=True): st.cache_data.clear(); st.rerun()
+    if strlit.button("🔄 تحديث البيانات", use_container_width=True): strlit.cache_data.clear(); strlit.rerun()
 
-# 📡 CONDITIONAL HEADER: LIVE BADGE FOR TODAY ONLY, ARCHIVE BADGE FOR OTHER DAYS
 is_today = (selected_date_str == today_str)
 
+# 📡 CONDITIONAL HEADER: LIVE BADGE FOR TODAY ONLY, ARCHIVE BADGE FOR OTHER DAYS
 if is_today:
-    st.markdown(
+    strlit.markdown(
         f"""
         <div class="status-badge">
             {dish_img_tag}
@@ -316,7 +378,7 @@ if is_today:
         """, unsafe_allow_html=True
     )
 else:
-    st.markdown(
+    strlit.markdown(
         f"""
         <div class="status-badge" style="border-color: #94a3b8; background: #e2e8f0;">
             {dish_img_tag}
@@ -328,45 +390,91 @@ else:
     )
 
 try:
-    act, pre, lat, abs_s, chk, devices, exc = load_attendance_data_from_api(selected_date_str, datetime.strptime(selected_date_str, "%Y-%m-%d").date())
+    act, pre, lat, abs_s, chk, devices, exc = load_attendance_data_from_api(
+        selected_date_str, 
+        datetime.strptime(selected_date_str, "%Y-%m-%d").date(), 
+        is_today
+    )
     
-    # 📥 EXCEL EXPORT BUTTON
+    # 📥 PROFESSIONAL EXCEL REPORT GENERATION MATCHING USER SPEC
     df_excel = pd.DataFrame(exc)
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_excel.to_excel(writer, index=False, sheet_name='Attendance')
+    
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Attendance Report"
+    ws.sheet_view.rightToLeft = True
+
+    # Title rows
+    ws['B1'] = "Daily Attendance Report(Basic Report)"
+    ws['B1'].font = Font(size=16, bold=True)
+    ws['C2'] = datetime.strptime(selected_date_str, "%Y-%m-%d").strftime('%B %d %Y')
+    ws['C2'].font = Font(size=12, bold=True)
+    
+    ws['A3'] = f"Company: {COMPANY}"
+    ws['F3'] = f"Generated On: {datetime.now().strftime('%a %b %d %Y %H:%M:%S')}"
+    ws['A3'].font = Font(bold=True)
+    ws['F3'].font = Font(bold=True)
+
+    ws.append([]) # Row 4 blank spacer
+    
+    # Table headers
+    headers = ["Employee ID", "First Name", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
+    ws.append(headers)
+    
+    header_row_idx = 5
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=header_row_idx, column=col_idx)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Data rows
+    for row_data in exc:
+        ws.append([
+            row_data["Employee ID"],
+            row_data["First Name"],
+            row_data["Date"],
+            row_data["Clock In"],
+            row_data["Clock Out"],
+            row_data["Total WT"],
+            row_data["Status"]
+        ])
+
+    wb.save(output)
     excel_data = output.getvalue()
 
-    st.download_button(
-        label="📥 تحميل تقرير Excel لهذا اليوم",
+    strlit.download_button(
+        label="📥 تحميل تقرير Excel مطابق للنموذج الرسمي",
         data=excel_data,
-        file_name=f"Attendance_Report_{selected_date_str}.xlsx",
+        file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
     # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT
-    if st.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
-        st.session_state["selected_view"] = "all"
+    if strlit.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
+        strlit.session_state["selected_view"] = "all"
     
-    col_p, col_l = st.columns(2)
+    col_p, col_l = strlit.columns(2)
     with col_p:
-        if st.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): 
-            st.session_state["selected_view"] = "present"
+        btn_present_label = f"🟢 المتواجدون ({len(pre)})" if is_today else f"🟢 الحضور ({len(pre)})"
+        if strlit.button(btn_present_label, use_container_width=True): 
+            strlit.session_state["selected_view"] = "present"
     with col_l:
-        if st.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
-            st.session_state["selected_view"] = "late"
+        if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
+            strlit.session_state["selected_view"] = "late"
 
-    col_c, col_a = st.columns(2)
+    col_c, col_a = strlit.columns(2)
     with col_c:
-        if st.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
-            st.session_state["selected_view"] = "checkout"
+        if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
+            strlit.session_state["selected_view"] = "checkout"
     with col_a:
-        if st.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
-            st.session_state["selected_view"] = "absent"
+        if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
+            strlit.session_state["selected_view"] = "absent"
 
     # 🖨️ BIOMETRIC DEVICES EXPANDER
-    with st.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
+    with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
             dev_rows = []
             for d in devices:
@@ -374,41 +482,41 @@ try:
                 d_sn = d.get("sn", "N/A")
                 d_ip = d.get("ip_address", "غير متوفر")
                 dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td><span class='badge-present'>متصل</span></td></tr>")
-            st.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
         else:
-            st.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها.")
+            strlit.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها.")
 
-    search_query = st.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
+    search_query = strlit.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
     match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
 
-    view = st.session_state["selected_view"]
+    view = strlit.session_state["selected_view"]
 
     if view == "all":
         rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-present'>نشط</span></td></tr>" for c, n in act.items() if match(c, n)]
-        st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         
     elif view == "present":
         if pre:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in pre if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: st.info("لا يوجد موظفين متواجدين في هذا اليوم.")
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        else: strlit.info("لا يوجد موظفين في هذا القسم لهذا اليوم.")
         
     elif view == "late":
         if lat:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, t, d in lat if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: st.success("لا يوجد متأخرين!")
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        else: strlit.success("لا يوجد متأخرين!")
         
     elif view == "checkout":
         if chk:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in chk if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: st.info("لا توجد عمليات انصراف مسجلة.")
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        else: strlit.info("لا توجد عمليات انصراف مسجلة.")
         
     elif view == "absent":
         if abs_s:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n in abs_s if match(c, n)]
-            st.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
 
 except Exception as e:
-    st.error(TEXT_CONFIG["err_api"].format(str(e)))
+    strlit.error(TEXT_CONFIG["err_api"].format(str(e)))
