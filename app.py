@@ -196,7 +196,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     
     terminal_map = {str(d.get("sn", "")): (d.get("alias") or d.get("terminal_name") or str(d.get("sn", ""))) for d in devices if d.get("sn")}
 
-    # 2. Fetch Employees (SIMPLE: Exclude resigned/inactive entirely)
+    # 2. Fetch Employees
     all_employees = []
     try:
         emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers, timeout=15)
@@ -208,12 +208,11 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         raw_code = str(emp.get("emp_code", "")).strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         
-        # Check BioTime flags for Resignation / Inactive Status
         is_active = str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
         emp_status = str(emp.get("status", "0")).upper()
+        enable_att = str(emp.get("enable_attendance", True)).lower() in ("true", "1", "yes")
         
-        # If they are marked as inactive (False) or status is '1', '2', or 'D' (Departed/Resigned) - SKIP completely.
-        if not is_active or emp_status in ("1", "2", "D"):
+        if not is_active or emp_status in ("1", "2", "D") or not enable_att:
             continue 
             
         if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
@@ -233,7 +232,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                 "dept": clean_txt(dept_name)
             }
 
-    # 3. Fetch Leaves (Extract exact Leave Type)
+    # 3. Fetch Leaves
     leave_records = []
     try:
         leave_res = requests.get(f"{BASE_URL}/att/api/leave/?page_size=1000", headers=headers, timeout=10)
@@ -256,7 +255,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         start_t = leave.get("start_time") or leave.get("start_date") or leave.get("start_datetime")
         end_t = leave.get("end_time") or leave.get("end_date") or leave.get("end_datetime")
         
-        # Extract the exact Type of Leave selected in BioTime
         leave_name = "إجازة"
         if "leave_type" in leave:
             if isinstance(leave["leave_type"], dict):
@@ -311,7 +309,6 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
 
         day_punches = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
         
-        # If no punches today
         if not day_punches:
             if code in on_leave_employees:
                 leave_reason = on_leave_employees[code]
@@ -484,26 +481,40 @@ try:
             row_data["Employee ID"], row_data["First Name"], row_data["Department"], row_data["Date"],
             row_data["Clock In"], row_data["Clock Out"], row_data["Total WT"], row_data["Status"]
         ])
+        
+        # Check status for full-row highlighting
+        status_val = str(row_data["Status"])
+        row_fill = None
+        row_font_color = "000000"
+        
+        if "Leave" in status_val or "L" in status_val:
+            row_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+            row_font_color = "002060"
+        elif "Absence" in status_val or "A" in status_val:
+            row_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            row_font_color = "9C0006"
+
         for col_idx in range(1, 9):
             cell = ws.cell(row=idx, column=col_idx)
-            cell.font = Font(name='Calibri', size=11)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
             
-            if col_idx == 8:
-                val = str(cell.value)
-                if "Late" in val or "LT" in val:
+            # Apply full row styling if Absent or on Leave
+            if row_fill:
+                cell.fill = row_fill
+                cell.font = Font(name='Calibri', size=11, bold=True, color=row_font_color)
+            else:
+                cell.font = Font(name='Calibri', size=11)
+            
+            # Apply specific cell styling only to the Status column for Late/Present
+            if col_idx == 8 and not row_fill:
+                if "Late" in status_val or "LT" in status_val:
                     cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
                     cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                elif "Present" in val or "P" in val:
+                elif "Present" in status_val or "P" in status_val:
                     cell.font = Font(name='Calibri', size=11, bold=True, color="006100")
                     cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                elif "Leave" in val or "L" in val:
-                    cell.font = Font(name='Calibri', size=11, bold=True, color="002060")
-                    cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-                elif "Absence" in val or "A" in val:
-                    cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
-                    cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
 
     for col in ws.columns:
         max_len = 0
@@ -542,7 +553,7 @@ try:
         with col_lv:
             if strlit.button(f"🏖️ الإجازات ({len(lev)})", use_container_width=True): strlit.session_state["selected_view"] = "leave"
 
-    # 🖨️ DEVICES EXPANDER (Checks 30-min offline limit)
+    # 🖨️ DEVICES EXPANDER
     with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
             dev_rows = []
