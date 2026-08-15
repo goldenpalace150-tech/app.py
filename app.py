@@ -159,8 +159,8 @@ strlit.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-EXCLUDED_MANAGEMENT_CODES = ("40",)
-EXCLUDED_RESIGNED_CODES = ("34",) 
+# EXCLUDED_RESIGNED_CODES removed as termination is now handled dynamically
+EXCLUDED_MANAGEMENT_CODES = ("40",) 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip('/')
@@ -205,7 +205,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         if sn:
             terminal_map[sn] = alias
 
-    # 2. Fetch Employees
+    # 2. Fetch Employees (Dynamically Check Active Status & Department)
     all_employees = []
     try:
         emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers, timeout=15)
@@ -216,16 +216,29 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     for emp in all_employees:
         raw_code = str(emp.get("emp_code", "")).strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-        if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES and cleaned_code not in EXCLUDED_RESIGNED_CODES:
+        
+        is_active = str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
+        emp_status = str(emp.get("status", "0")).upper()
+        
+        # Exclude resigned/terminated employees dynamically
+        if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES and is_active and emp_status != 'D':
             f_name = emp.get("first_name")
             l_name = emp.get("last_name")
             f_str = str(f_name).strip() if f_name and str(f_name).lower() != "none" else ""
             l_str = str(l_name).strip() if l_name and str(l_name).lower() != "none" else ""
             full_name = f"{f_str} {l_str}".strip()
             
-            active_employees[cleaned_code] = clean_txt(full_name if full_name else f"موظف {cleaned_code}")
+            dept_data = emp.get("department", {})
+            dept_name = dept_data.get("dept_name") if isinstance(dept_data, dict) else str(emp.get("department", ""))
+            if not dept_name or dept_name.lower() == "none":
+                dept_name = "غير محدد"
+            
+            active_employees[cleaned_code] = {
+                "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
+                "dept": clean_txt(dept_name)
+            }
 
-    # 3. Fetch Approved Leaves from BioTime API
+    # 3. Fetch Approved Leaves (Extract Dynamic Leave Type)
     leave_records = []
     try:
         leave_res = requests.get(f"{BASE_URL}/att/api/leave/?page_size=1000", headers=headers, timeout=10)
@@ -241,18 +254,28 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         except Exception:
             pass
 
-    on_leave_employees = set()
+    on_leave_employees = {}
     for leave in leave_records:
         raw_code = str(leave.get("emp_code") or leave.get("employee_code") or "").strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         start_t = leave.get("start_time") or leave.get("start_date") or leave.get("start_datetime")
         end_t = leave.get("end_time") or leave.get("end_date") or leave.get("end_datetime")
+        
+        leave_name = "إجازة"
+        if "leave_type" in leave:
+            if isinstance(leave["leave_type"], dict):
+                leave_name = leave["leave_type"].get("leave_name", "إجازة")
+            else:
+                leave_name = str(leave["leave_type"])
+        elif "leave_name" in leave:
+            leave_name = leave["leave_name"]
+
         if cleaned_code and start_t and end_t:
             try:
                 s_date = datetime.strptime(str(start_t)[:10], "%Y-%m-%d").date()
                 e_date = datetime.strptime(str(end_t)[:10], "%Y-%m-%d").date()
                 if s_date <= selected_date_obj <= e_date:
-                    on_leave_employees.add(cleaned_code)
+                    on_leave_employees[cleaned_code] = clean_txt(leave_name)
             except Exception:
                 pass
 
@@ -280,9 +303,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
 
     present_staff, late_staff, absent_staff, checkout_staff, leave_staff, excel_rows = [], [], [], [], [], []
 
-    for code, name in active_employees.items():
+    for code, emp_data in active_employees.items():
+        name = emp_data["name"]
+        dept = emp_data["dept"]
         punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
         filtered_punches = []
+        
         for p_time, d_name in punches:
             if not filtered_punches or abs((p_time - filtered_punches[-1][0]).total_seconds()) > 60:
                 filtered_punches.append((p_time, d_name))
@@ -291,26 +317,19 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         
         if not day_punches:
             if code in on_leave_employees:
-                leave_staff.append((code, name))
+                leave_reason = on_leave_employees[code]
+                leave_staff.append((code, name, dept, leave_reason))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Date": selected_date_str,
-                    "Clock In": "",
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": "Leave(L)"
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": "", "Clock Out": "",
+                    "Total WT": "", "Status": f"Leave - {leave_reason}"
                 })
             else:
-                absent_staff.append((code, name))
+                absent_staff.append((code, name, dept))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Date": selected_date_str,
-                    "Clock In": "",
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": "Absence(A)"
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": "", "Clock Out": "",
+                    "Total WT": "", "Status": "Absence(A)"
                 })
             continue
 
@@ -338,46 +357,35 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         status_str = "Late(LT)" if is_late else "Present(P)"
         
         if is_late:
-            late_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+            late_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
 
         if is_today:
             if punch_count % 2 != 0:
-                present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+                present_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Date": selected_date_str,
-                    "Clock In": first_p.strftime('%H:%M'),
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": status_str
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": "", "Total WT": "", "Status": status_str
                 })
             else:
                 last_p_real, last_dev_real = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
-                checkout_staff.append((code, name, last_p_real.strftime('%I:%M %p'), last_dev_real))
+                checkout_staff.append((code, name, dept, last_p_real.strftime('%I:%M %p'), last_dev_real))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Date": selected_date_str,
-                    "Clock In": first_p.strftime('%H:%M'),
-                    "Clock Out": last_p_real.strftime('%H:%M'),
-                    "Total WT": total_wt_str,
-                    "Status": status_str
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": last_p_real.strftime('%H:%M'), "Total WT": total_wt_str, "Status": status_str
                 })
         else:
             if last_p:
-                checkout_staff.append((code, name, last_p.strftime('%I:%M %p'), last_dev))
+                checkout_staff.append((code, name, dept, last_p.strftime('%I:%M %p'), last_dev))
             else:
-                present_staff.append((code, name, first_p.strftime('%I:%M %p'), first_dev))
+                present_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
 
             excel_rows.append({
-                "Employee ID": code,
-                "First Name": name,
-                "Date": selected_date_str,
-                "Clock In": first_p.strftime('%H:%M'),
+                "Employee ID": code, "First Name": name, "Department": dept,
+                "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
                 "Clock Out": last_p.strftime('%H:%M') if last_p else "",
-                "Total WT": total_wt_str,
-                "Status": status_str
+                "Total WT": total_wt_str, "Status": status_str
             })
 
     absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
@@ -411,7 +419,6 @@ with c_ref:
 
 is_today = (selected_date_str == today_str)
 
-# Synchronize view state on date change
 if "last_selected_date" not in strlit.session_state:
     strlit.session_state["last_selected_date"] = selected_date_str
 
@@ -419,7 +426,6 @@ if strlit.session_state["last_selected_date"] != selected_date_str:
     strlit.session_state["last_selected_date"] = selected_date_str
     strlit.session_state["selected_view"] = "present" if is_today else "all"
 
-# 📡 CONDITIONAL HEADER
 if is_today:
     strlit.markdown(
         f"""
@@ -466,7 +472,7 @@ try:
         bottom=Side(style='thin', color='D3D3D3')
     )
 
-    headers = ["Employee ID", "First Name", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
+    headers = ["Employee ID", "First Name", "Department", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
     ws.append(headers)
     ws.row_dimensions[1].height = 24
     
@@ -482,19 +488,20 @@ try:
         ws.append([
             row_data["Employee ID"],
             row_data["First Name"],
+            row_data["Department"],
             row_data["Date"],
             row_data["Clock In"],
             row_data["Clock Out"],
             row_data["Total WT"],
             row_data["Status"]
         ])
-        for col_idx in range(1, 8):
+        for col_idx in range(1, 9):
             cell = ws.cell(row=idx, column=col_idx)
             cell.font = Font(name='Calibri', size=11)
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
             
-            if col_idx == 7:
+            if col_idx == 8:
                 val = str(cell.value)
                 if "Late" in val or "LT" in val:
                     cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
@@ -528,7 +535,6 @@ try:
         use_container_width=True
     )
 
-    # 📱 WIDE & CENTERED MOBILE BUTTONS LAYOUT (Disappears automatically when date is not current day)
     if is_today:
         if strlit.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
             strlit.session_state["selected_view"] = "all"
@@ -554,7 +560,7 @@ try:
             if strlit.button(f"🏖️ الإجازات ({len(lev)})", use_container_width=True): 
                 strlit.session_state["selected_view"] = "leave"
 
-    # 🖨️ BIOMETRIC DEVICES EXPANDER
+    # 🖨️ BIOMETRIC DEVICES EXPANDER (Realistic 30-min status check)
     with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
             dev_rows = []
@@ -562,7 +568,19 @@ try:
                 d_name = d.get("alias") or d.get("terminal_name") or d.get("sn", "جهاز غير محدد")
                 d_sn = d.get("sn", "N/A")
                 d_ip = d.get("ip_address", "غير متوفر")
-                dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td><span class='badge-present'>متصل</span></td></tr>")
+                
+                last_activity = d.get("last_activity")
+                status_badge = "<span class='badge-absent'>غير متصل 🔴</span>"
+                if last_activity:
+                    try:
+                        last_act_dt = datetime.strptime(last_activity[:19], "%Y-%m-%d %H:%M:%S")
+                        # Compare without timezone if naive
+                        if (datetime.now().replace(tzinfo=None) - last_act_dt).total_seconds() < 1800:
+                            status_badge = "<span class='badge-present'>متصل 🟢</span>"
+                    except Exception:
+                        pass
+                        
+                dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td>{status_badge}</td></tr>")
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
         else:
             strlit.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها.")
@@ -573,37 +591,37 @@ try:
     view = strlit.session_state["selected_view"]
 
     if view == "all":
-        rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-present'>نشط</span></td></tr>" for c, n in act.items() if match(c, n)]
-        strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        rows = [f"<tr><td>{c}</td><td>{d_data['name']}</td><td>{d_data['dept']}</td><td><span class='badge-present'>نشط</span></td></tr>" for c, d_data in act.items() if match(c, d_data['name'])]
+        strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         
     elif view == "present":
         if pre:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in pre if match(c, n)]
-            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in pre if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: strlit.info("لا يوجد موظفين في هذا القسم لهذا اليوم.")
         
     elif view == "late":
         if lat:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, t, d in lat if match(c, n)]
-            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, dpt, t, d in lat if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="6" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: strlit.success("لا يوجد متأخرين!")
         
     elif view == "checkout":
         if chk:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{t}</td><td>{d}</td></tr>" for c, n, t, d in chk if match(c, n)]
-            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in chk if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: strlit.info("لا توجد عمليات انصراف مسجلة.")
         
     elif view == "leave":
         if lev:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-leave'>إجازة</span></td></tr>" for c, n in lev if match(c, n)]
-            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_leave"].format(len(lev))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-leave'>{r}</span></td></tr>" for c, n, dpt, r in lev if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_leave"].format(len(lev))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>نوع الإجازة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: strlit.info("لا توجد إجازات مسجلة لهذا اليوم.")
 
     elif view == "absent":
         if abs_s:
-            rows = [f"<tr><td>{c}</td><td>{n}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n in abs_s if match(c, n)]
-            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="3" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n, dpt in abs_s if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
         else: strlit.success("لا توجد غيابات!")
 
 except Exception as e:
