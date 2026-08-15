@@ -46,7 +46,6 @@ strlit.markdown("""
         max-width: 100% !important;
     }
 
-    /* 📡 360 DEGREE CONTINUOUS ROTATION HEADER */
     .status-badge {
         display: flex;
         align-items: center;
@@ -103,7 +102,6 @@ strlit.markdown("""
         letter-spacing: 0.5px;
     }
 
-    /* 📱 WIDE & CENTERED MOBILE BUTTONS */
     div[data-testid="stColumn"] button {
         width: 100% !important;
         background: #ffffff !important;
@@ -124,7 +122,6 @@ strlit.markdown("""
         line-height: 1.4 !important;
     }
 
-    /* TABLE DESIGN */
     .responsive-grid-table {
         width: 100%;
         border-collapse: collapse;
@@ -159,7 +156,6 @@ strlit.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# EXCLUDED_RESIGNED_CODES removed as termination is now handled dynamically
 EXCLUDED_MANAGEMENT_CODES = ("40",) 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
@@ -186,7 +182,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     if not token: raise Exception("رمز المصادقة غير صالح.")
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     
-    # 1. Fetch Devices & Build Mapping
+    # 1. Fetch Devices
     devices = []
     try:
         for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
@@ -198,14 +194,9 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     except Exception:
         pass
     
-    terminal_map = {}
-    for d in devices:
-        sn = str(d.get("sn", ""))
-        alias = d.get("alias") or d.get("terminal_name") or sn
-        if sn:
-            terminal_map[sn] = alias
+    terminal_map = {str(d.get("sn", "")): (d.get("alias") or d.get("terminal_name") or str(d.get("sn", ""))) for d in devices if d.get("sn")}
 
-    # 2. Fetch Employees (Dynamically Check Active Status & Department)
+    # 2. Fetch Employees (SIMPLE: Exclude resigned/inactive entirely)
     all_employees = []
     try:
         emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers, timeout=15)
@@ -217,16 +208,20 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         raw_code = str(emp.get("emp_code", "")).strip()
         cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
         
+        # Check BioTime flags for Resignation / Inactive Status
         is_active = str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
         emp_status = str(emp.get("status", "0")).upper()
         
-        # Exclude resigned/terminated employees dynamically
-        if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES and is_active and emp_status != 'D':
-            f_name = emp.get("first_name")
-            l_name = emp.get("last_name")
-            f_str = str(f_name).strip() if f_name and str(f_name).lower() != "none" else ""
-            l_str = str(l_name).strip() if l_name and str(l_name).lower() != "none" else ""
-            full_name = f"{f_str} {l_str}".strip()
+        # If they are marked as inactive (False) or status is '1', '2', or 'D' (Departed/Resigned) - SKIP completely.
+        if not is_active or emp_status in ("1", "2", "D"):
+            continue 
+            
+        if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
+            f_name = str(emp.get("first_name", "")).strip()
+            l_name = str(emp.get("last_name", "")).strip()
+            if f_name.lower() == "none": f_name = ""
+            if l_name.lower() == "none": l_name = ""
+            full_name = f"{f_name} {l_name}".strip()
             
             dept_data = emp.get("department", {})
             dept_name = dept_data.get("dept_name") if isinstance(dept_data, dict) else str(emp.get("department", ""))
@@ -238,7 +233,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
                 "dept": clean_txt(dept_name)
             }
 
-    # 3. Fetch Approved Leaves (Extract Dynamic Leave Type)
+    # 3. Fetch Leaves (Extract exact Leave Type)
     leave_records = []
     try:
         leave_res = requests.get(f"{BASE_URL}/att/api/leave/?page_size=1000", headers=headers, timeout=10)
@@ -261,6 +256,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         start_t = leave.get("start_time") or leave.get("start_date") or leave.get("start_datetime")
         end_t = leave.get("end_time") or leave.get("end_date") or leave.get("end_datetime")
         
+        # Extract the exact Type of Leave selected in BioTime
         leave_name = "إجازة"
         if "leave_type" in leave:
             if isinstance(leave["leave_type"], dict):
@@ -315,6 +311,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
 
         day_punches = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
         
+        # If no punches today
         if not day_punches:
             if code in on_leave_employees:
                 leave_reason = on_leave_employees[code]
@@ -457,7 +454,7 @@ try:
         is_today
     )
     
-    # 📥 PROFESSIONAL EXCEL REPORT GENERATION
+    # 📥 EXCEL REPORT GENERATION
     df_excel = pd.DataFrame(exc)
     output = io.BytesIO()
     
@@ -466,10 +463,8 @@ try:
     ws.title = "Attendance Report"
 
     thin_border = Border(
-        left=Side(style='thin', color='D3D3D3'),
-        right=Side(style='thin', color='D3D3D3'),
-        top=Side(style='thin', color='D3D3D3'),
-        bottom=Side(style='thin', color='D3D3D3')
+        left=Side(style='thin', color='D3D3D3'), right=Side(style='thin', color='D3D3D3'),
+        top=Side(style='thin', color='D3D3D3'), bottom=Side(style='thin', color='D3D3D3')
     )
 
     headers = ["Employee ID", "First Name", "Department", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
@@ -486,14 +481,8 @@ try:
     for idx, row_data in enumerate(exc, 2):
         ws.row_dimensions[idx].height = 20
         ws.append([
-            row_data["Employee ID"],
-            row_data["First Name"],
-            row_data["Department"],
-            row_data["Date"],
-            row_data["Clock In"],
-            row_data["Clock Out"],
-            row_data["Total WT"],
-            row_data["Status"]
+            row_data["Employee ID"], row_data["First Name"], row_data["Department"], row_data["Date"],
+            row_data["Clock In"], row_data["Clock Out"], row_data["Total WT"], row_data["Status"]
         ])
         for col_idx in range(1, 9):
             cell = ws.cell(row=idx, column=col_idx)
@@ -528,11 +517,9 @@ try:
     excel_data = output.getvalue()
 
     strlit.download_button(
-        label="📥 تحميل تقرير Excel مطابق للنموذج الرسمي (جاهز للطباعة)",
-        data=excel_data,
-        file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
+        label="📥 تحميل تقرير Excel",
+        data=excel_data, file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True
     )
 
     if is_today:
@@ -541,26 +528,21 @@ try:
         
         col_p, col_l = strlit.columns(2)
         with col_p:
-            if strlit.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): 
-                strlit.session_state["selected_view"] = "present"
+            if strlit.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): strlit.session_state["selected_view"] = "present"
         with col_l:
-            if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): 
-                strlit.session_state["selected_view"] = "late"
+            if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): strlit.session_state["selected_view"] = "late"
 
         col_c, col_a = strlit.columns(2)
         with col_c:
-            if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): 
-                strlit.session_state["selected_view"] = "checkout"
+            if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): strlit.session_state["selected_view"] = "checkout"
         with col_a:
-            if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): 
-                strlit.session_state["selected_view"] = "absent"
+            if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): strlit.session_state["selected_view"] = "absent"
 
         col_lv, col_dummy = strlit.columns(2)
         with col_lv:
-            if strlit.button(f"🏖️ الإجازات ({len(lev)})", use_container_width=True): 
-                strlit.session_state["selected_view"] = "leave"
+            if strlit.button(f"🏖️ الإجازات ({len(lev)})", use_container_width=True): strlit.session_state["selected_view"] = "leave"
 
-    # 🖨️ BIOMETRIC DEVICES EXPANDER (Realistic 30-min status check)
+    # 🖨️ DEVICES EXPANDER (Checks 30-min offline limit)
     with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
             dev_rows = []
@@ -574,16 +556,12 @@ try:
                 if last_activity:
                     try:
                         last_act_dt = datetime.strptime(last_activity[:19], "%Y-%m-%d %H:%M:%S")
-                        # Compare without timezone if naive
                         if (datetime.now().replace(tzinfo=None) - last_act_dt).total_seconds() < 1800:
                             status_badge = "<span class='badge-present'>متصل 🟢</span>"
-                    except Exception:
-                        pass
+                    except Exception: pass
                         
                 dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td>{status_badge}</td></tr>")
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
-        else:
-            strlit.info("لا توجد أجهزة مسجلة حالياً أو تعذر جلبها.")
 
     search_query = strlit.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
     match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
@@ -598,31 +576,26 @@ try:
         if pre:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in pre if match(c, n)]
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: strlit.info("لا يوجد موظفين في هذا القسم لهذا اليوم.")
         
     elif view == "late":
         if lat:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, dpt, t, d in lat if match(c, n)]
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="6" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: strlit.success("لا يوجد متأخرين!")
         
     elif view == "checkout":
         if chk:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in chk if match(c, n)]
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: strlit.info("لا توجد عمليات انصراف مسجلة.")
         
     elif view == "leave":
         if lev:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-leave'>{r}</span></td></tr>" for c, n, dpt, r in lev if match(c, n)]
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_leave"].format(len(lev))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>نوع الإجازة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: strlit.info("لا توجد إجازات مسجلة لهذا اليوم.")
 
     elif view == "absent":
         if abs_s:
             rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n, dpt in abs_s if match(c, n)]
             strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
-        else: strlit.success("لا توجد غيابات!")
 
 except Exception as e:
     strlit.error(TEXT_CONFIG["err_api"].format(str(e)))
