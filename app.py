@@ -10,72 +10,41 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
-
-# ============================================================
-# 0. TEXT CONFIGURATION
-# ============================================================
-
+# ==========================================
+# 0. RTL ARABIC TEXT & VISUAL CONFIG
+# ==========================================
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
     "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
-
+    
     "header_all": "👥 كافة موظفي الشركة النشطين ({})",
     "header_present": "🟢 المتواجدون / الحضور ({})",
     "header_late": "⏰ الموظفون المتأخرون ({})",
     "header_checkout": "🏁 المنصرفون ({})",
     "header_leave": "🏖️ الموظفون في إجازة ({})",
     "header_absent": "❌ الغيابات ({})",
-
-    "err_api": "خطأ في الاتصال بواجهة BioTime: {}",
+    "err_api": "خطأ في الاتصال بواجهة BioTime: {}"
 }
 
+strlit.set_page_config(page_title=TEXT_CONFIG["page_title"], page_icon="📡", layout="wide", initial_sidebar_state="collapsed")
 
-# ============================================================
-# 1. STREAMLIT PAGE CONFIG
-# ============================================================
-
-strlit.set_page_config(
-    page_title=TEXT_CONFIG["page_title"],
-    page_icon="📡",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-
-# ============================================================
-# 2. CSS
-# ============================================================
-
-strlit.markdown(
-    """
+# ==========================================
+# 1. CSS STYLING & ANIMATIONS
+# ==========================================
+strlit.markdown("""
     <style>
-
-    header[data-testid="stHeader"] {
-        display: none !important;
-    }
-
-    footer {
-        display: none !important;
-    }
-
-    .stApp {
-        direction: rtl;
-        background-color: #f4f7f9;
-        font-family: system-ui, -apple-system, sans-serif;
-    }
-
+    header[data-testid="stHeader"] { display: none !important; }
+    footer { display: none !important; }
+    .stApp { direction: rtl; background-color: #f4f7f9; font-family: system-ui, -apple-system, sans-serif; }
+    
     .block-container {
         padding-top: 15px !important;
-        padding-bottom: 30px !important;
+        padding-bottom: 30px !important; 
         padding-left: 10px !important;
         padding-right: 10px !important;
         max-width: 100% !important;
     }
-
-    /* ========================================================
-       ONLINE STATUS
-       ======================================================== */
 
     .status-badge {
         display: flex;
@@ -90,7 +59,7 @@ strlit.markdown(
         width: fit-content;
         gap: 12px;
     }
-
+    
     .animated-dish {
         width: 34px;
         height: 34px;
@@ -98,15 +67,10 @@ strlit.markdown(
         transform-origin: center center;
         animation: rotate-360 5s linear infinite;
     }
-
+    
     @keyframes rotate-360 {
-        0% {
-            transform: rotate(0deg);
-        }
-
-        100% {
-            transform: rotate(360deg);
-        }
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 
     .status-indicator {
@@ -126,22 +90,9 @@ strlit.markdown(
     }
 
     @keyframes pulse-green {
-
-        0% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-        }
-
-        70% {
-            transform: scale(1);
-            box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
-        }
-
-        100% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
-        }
-
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
     }
 
     .online-text {
@@ -150,11 +101,6 @@ strlit.markdown(
         color: #0f172a;
         letter-spacing: 0.5px;
     }
-
-
-    /* ========================================================
-       BUTTONS
-       ======================================================== */
 
     div[data-testid="stColumn"] button {
         width: 100% !important;
@@ -167,7 +113,6 @@ strlit.markdown(
         margin-bottom: 6px !important;
         transition: all 0.2s ease !important;
     }
-
     div[data-testid="stColumn"] button p {
         font-size: 13px !important;
         color: #1e293b !important;
@@ -176,11 +121,6 @@ strlit.markdown(
         white-space: pre-line !important;
         line-height: 1.4 !important;
     }
-
-
-    /* ========================================================
-       TABLE
-       ======================================================== */
 
     .responsive-grid-table {
         width: 100%;
@@ -192,7 +132,6 @@ strlit.markdown(
         overflow: hidden;
         box-shadow: 0 4px 6px rgba(0,0,0,0.02);
     }
-
     .responsive-grid-table .table-main-title-header {
         background: #0f172a;
         color: #ffffff !important;
@@ -200,7 +139,6 @@ strlit.markdown(
         font-size: 14px;
         padding: 12px;
     }
-
     .responsive-grid-table th {
         background-color: #f8fafc;
         color: #475569;
@@ -208,2807 +146,484 @@ strlit.markdown(
         border-bottom: 1px solid #e2e8f0;
         text-align: center;
     }
-
-    .responsive-grid-table td {
-        padding: 10px;
-        border-bottom: 1px solid #f1f5f9;
-        text-align: center;
-        font-weight: 500;
-        color: #1e293b;
+    .responsive-grid-table td { 
+        padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 500; color: #1e293b;
     }
-
-
-    /* ========================================================
-       BADGES
-       ======================================================== */
-
-    .badge-present {
-        background-color: #dcfce7;
-        color: #166534;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-    }
-
-    .badge-late {
-        background-color: #fef3c7;
-        color: #9a3412;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-    }
-
-    .badge-leave {
-        background-color: #e0f2fe;
-        color: #0369a1;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-    }
-
-    .badge-absent {
-        background-color: #fee2e2;
-        color: #991b1b;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-    }
-
-
-    /* ========================================================
-       API ERROR
-       ======================================================== */
-
-    .api-error-box {
-        direction: rtl;
-        text-align: right;
-        padding: 16px;
-        border-radius: 12px;
-        border: 1px solid #fecaca;
-        background: #fef2f2;
-        color: #991b1b;
-        margin-top: 15px;
-        line-height: 1.8;
-    }
-
+    .badge-present { background-color: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
+    .badge-late { background-color: #fef3c7; color: #9a3412; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
+    .badge-leave { background-color: #e0f2fe; color: #0369a1; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
+    .badge-absent { background-color: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-
-# ============================================================
-# 3. GENERAL CONFIGURATION
-# ============================================================
-
-EXCLUDED_MANAGEMENT_CODES = ("40",)
-
+EXCLUDED_MANAGEMENT_CODES = ("40",) 
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
+BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip('/')
+TOKEN_URL = strlit.secrets["biotime"]["token_url"]
+EMAIL = strlit.secrets["biotime"]["email"]
+PASSWORD = strlit.secrets["biotime"]["password"]
+COMPANY = strlit.secrets["biotime"]["company"]
 
-# ============================================================
-# 4. BIOTIME CONFIGURATION
-# ============================================================
-#
-# Streamlit Secrets:
-#
-# [biotime]
-# base_url = "http://YOUR-BIOTIME-SERVER:8090"
-# username = "YOUR_USERNAME"
-# password = "YOUR_PASSWORD"
-#
-# Optional:
-# token_url = "http://YOUR-BIOTIME-SERVER:8090/api-token-auth/"
-#
-# ============================================================
+if "debug_logs" not in strlit.session_state: strlit.session_state["debug_logs"] = []
+if "selected_view" not in strlit.session_state: strlit.session_state["selected_view"] = "present"
 
-try:
-
-    BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip("/")
-
-    BIOTIME_USERNAME = strlit.secrets["biotime"].get(
-        "username",
-        strlit.secrets["biotime"].get("email", "")
-    )
-
-    BIOTIME_PASSWORD = strlit.secrets["biotime"]["password"]
-
-    TOKEN_URL = strlit.secrets["biotime"].get(
-        "token_url",
-        f"{BASE_URL}/api-token-auth/"
-    )
-
-except Exception as config_error:
-
-    strlit.error(
-        "BioTime configuration is missing from Streamlit Secrets. "
-        f"Details: {config_error}"
-    )
-
-    strlit.stop()
-
-
-if not BIOTIME_USERNAME:
-
-    strlit.error(
-        "BioTime username is missing. "
-        "Please add 'username' to the [biotime] section."
-    )
-
-    strlit.stop()
-
-
-# ============================================================
-# 5. SESSION STATE
-# ============================================================
-
-if "debug_logs" not in strlit.session_state:
-    strlit.session_state["debug_logs"] = []
-
-if "selected_view" not in strlit.session_state:
-    strlit.session_state["selected_view"] = "present"
-
-if "last_selected_date" not in strlit.session_state:
-    strlit.session_state["last_selected_date"] = None
-
-
-# ============================================================
-# 6. HELPERS
-# ============================================================
-
-def clean_txt(raw_text):
-
-    if raw_text is None:
-        return ""
-
-    try:
-
-        text = str(raw_text)
-
-        text = unicodedata.normalize(
-            "NFKC",
-            text
-        )
-
-        text = (
-            text
-            .replace("\u2066", "")
-            .replace("\u2069", "")
-            .strip()
-        )
-
-        return text
-
-    except Exception:
-
-        return str(raw_text).strip()
-
-
-def clean_employee_code(raw_code):
-
-    if raw_code is None:
-        return ""
-
-    value = str(raw_code).strip()
-
-    if value.isdigit():
-
-        try:
-            return str(int(value))
-        except Exception:
-            return value
-
-    return value
-
-
-def safe_json(response):
-
-    try:
-        return response.json()
-
-    except Exception:
-
-        return {}
-
-
-def extract_token(data):
-
-    if not isinstance(data, dict):
-        return None
-
-    for field in (
-        "token",
-        "key",
-        "access",
-    ):
-
-        value = data.get(field)
-
-        if value:
-            return str(value).strip()
-
-    return None
-
-
-# ============================================================
-# 7. GET BIOTIME TOKEN
-# ============================================================
+def clean_txt(raw_text): return str(unicodedata.normalize('NFKC', str(raw_text)).replace('\u2066','').replace('\u2069','').strip()) if raw_text else ""
 
 @strlit.cache_data(ttl=300)
 def get_auth_token():
-
-    payload = {
-        "username": BIOTIME_USERNAME,
-        "password": BIOTIME_PASSWORD,
-    }
-
-    endpoints = []
-
-    configured_endpoint = (
-        TOKEN_URL.rstrip("/") + "/"
-    )
-
-    standard_endpoint = (
-        f"{BASE_URL}/api-token-auth/"
-    )
-
-    endpoints.append(configured_endpoint)
-
-    if standard_endpoint not in endpoints:
-        endpoints.append(standard_endpoint)
-
-    last_error = None
-
-    for endpoint in endpoints:
-
-        try:
-
-            response = requests.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                timeout=15,
-            )
-
-        except requests.exceptions.Timeout:
-
-            last_error = (
-                "Connection timeout while contacting BioTime."
-            )
-
-            continue
-
-        except requests.exceptions.ConnectionError as exc:
-
-            last_error = (
-                "Cannot connect to BioTime. "
-                f"Network error: {str(exc)}"
-            )
-
-            continue
-
-        except requests.exceptions.RequestException as exc:
-
-            last_error = (
-                "HTTP request error: "
-                f"{str(exc)}"
-            )
-
-            continue
-
-        data = safe_json(response)
-
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
-
-        if response.status_code in (200, 201):
-
-            token = extract_token(data)
-
-            if token:
-                return token
-
-            last_error = (
-                "BioTime accepted the login request, "
-                "but no authentication token was returned."
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # AUTHENTICATION ERROR
-        # ----------------------------------------------------
-
-        if response.status_code in (
-            400,
-            401,
-            403,
-        ):
-
-            detail = ""
-
-            if isinstance(data, dict):
-
-                detail = (
-                    data.get("detail")
-                    or data.get("msg")
-                    or data.get("message")
-                    or data.get("error")
-                    or ""
-                )
-
-            if not detail:
-                detail = response.text[:500]
-
-            last_error = (
-                "BioTime authentication failed. "
-                f"HTTP {response.status_code}. "
-                f"Server response: {detail}"
-            )
-
-            break
-
-
-        # ----------------------------------------------------
-        # NOT FOUND
-        # ----------------------------------------------------
-
-        if response.status_code == 404:
-
-            last_error = (
-                f"BioTime token endpoint was not found: "
-                f"{endpoint}"
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # OTHER ERROR
-        # ----------------------------------------------------
-
-        last_error = (
-            f"BioTime returned HTTP "
-            f"{response.status_code}. "
-            f"Response: {response.text[:500]}"
-        )
-
-    raise Exception(
-        last_error
-        or "Unable to obtain a BioTime authentication token."
-    )
-
-
-# ============================================================
-# 8. GENERIC BIOTIME GET
-# ============================================================
-
-def biotime_get(
-    endpoint,
-    token,
-    timeout=15,
-    params=None
-):
-
-    url = f"{BASE_URL}{endpoint}"
-
-    response = requests.get(
-        url,
-        headers={
-            "Authorization": f"Token {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        params=params,
-        timeout=timeout,
-    )
-
-
-    if response.status_code == 401:
-
-        raise Exception(
-            "BioTime rejected the authentication token "
-            "(HTTP 401)."
-        )
-
-
-    if response.status_code == 403:
-
-        raise Exception(
-            "BioTime denied access to this API endpoint "
-            f"(HTTP 403): {endpoint}"
-        )
-
-
-    if response.status_code != 200:
-
-        raise Exception(
-            f"BioTime API returned HTTP "
-            f"{response.status_code} for {endpoint}. "
-            f"Response: {response.text[:500]}"
-        )
-
-
-    return safe_json(response)
-
-
-# ============================================================
-# 9. LOAD ATTENDANCE DATA
-# ============================================================
-
-def load_attendance_data_from_api(
-    selected_date_str,
-    selected_date_obj,
-    is_today
-):
-
+    try:
+        # Pass both 'username' and 'email' as some BioTime APIs expect 'username' even for email logins
+        payload = {"username": EMAIL, "email": EMAIL, "password": PASSWORD, "company": COMPANY}
+        res = requests.post(TOKEN_URL, json=payload, timeout=15)
+        
+        if res.status_code in (200, 201): 
+            return res.json().get("token")
+        else:
+            # Output the exact raw error string from the BioTime API for debugging
+            strlit.error(f"BioTime Server Error (Code {res.status_code}): {res.text}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        strlit.error("Connection Failed: BioTime server timed out.")
+        return None
+    except Exception as e:
+        strlit.error(f"Connection Failed: {str(e)}")
+        return None
+
+def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
     token = get_auth_token()
-
-
-    # ========================================================
-    # DEVICES
-    # ========================================================
-
+    if not token: raise Exception("تعذر المصادقة مع السيرفر. يرجى مراجعة تفاصيل الخطأ بالأعلى.")
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+    
+    # 1. Fetch Devices
     devices = []
-
-    for endpoint in (
-        "/iclock/api/terminals/",
-        "/iclock/api/devices/",
-    ):
-
-        try:
-
-            data = biotime_get(
-                endpoint,
-                token,
-                timeout=10,
-                params={
-                    "page_size": 1000
-                },
-            )
-
-            if isinstance(data, dict):
-
-                devices = data.get(
-                    "data",
-                    data.get(
-                        "results",
-                        []
-                    )
-                )
-
-            elif isinstance(data, list):
-
-                devices = data
-
-            if isinstance(devices, list):
+    try:
+        for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
+            dev_res = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
+            if dev_res.status_code == 200:
+                d_data = dev_res.json()
+                devices = d_data.get("data", d_data) if isinstance(d_data, (dict, list)) else []
                 break
+    except Exception:
+        pass
+    
+    terminal_map = {str(d.get("sn", "")): (d.get("alias") or d.get("terminal_name") or str(d.get("sn", ""))) for d in devices if d.get("sn")}
 
-        except Exception:
-            continue
-
-
-    if not isinstance(devices, list):
-        devices = []
-
-
-    terminal_map = {}
-
-    for device in devices:
-
-        if not isinstance(device, dict):
-            continue
-
-        sn = str(
-            device.get("sn", "")
-        ).strip()
-
-        if not sn:
-            continue
-
-        terminal_map[sn] = clean_txt(
-            device.get("alias")
-            or device.get("terminal_name")
-            or sn
-        )
-
-
-    # ========================================================
-    # EMPLOYEES
-    # ========================================================
-
+    # 2. Fetch Employees (SIMPLE: Exclude resigned/inactive or attendance disabled)
     all_employees = []
-
-    employee_data = biotime_get(
-        "/personnel/api/employees/",
-        token,
-        timeout=15,
-        params={
-            "page_size": 1000
-        },
-    )
-
-
-    if isinstance(employee_data, dict):
-
-        all_employees = employee_data.get(
-            "data",
-            employee_data.get(
-                "results",
-                []
-            )
-        )
-
-    elif isinstance(employee_data, list):
-
-        all_employees = employee_data
-
-
-    if not isinstance(all_employees, list):
-        all_employees = []
-
+    try:
+        emp_res = requests.get(f"{BASE_URL}/personnel/api/employees/?page_size=1000", headers=headers, timeout=15)
+        if emp_res.status_code == 200: all_employees = emp_res.json().get("data", [])
+    except Exception: pass
 
     active_employees = {}
-
-
     for emp in all_employees:
+        raw_code = str(emp.get("emp_code", "")).strip()
+        cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
+        
+        # Check BioTime flags for Resignation / Inactive / Disabled Attendance
+        is_active = str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
+        emp_status = str(emp.get("status", "0")).upper()
+        enable_att = str(emp.get("enable_attendance", True)).lower() in ("true", "1", "yes")
+        
+        # If they are marked as inactive, status is Departed/Resigned, OR attendance is Disabled - SKIP completely.
+        if not is_active or emp_status in ("1", "2", "D") or not enable_att:
+            continue 
+            
+        if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
+            f_name = str(emp.get("first_name", "")).strip()
+            l_name = str(emp.get("last_name", "")).strip()
+            if f_name.lower() == "none": f_name = ""
+            if l_name.lower() == "none": l_name = ""
+            full_name = f"{f_name} {l_name}".strip()
+            
+            dept_data = emp.get("department", {})
+            dept_name = dept_data.get("dept_name") if isinstance(dept_data, dict) else str(emp.get("department", ""))
+            if not dept_name or dept_name.lower() == "none":
+                dept_name = "غير محدد"
+            
+            active_employees[cleaned_code] = {
+                "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
+                "dept": clean_txt(dept_name)
+            }
 
-        if not isinstance(emp, dict):
-            continue
-
-
-        cleaned_code = clean_employee_code(
-            emp.get("emp_code", "")
-        )
-
-
-        if not cleaned_code:
-            continue
-
-
-        is_active = str(
-            emp.get(
-                "is_active",
-                True
-            )
-        ).lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
-
-        emp_status = str(
-            emp.get(
-                "status",
-                "0"
-            )
-        ).upper()
-
-
-        enable_att = str(
-            emp.get(
-                "enable_attendance",
-                True
-            )
-        ).lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
-
-        if not is_active:
-            continue
-
-        if emp_status in (
-            "1",
-            "2",
-            "D",
-        ):
-            continue
-
-        if not enable_att:
-            continue
-
-        if cleaned_code in EXCLUDED_MANAGEMENT_CODES:
-            continue
-
-
-        first_name = str(
-            emp.get(
-                "first_name",
-                ""
-            )
-        ).strip()
-
-
-        last_name = str(
-            emp.get(
-                "last_name",
-                ""
-            )
-        ).strip()
-
-
-        if first_name.lower() == "none":
-            first_name = ""
-
-        if last_name.lower() == "none":
-            last_name = ""
-
-
-        full_name = (
-            f"{first_name} {last_name}"
-        ).strip()
-
-
-        department_data = emp.get(
-            "department",
-            {}
-        )
-
-
-        if isinstance(
-            department_data,
-            dict
-        ):
-
-            department_name = (
-                department_data.get(
-                    "dept_name"
-                )
-                or department_data.get(
-                    "name"
-                )
-                or ""
-            )
-
-        else:
-
-            department_name = str(
-                department_data or ""
-            )
-
-
-        if (
-            not department_name
-            or department_name.lower() == "none"
-        ):
-
-            department_name = "غير محدد"
-
-
-        active_employees[
-            cleaned_code
-        ] = {
-
-            "name": clean_txt(
-                full_name
-                if full_name
-                else f"موظف {cleaned_code}"
-            ),
-
-            "dept": clean_txt(
-                department_name
-            ),
-        }
-
-
-    # ========================================================
-    # LEAVES
-    # ========================================================
-
+    # 3. Fetch Leaves (Extract exact Leave Type)
     leave_records = []
-
-
-    for endpoint in (
-        "/att/api/leave/",
-        "/iclock/api/leave/",
-    ):
-
+    try:
+        leave_res = requests.get(f"{BASE_URL}/att/api/leave/?page_size=1000", headers=headers, timeout=10)
+        if leave_res.status_code == 200:
+            l_data = leave_res.json()
+            leave_records = l_data.get("data", l_data) if isinstance(l_data, (dict, list)) else []
+    except Exception:
         try:
-
-            leave_data = biotime_get(
-                endpoint,
-                token,
-                timeout=10,
-                params={
-                    "page_size": 1000
-                },
-            )
-
-
-            if isinstance(
-                leave_data,
-                dict
-            ):
-
-                leave_records = leave_data.get(
-                    "data",
-                    leave_data.get(
-                        "results",
-                        []
-                    )
-                )
-
-            elif isinstance(
-                leave_data,
-                list
-            ):
-
-                leave_records = leave_data
-
-
-            if isinstance(
-                leave_records,
-                list
-            ):
-                break
-
-
+            leave_res = requests.get(f"{BASE_URL}/iclock/api/leave/?page_size=1000", headers=headers, timeout=10)
+            if leave_res.status_code == 200:
+                l_data = leave_res.json()
+                leave_records = l_data.get("data", l_data) if isinstance(l_data, (dict, list)) else []
         except Exception:
-
-            continue
-
-
-    if not isinstance(
-        leave_records,
-        list
-    ):
-
-        leave_records = []
-
+            pass
 
     on_leave_employees = {}
-
-
     for leave in leave_records:
-
-        if not isinstance(
-            leave,
-            dict
-        ):
-            continue
-
-
-        cleaned_code = clean_employee_code(
-            leave.get(
-                "emp_code"
-            )
-            or leave.get(
-                "employee_code"
-            )
-            or ""
-        )
-
-
-        start_time = (
-            leave.get(
-                "start_time"
-            )
-            or leave.get(
-                "start_date"
-            )
-            or leave.get(
-                "start_datetime"
-            )
-        )
-
-
-        end_time = (
-            leave.get(
-                "end_time"
-            )
-            or leave.get(
-                "end_date"
-            )
-            or leave.get(
-                "end_datetime"
-            )
-        )
-
-
-        if (
-            not cleaned_code
-            or not start_time
-            or not end_time
-        ):
-
-            continue
-
-
+        raw_code = str(leave.get("emp_code") or leave.get("employee_code") or "").strip()
+        cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
+        start_t = leave.get("start_time") or leave.get("start_date") or leave.get("start_datetime")
+        end_t = leave.get("end_time") or leave.get("end_date") or leave.get("end_datetime")
+        
+        # Extract the exact Type of Leave selected in BioTime
         leave_name = "إجازة"
+        if "leave_type" in leave:
+            if isinstance(leave["leave_type"], dict):
+                leave_name = leave["leave_type"].get("leave_name", "إجازة")
+            else:
+                leave_name = str(leave["leave_type"])
+        elif "leave_name" in leave:
+            leave_name = leave["leave_name"]
 
+        if cleaned_code and start_t and end_t:
+            try:
+                s_date = datetime.strptime(str(start_t)[:10], "%Y-%m-%d").date()
+                e_date = datetime.strptime(str(end_t)[:10], "%Y-%m-%d").date()
+                if s_date <= selected_date_obj <= e_date:
+                    on_leave_employees[cleaned_code] = clean_txt(leave_name)
+            except Exception:
+                pass
 
-        leave_type = leave.get(
-            "leave_type"
-        )
-
-
-        if isinstance(
-            leave_type,
-            dict
-        ):
-
-            leave_name = (
-                leave_type.get(
-                    "leave_name"
-                )
-                or leave_type.get(
-                    "name"
-                )
-                or "إجازة"
-            )
-
-        elif leave_type:
-
-            leave_name = str(
-                leave_type
-            )
-
-        elif leave.get(
-            "leave_name"
-        ):
-
-            leave_name = str(
-                leave.get(
-                    "leave_name"
-                )
-            )
-
-
-        try:
-
-            start_date = datetime.strptime(
-                str(start_time)[:10],
-                "%Y-%m-%d"
-            ).date()
-
-
-            end_date = datetime.strptime(
-                str(end_time)[:10],
-                "%Y-%m-%d"
-            ).date()
-
-
-            if (
-                start_date
-                <= selected_date_obj
-                <= end_date
-            ):
-
-                on_leave_employees[
-                    cleaned_code
-                ] = clean_txt(
-                    leave_name
-                )
-
-
-        except Exception:
-
-            continue
-
-
-    # ========================================================
-    # TRANSACTIONS
-    # ========================================================
-
-    start_datetime = (
-        selected_date_obj.strftime(
-            "%Y-%m-%d"
-        )
-        + " 00:00:00"
-    )
-
-
-    end_datetime = (
-        (
-            selected_date_obj
-            + timedelta(days=1)
-        ).strftime(
-            "%Y-%m-%d"
-        )
-        + " 05:00:00"
-    )
-
-
-    transaction_data = biotime_get(
-        "/iclock/api/transactions/",
-        token,
-        timeout=20,
-        params={
-            "start_time": start_datetime,
-            "end_time": end_datetime,
-            "page_size": 5000,
-        },
-    )
-
-
-    if isinstance(
-        transaction_data,
-        dict
-    ):
-
-        raw_logs = transaction_data.get(
-            "data",
-            transaction_data.get(
-                "results",
-                []
-            )
-        )
-
-    elif isinstance(
-        transaction_data,
-        list
-    ):
-
-        raw_logs = transaction_data
-
-    else:
-
-        raw_logs = []
-
-
-    if not isinstance(
-        raw_logs,
-        list
-    ):
-
-        raw_logs = []
-
-
-    # ========================================================
-    # ORGANISE PUNCHES
-    # ========================================================
+    # 4. Fetch Transactions Logs
+    prev_day = selected_date_obj.strftime('%Y-%m-%d') + " 00:00:00"
+    next_day = (selected_date_obj + timedelta(days=1)).strftime('%Y-%m-%d') + " 05:00:00"
+    
+    raw_logs = []
+    try:
+        logs_res = requests.get(f"{BASE_URL}/iclock/api/transactions/?start_time={prev_day}&end_time={next_day}&page_size=5000", headers=headers, timeout=15)
+        if logs_res.status_code == 200: raw_logs = logs_res.json().get("data", [])
+    except Exception: pass
 
     emp_punches = {}
-
-
     for log in raw_logs:
+        raw_code = str(log.get("emp_code", "")).strip()
+        cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
+        if cleaned_code in active_employees and log.get("punch_time"):
+            try:
+                p_time = datetime.strptime(log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S")
+                dev_sn = str(log.get("terminal_sn", ""))
+                dev_name = log.get("terminal_alias") or log.get("terminal_name") or terminal_map.get(dev_sn, dev_sn or "جهاز رئيسي")
+                emp_punches.setdefault(cleaned_code, []).append((p_time, dev_name))
+            except Exception: continue
 
-        if not isinstance(
-            log,
-            dict
-        ):
-            continue
+    present_staff, late_staff, absent_staff, checkout_staff, leave_staff, excel_rows = [], [], [], [], [], []
 
-
-        cleaned_code = clean_employee_code(
-            log.get(
-                "emp_code",
-                ""
-            )
-        )
-
-
-        if cleaned_code not in active_employees:
-            continue
-
-
-        punch_time_raw = log.get(
-            "punch_time"
-        )
-
-
-        if not punch_time_raw:
-            continue
-
-
-        try:
-
-            punch_time = datetime.strptime(
-                str(punch_time_raw)[:19],
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-
-            device_sn = str(
-                log.get(
-                    "terminal_sn",
-                    ""
-                )
-            )
-
-
-            device_name = (
-                log.get(
-                    "terminal_alias"
-                )
-                or log.get(
-                    "terminal_name"
-                )
-                or terminal_map.get(
-                    device_sn,
-                    device_sn
-                    or "جهاز رئيسي"
-                )
-            )
-
-
-            emp_punches.setdefault(
-                cleaned_code,
-                []
-            ).append(
-                (
-                    punch_time,
-                    clean_txt(
-                        device_name
-                    )
-                )
-            )
-
-
-        except Exception:
-
-            continue
-
-
-    # ========================================================
-    # RESULT LISTS
-    # ========================================================
-
-    present_staff = []
-    late_staff = []
-    absent_staff = []
-    checkout_staff = []
-    leave_staff = []
-    excel_rows = []
-
-
-    # ========================================================
-    # PROCESS EMPLOYEES
-    # ========================================================
-
-    for code, employee in active_employees.items():
-
-        name = employee["name"]
-        department = employee["dept"]
-
-
-        punches = sorted(
-            emp_punches.get(
-                code,
-                []
-            ),
-            key=lambda x: x[0]
-        )
-
-
-        # Remove duplicate punches
+    for code, emp_data in active_employees.items():
+        name = emp_data["name"]
+        dept = emp_data["dept"]
+        punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
         filtered_punches = []
+        
+        for p_time, d_name in punches:
+            if not filtered_punches or abs((p_time - filtered_punches[-1][0]).total_seconds()) > 60:
+                filtered_punches.append((p_time, d_name))
 
-
-        for punch_time, device_name in punches:
-
-            if (
-                not filtered_punches
-                or abs(
-                    (
-                        punch_time
-                        - filtered_punches[-1][0]
-                    ).total_seconds()
-                ) > 60
-            ):
-
-                filtered_punches.append(
-                    (
-                        punch_time,
-                        device_name
-                    )
-                )
-
-
-        # Only punches from 05:00 onward
-        day_punches = [
-            (
-                punch,
-                device
-            )
-            for punch, device in filtered_punches
-            if (
-                punch.date()
-                == selected_date_obj
-                and punch.hour >= 5
-            )
-        ]
-
-
-        # ====================================================
-        # NO PUNCH
-        # ====================================================
-
+        day_punches = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj and p.hour >= 5]
+        
         if not day_punches:
-
             if code in on_leave_employees:
-
-                leave_reason = (
-                    on_leave_employees[code]
-                )
-
-
-                leave_staff.append(
-                    (
-                        code,
-                        name,
-                        department,
-                        leave_reason
-                    )
-                )
-
-
+                leave_reason = on_leave_employees[code]
+                leave_staff.append((code, name, dept, leave_reason))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Department": department,
-                    "Date": selected_date_str,
-                    "Clock In": "",
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": (
-                        f"Leave - "
-                        f"{leave_reason}"
-                    ),
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": "", "Clock Out": "",
+                    "Total WT": "", "Status": f"Leave - {leave_reason}"
                 })
-
-
             else:
-
-                absent_staff.append(
-                    (
-                        code,
-                        name,
-                        department
-                    )
-                )
-
-
+                absent_staff.append((code, name, dept))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Department": department,
-                    "Date": selected_date_str,
-                    "Clock In": "",
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": "Absence(A)",
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": "", "Clock Out": "",
+                    "Total WT": "", "Status": "Absence(A)"
                 })
-
-
             continue
 
+        first_p, first_dev = day_punches[0]
+        is_late = first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15)
+        
+        next_morning = [(p, d) for p, d in filtered_punches if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5]
+        punch_count = 2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
 
-        # ====================================================
-        # FIRST PUNCH
-        # ====================================================
-
-        first_punch, first_device = (
-            day_punches[0]
-        )
-
-
-        is_late = (
-            first_punch.hour > 9
-            or (
-                first_punch.hour == 9
-                and first_punch.minute > 15
-            )
-        )
-
-
-        # ====================================================
-        # NEXT MORNING
-        # ====================================================
-
-        next_morning = [
-            (
-                punch,
-                device
-            )
-            for punch, device in filtered_punches
-            if (
-                punch.date()
-                == selected_date_obj
-                + timedelta(days=1)
-                and punch.hour < 5
-            )
-        ]
-
-
-        # ====================================================
-        # PUNCH COUNT
-        # ====================================================
-
-        punch_count = len(
-            day_punches
-        )
-
-
-        if (
-            len(day_punches) % 2 != 0
-            and next_morning
-        ):
-
-            punch_count = 2
-
-
-        # ====================================================
-        # LAST PUNCH
-        # ====================================================
-
-        last_punch = None
-        last_device = first_device
-
-
+        last_p = None
+        last_dev = first_dev
+        
         if punch_count % 2 == 0:
+            last_p, last_dev = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
+        elif not is_today and len(day_punches) > 1:
+            last_p, last_dev = day_punches[-1]
 
-            if (
-                len(day_punches) % 2 != 0
-                and next_morning
-            ):
+        total_wt_str = ""
+        if last_p and first_p:
+            diff = last_p - first_p
+            hours, remainder = divmod(int(diff.total_seconds()), 3600)
+            minutes = remainder // 60
+            total_wt_str = f"{hours:02d}:{minutes:02d}"
 
-                last_punch, last_device = (
-                    next_morning[-1]
-                )
-
-            else:
-
-                last_punch, last_device = (
-                    day_punches[-1]
-                )
-
-
-        elif (
-            not is_today
-            and len(day_punches) > 1
-        ):
-
-            last_punch, last_device = (
-                day_punches[-1]
-            )
-
-
-        # ====================================================
-        # WORK TIME
-        # ====================================================
-
-        total_work_time = ""
-
-
-        if (
-            first_punch
-            and last_punch
-        ):
-
-            seconds = int(
-                (
-                    last_punch
-                    - first_punch
-                ).total_seconds()
-            )
-
-
-            if seconds >= 0:
-
-                hours, remainder = divmod(
-                    seconds,
-                    3600
-                )
-
-                minutes = (
-                    remainder // 60
-                )
-
-
-                total_work_time = (
-                    f"{hours:02d}:"
-                    f"{minutes:02d}"
-                )
-
-
-        status_string = (
-            "Late(LT)"
-            if is_late
-            else "Present(P)"
-        )
-
-
+        status_str = "Late(LT)" if is_late else "Present(P)"
+        
         if is_late:
-
-            late_staff.append(
-                (
-                    code,
-                    name,
-                    department,
-                    first_punch.strftime(
-                        "%I:%M %p"
-                    ),
-                    first_device,
-                )
-            )
-
-
-        # ====================================================
-        # TODAY
-        # ====================================================
+            late_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
 
         if is_today:
-
-            # Currently inside
             if punch_count % 2 != 0:
-
-                present_staff.append(
-                    (
-                        code,
-                        name,
-                        department,
-                        first_punch.strftime(
-                            "%I:%M %p"
-                        ),
-                        first_device,
-                    )
-                )
-
-
+                present_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Department": department,
-                    "Date": selected_date_str,
-                    "Clock In": first_punch.strftime(
-                        "%H:%M"
-                    ),
-                    "Clock Out": "",
-                    "Total WT": "",
-                    "Status": status_string,
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": "", "Total WT": "", "Status": status_str
                 })
-
-
-            # Checked out
             else:
-
-                if (
-                    len(day_punches) % 2 != 0
-                    and next_morning
-                ):
-
-                    real_last_punch, real_last_device = (
-                        next_morning[-1]
-                    )
-
-                else:
-
-                    real_last_punch, real_last_device = (
-                        day_punches[-1]
-                    )
-
-
-                checkout_staff.append(
-                    (
-                        code,
-                        name,
-                        department,
-                        real_last_punch.strftime(
-                            "%I:%M %p"
-                        ),
-                        real_last_device,
-                    )
-                )
-
-
+                last_p_real, last_dev_real = (next_morning[-1] if (len(day_punches) % 2 != 0 and next_morning) else day_punches[-1])
+                checkout_staff.append((code, name, dept, last_p_real.strftime('%I:%M %p'), last_dev_real))
                 excel_rows.append({
-                    "Employee ID": code,
-                    "First Name": name,
-                    "Department": department,
-                    "Date": selected_date_str,
-                    "Clock In": first_punch.strftime(
-                        "%H:%M"
-                    ),
-                    "Clock Out": real_last_punch.strftime(
-                        "%H:%M"
-                    ),
-                    "Total WT": total_work_time,
-                    "Status": status_string,
+                    "Employee ID": code, "First Name": name, "Department": dept,
+                    "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
+                    "Clock Out": last_p_real.strftime('%H:%M'), "Total WT": total_wt_str, "Status": status_str
                 })
-
-
-        # ====================================================
-        # HISTORICAL DATE
-        # ====================================================
-
         else:
-
-            if last_punch:
-
-                checkout_staff.append(
-                    (
-                        code,
-                        name,
-                        department,
-                        last_punch.strftime(
-                            "%I:%M %p"
-                        ),
-                        last_device,
-                    )
-                )
-
+            if last_p:
+                checkout_staff.append((code, name, dept, last_p.strftime('%I:%M %p'), last_dev))
             else:
-
-                present_staff.append(
-                    (
-                        code,
-                        name,
-                        department,
-                        first_punch.strftime(
-                            "%I:%M %p"
-                        ),
-                        first_device,
-                    )
-                )
-
+                present_staff.append((code, name, dept, first_p.strftime('%I:%M %p'), first_dev))
 
             excel_rows.append({
-                "Employee ID": code,
-                "First Name": name,
-                "Department": department,
-                "Date": selected_date_str,
-                "Clock In": first_punch.strftime(
-                    "%H:%M"
-                ),
-                "Clock Out": (
-                    last_punch.strftime(
-                        "%H:%M"
-                    )
-                    if last_punch
-                    else ""
-                ),
-                "Total WT": total_work_time,
-                "Status": status_string,
+                "Employee ID": code, "First Name": name, "Department": dept,
+                "Date": selected_date_str, "Clock In": first_p.strftime('%H:%M'),
+                "Clock Out": last_p.strftime('%H:%M') if last_p else "",
+                "Total WT": total_wt_str, "Status": status_str
             })
 
+    absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
+    
+    return active_employees, present_staff, late_staff, absent_staff, checkout_staff, leave_staff, devices, excel_rows
 
-    # ========================================================
-    # SORT
-    # ========================================================
-
-    def sort_key(item):
-
-        code = str(item[0])
-
-        if code.isdigit():
-            return (
-                0,
-                int(code)
-            )
-
-        return (
-            1,
-            code.lower()
-        )
-
-
-    absent_staff.sort(
-        key=sort_key
-    )
-
-    present_staff.sort(
-        key=sort_key
-    )
-
-    late_staff.sort(
-        key=sort_key
-    )
-
-    leave_staff.sort(
-        key=sort_key
-    )
-
-    checkout_staff.sort(
-        key=sort_key
-    )
-
-
-    return (
-        active_employees,
-        present_staff,
-        late_staff,
-        absent_staff,
-        checkout_staff,
-        leave_staff,
-        devices,
-        excel_rows,
-    )
-
-
-# ============================================================
-# 10. DATE / TIME
-# ============================================================
-
-now_syria = datetime.now(
-    SYRIA_TZ
-)
-
-today_str = now_syria.strftime(
-    "%Y-%m-%d"
-)
-
-
-# ============================================================
-# 11. DISH / STATUS IMAGE
-# ============================================================
+# ==========================================
+# 3. INTERFACE RENDERING
+# ==========================================
+now_syria = datetime.now(SYRIA_TZ)
+today_str = now_syria.strftime('%Y-%m-%d')
 
 dish_img_tag = ""
-
-
 try:
-
-    with open(
-        "image_632b3d.jpg",
-        "rb"
-    ) as image_file:
-
-        encoded_string = (
-            base64.b64encode(
-                image_file.read()
-            ).decode()
-        )
-
-
-        dish_img_tag = (
-            '<img '
-            f'src="data:image/jpeg;base64,{encoded_string}" '
-            'class="animated-dish" />'
-        )
-
-
+    with open("image_632b3d.jpg", "rb") as img_file:
+        encoded_string = base64.b64encode(img_file.read()).decode()
+        dish_img_tag = f'<img src="data:image/jpeg;base64,{encoded_string}" class="animated-dish" />'
 except Exception:
+    dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
 
-    dish_img_tag = """
-        <div
-            class="animated-dish"
-            style="font-size: 24px;"
-        >
-            📡
-        </div>
-    """
+c_date, c_ref = strlit.columns(2)
+with c_date:
+    selected_date_obj_input = strlit.date_input("", value=now_syria.date(), label_visibility="collapsed")
+    selected_date_str = selected_date_obj_input.strftime('%Y-%m-%d')
+with c_ref:
+    if strlit.button("🔄 تحديث البيانات", use_container_width=True): strlit.cache_data.clear(); strlit.rerun()
 
+is_today = (selected_date_str == today_str)
 
-# ============================================================
-# 12. DATE + REFRESH
-# ============================================================
+if "last_selected_date" not in strlit.session_state:
+    strlit.session_state["last_selected_date"] = selected_date_str
 
-column_date, column_refresh = (
-    strlit.columns(2)
-)
-
-
-with column_date:
-
-    selected_date_obj_input = (
-        strlit.date_input(
-            "",
-            value=now_syria.date(),
-            label_visibility="collapsed",
-        )
-    )
-
-
-    selected_date_str = (
-        selected_date_obj_input.strftime(
-            "%Y-%m-%d"
-        )
-    )
-
-
-with column_refresh:
-
-    if strlit.button(
-        "🔄 تحديث البيانات",
-        use_container_width=True
-    ):
-
-        strlit.cache_data.clear()
-
-        strlit.rerun()
-
-
-is_today = (
-    selected_date_str
-    == today_str
-)
-
-
-# ============================================================
-# 13. RESET VIEW WHEN DATE CHANGES
-# ============================================================
-
-if (
-    strlit.session_state[
-        "last_selected_date"
-    ]
-    is None
-):
-
-    strlit.session_state[
-        "last_selected_date"
-    ] = selected_date_str
-
-
-if (
-    strlit.session_state[
-        "last_selected_date"
-    ]
-    != selected_date_str
-):
-
-    strlit.session_state[
-        "last_selected_date"
-    ] = selected_date_str
-
-
-    strlit.session_state[
-        "selected_view"
-    ] = (
-        "present"
-        if is_today
-        else "all"
-    )
-
-
-# ============================================================
-# 14. ONLINE / HISTORICAL STATUS
-# ============================================================
+if strlit.session_state["last_selected_date"] != selected_date_str:
+    strlit.session_state["last_selected_date"] = selected_date_str
+    strlit.session_state["selected_view"] = "present" if is_today else "all"
 
 if is_today:
-
     strlit.markdown(
         f"""
         <div class="status-badge">
-
             {dish_img_tag}
-
             <div class="status-indicator">
-
                 <span class="blinking-dot"></span>
-
-                <span class="online-text">
-                    Online (مباشر)
-                </span>
-
+                <span class="online-text">Online (مباشر)</span>
             </div>
-
         </div>
-        """,
-        unsafe_allow_html=True,
+        """, unsafe_allow_html=True
     )
-
-
 else:
-
     strlit.markdown(
         f"""
-        <div
-            class="status-badge"
-            style="
-                border-color: #94a3b8;
-                background: #e2e8f0;
-            "
-        >
-
+        <div class="status-badge" style="border-color: #94a3b8; background: #e2e8f0;">
             {dish_img_tag}
-
             <div class="status-indicator">
-
-                <span
-                    style="
-                        font-weight: 800;
-                        color: #475569;
-                        font-size: 14px;
-                    "
-                >
-                    أرشيف تاريخي
-                    ({selected_date_str})
-                </span>
-
+                <span style="font-weight: 800; color: #475569; font-size: 14px;">أرشيف تاريخي ({selected_date_str})</span>
             </div>
-
         </div>
-        """,
-        unsafe_allow_html=True,
+        """, unsafe_allow_html=True
     )
-
-
-# ============================================================
-# 15. MAIN APPLICATION
-# ============================================================
 
 try:
-
-    (
-        active_employees,
-        present_staff,
-        late_staff,
-        absent_staff,
-        checkout_staff,
-        leave_staff,
-        devices,
-        excel_rows,
-    ) = load_attendance_data_from_api(
-        selected_date_str,
-        selected_date_obj_input,
-        is_today,
+    act, pre, lat, abs_s, chk, lev, devices, exc = load_attendance_data_from_api(
+        selected_date_str, 
+        selected_date_obj_input, 
+        is_today
     )
-
-
-    # ========================================================
-    # EXCEL REPORT
-    # ========================================================
-
+    
+    # 📥 EXCEL REPORT GENERATION
+    df_excel = pd.DataFrame(exc)
     output = io.BytesIO()
-
-    workbook = openpyxl.Workbook()
-
-    worksheet = workbook.active
-
-    worksheet.title = "Attendance Report"
-
+    
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Attendance Report"
 
     thin_border = Border(
-        left=Side(
-            style="thin",
-            color="D3D3D3"
-        ),
-        right=Side(
-            style="thin",
-            color="D3D3D3"
-        ),
-        top=Side(
-            style="thin",
-            color="D3D3D3"
-        ),
-        bottom=Side(
-            style="thin",
-            color="D3D3D3"
-        ),
+        left=Side(style='thin', color='D3D3D3'), right=Side(style='thin', color='D3D3D3'),
+        top=Side(style='thin', color='D3D3D3'), bottom=Side(style='thin', color='D3D3D3')
     )
 
-
-    headers = [
-        "Employee ID",
-        "First Name",
-        "Department",
-        "Date",
-        "Clock In",
-        "Clock Out",
-        "Total WT",
-        "Status",
-    ]
-
-
-    worksheet.append(
-        headers
-    )
-
-
-    worksheet.row_dimensions[
-        1
-    ].height = 24
-
-
-    for column_index in range(
-        1,
-        len(headers) + 1
-    ):
-
-        cell = worksheet.cell(
-            row=1,
-            column=column_index
-        )
-
-
-        cell.font = Font(
-            name="Calibri",
-            size=11,
-            bold=True,
-            color="FFFFFF",
-        )
-
-
-        cell.fill = PatternFill(
-            start_color="1F4E78",
-            end_color="1F4E78",
-            fill_type="solid",
-        )
-
-
-        cell.alignment = Alignment(
-            horizontal="center",
-            vertical="center",
-        )
-
-
+    headers = ["Employee ID", "First Name", "Department", "Date", "Clock In", "Clock Out", "Total WT", "Status"]
+    ws.append(headers)
+    ws.row_dimensions[1].height = 24
+    
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-
-    for row_index, row_data in enumerate(
-        excel_rows,
-        2
-    ):
-
-        worksheet.append([
-            row_data["Employee ID"],
-            row_data["First Name"],
-            row_data["Department"],
-            row_data["Date"],
-            row_data["Clock In"],
-            row_data["Clock Out"],
-            row_data["Total WT"],
-            row_data["Status"],
+    for idx, row_data in enumerate(exc, 2):
+        ws.row_dimensions[idx].height = 20
+        ws.append([
+            row_data["Employee ID"], row_data["First Name"], row_data["Department"], row_data["Date"],
+            row_data["Clock In"], row_data["Clock Out"], row_data["Total WT"], row_data["Status"]
         ])
-
-
-        status_value = str(
-            row_data["Status"]
-        )
-
-
+        
+        # Check status for full-row highlighting
+        status_val = str(row_data["Status"])
         row_fill = None
         row_font_color = "000000"
-
-
-        if (
-            "Leave" in status_value
-        ):
-
-            row_fill = PatternFill(
-                start_color="D9E1F2",
-                end_color="D9E1F2",
-                fill_type="solid",
-            )
-
+        
+        if "Leave" in status_val or "L" in status_val:
+            row_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
             row_font_color = "002060"
-
-
-        elif (
-            "Absence" in status_value
-        ):
-
-            row_fill = PatternFill(
-                start_color="FFC7CE",
-                end_color="FFC7CE",
-                fill_type="solid",
-            )
-
+        elif "Absence" in status_val or "A" in status_val:
+            row_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
             row_font_color = "9C0006"
 
-
-        for column_index in range(
-            1,
-            9
-        ):
-
-            cell = worksheet.cell(
-                row=row_index,
-                column=column_index
-            )
-
-
+        for col_idx in range(1, 9):
+            cell = ws.cell(row=idx, column=col_idx)
+            
+            # Apply full row styling if Absent or on Leave
             if row_fill:
-
                 cell.fill = row_fill
-
-                cell.font = Font(
-                    name="Calibri",
-                    size=11,
-                    bold=True,
-                    color=row_font_color,
-                )
-
+                cell.font = Font(name='Calibri', size=11, bold=True, color=row_font_color)
             else:
+                cell.font = Font(name='Calibri', size=11)
+            
+            # Apply specific cell styling only to the Status column for Late/Present
+            if col_idx == 8 and not row_fill:
+                if "Late" in status_val or "LT" in status_val:
+                    cell.font = Font(name='Calibri', size=11, bold=True, color="9C0006")
+                    cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                elif "Present" in status_val or "P" in status_val:
+                    cell.font = Font(name='Calibri', size=11, bold=True, color="006100")
+                    cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 
-                cell.font = Font(
-                    name="Calibri",
-                    size=11,
-                )
-
-
-            # Status column
-            if (
-                column_index == 8
-                and not row_fill
-            ):
-
-                if (
-                    "Late" in status_value
-                    or "LT" in status_value
-                ):
-
-                    cell.font = Font(
-                        name="Calibri",
-                        size=11,
-                        bold=True,
-                        color="9C0006",
-                    )
-
-                    cell.fill = PatternFill(
-                        start_color="FFC7CE",
-                        end_color="FFC7CE",
-                        fill_type="solid",
-                    )
-
-
-                elif (
-                    "Present" in status_value
-                    or "P" in status_value
-                ):
-
-                    cell.font = Font(
-                        name="Calibri",
-                        size=11,
-                        bold=True,
-                        color="006100",
-                    )
-
-                    cell.fill = PatternFill(
-                        start_color="C6EFCE",
-                        end_color="C6EFCE",
-                        fill_type="solid",
-                    )
-
-
-            cell.alignment = Alignment(
-                horizontal="center",
-                vertical="center",
-            )
-
-
+            cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
 
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max(max_len + 5, 14)
 
-    # ========================================================
-    # EXCEL COLUMN WIDTH
-    # ========================================================
-
-    for column in worksheet.columns:
-
-        max_length = 0
-
-        column_letter = get_column_letter(
-            column[0].column
-        )
-
-
-        for cell in column:
-
-            if cell.value is not None:
-
-                max_length = max(
-                    max_length,
-                    len(str(cell.value))
-                )
-
-
-        worksheet.column_dimensions[
-            column_letter
-        ].width = max(
-            max_length + 5,
-            14
-        )
-
-
-    workbook.save(
-        output
-    )
-
-
+    wb.save(output)
     excel_data = output.getvalue()
-
 
     strlit.download_button(
         label="📥 تحميل تقرير Excel",
-        data=excel_data,
-        file_name=(
-            f"Daily_Attendance_Report_"
-            f"{selected_date_str}.xlsx"
-        ),
-        mime=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        ),
-        use_container_width=True,
+        data=excel_data, file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True
     )
-
-
-    # ========================================================
-    # 16. NAVIGATION BUTTONS
-    # ========================================================
 
     if is_today:
+        if strlit.button(f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True): 
+            strlit.session_state["selected_view"] = "all"
+        
+        col_p, col_l = strlit.columns(2)
+        with col_p:
+            if strlit.button(f"🟢 المتواجدون ({len(pre)})", use_container_width=True): strlit.session_state["selected_view"] = "present"
+        with col_l:
+            if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True): strlit.session_state["selected_view"] = "late"
 
-        if strlit.button(
-            f"👥 كافة موظفي الشركة النشطين "
-            f"({len(active_employees)})",
-            use_container_width=True,
-        ):
+        col_c, col_a = strlit.columns(2)
+        with col_c:
+            if strlit.button(f"🏁 المنصرفون ({len(chk)})", use_container_width=True): strlit.session_state["selected_view"] = "checkout"
+        with col_a:
+            if strlit.button(f"❌ الغيابات ({len(abs_s)})", use_container_width=True): strlit.session_state["selected_view"] = "absent"
 
-            strlit.session_state[
-                "selected_view"
-            ] = "all"
+        col_lv, col_dummy = strlit.columns(2)
+        with col_lv:
+            if strlit.button(f"🏖️ الإجازات ({len(lev)})", use_container_width=True): strlit.session_state["selected_view"] = "leave"
 
-
-        column_present, column_late = (
-            strlit.columns(2)
-        )
-
-
-        with column_present:
-
-            if strlit.button(
-                f"🟢 المتواجدون "
-                f"({len(present_staff)})",
-                use_container_width=True,
-            ):
-
-                strlit.session_state[
-                    "selected_view"
-                ] = "present"
-
-
-        with column_late:
-
-            if strlit.button(
-                f"⏰ المتأخرون "
-                f"({len(late_staff)})",
-                use_container_width=True,
-            ):
-
-                strlit.session_state[
-                    "selected_view"
-                ] = "late"
-
-
-        column_checkout, column_absent = (
-            strlit.columns(2)
-        )
-
-
-        with column_checkout:
-
-            if strlit.button(
-                f"🏁 المنصرفون "
-                f"({len(checkout_staff)})",
-                use_container_width=True,
-            ):
-
-                strlit.session_state[
-                    "selected_view"
-                ] = "checkout"
-
-
-        with column_absent:
-
-            if strlit.button(
-                f"❌ الغيابات "
-                f"({len(absent_staff)})",
-                use_container_width=True,
-            ):
-
-                strlit.session_state[
-                    "selected_view"
-                ] = "absent"
-
-
-        column_leave, _ = (
-            strlit.columns(2)
-        )
-
-
-        with column_leave:
-
-            if strlit.button(
-                f"🏖️ الإجازات "
-                f"({len(leave_staff)})",
-                use_container_width=True,
-            ):
-
-                strlit.session_state[
-                    "selected_view"
-                ] = "leave"
-
-
-    # ========================================================
-    # 17. DEVICES
-    # ========================================================
-
-    with strlit.expander(
-        "🖨️ أجهزة الحضور والانصراف المرتبطة",
-        expanded=False,
-    ):
-
+    # 🖨️ DEVICES EXPANDER (Checks 30-min offline limit)
+    with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
         if devices:
-
-            device_rows = []
-
-
-            for device in devices:
-
-                if not isinstance(
-                    device,
-                    dict
-                ):
-                    continue
-
-
-                device_name = (
-                    device.get(
-                        "alias"
-                    )
-                    or device.get(
-                        "terminal_name"
-                    )
-                    or device.get(
-                        "sn"
-                    )
-                    or "جهاز غير محدد"
-                )
-
-
-                device_sn = device.get(
-                    "sn",
-                    "N/A"
-                )
-
-
-                device_ip = device.get(
-                    "ip_address",
-                    "غير متوفر"
-                )
-
-
-                last_activity = device.get(
-                    "last_activity"
-                )
-
-
-                status_badge = (
-                    '<span class="badge-absent">'
-                    'غير متصل 🔴'
-                    '</span>'
-                )
-
-
+            dev_rows = []
+            for d in devices:
+                d_name = d.get("alias") or d.get("terminal_name") or d.get("sn", "جهاز غير محدد")
+                d_sn = d.get("sn", "N/A")
+                d_ip = d.get("ip_address", "غير متوفر")
+                
+                last_activity = d.get("last_activity")
+                status_badge = "<span class='badge-absent'>غير متصل 🔴</span>"
                 if last_activity:
-
                     try:
+                        last_act_dt = datetime.strptime(last_activity[:19], "%Y-%m-%d %H:%M:%S")
+                        if (datetime.now().replace(tzinfo=None) - last_act_dt).total_seconds() < 1800:
+                            status_badge = "<span class='badge-present'>متصل 🟢</span>"
+                    except Exception: pass
+                        
+                dev_rows.append(f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td>{status_badge}</td></tr>")
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th>اسم الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>', unsafe_allow_html=True)
 
-                        last_activity_dt = (
-                            datetime.strptime(
-                                str(
-                                    last_activity
-                                )[:19],
-                                "%Y-%m-%d %H:%M:%S"
-                            )
-                        )
+    search_query = strlit.text_input("", placeholder=TEXT_CONFIG["search_placeholder"], label_visibility="collapsed").strip().lower()
+    match = lambda c, n: (search_query in str(c).lower() or search_query in str(n).lower()) if search_query else True
 
-
-                        seconds_since_activity = (
-                            datetime.now()
-                            - last_activity_dt
-                        ).total_seconds()
-
-
-                        if (
-                            seconds_since_activity
-                            < 1800
-                        ):
-
-                            status_badge = (
-                                '<span '
-                                'class="badge-present">'
-                                'متصل 🟢'
-                                '</span>'
-                            )
-
-
-                    except Exception:
-
-                        pass
-
-
-                device_rows.append(
-                    "<tr>"
-                    f"<td>{clean_txt(device_name)}</td>"
-                    f"<td>{clean_txt(device_sn)}</td>"
-                    f"<td>{clean_txt(device_ip)}</td>"
-                    f"<td>{status_badge}</td>"
-                    "</tr>"
-                )
-
-
-            if device_rows:
-
-                strlit.markdown(
-                    f"""
-                    <table
-                        class="responsive-grid-table"
-                    >
-
-                        <tr>
-                            <th>اسم الجهاز</th>
-                            <th>الرقم التسلسلي (SN)</th>
-                            <th>عنوان IP</th>
-                            <th>الحالة</th>
-                        </tr>
-
-                        {"".join(device_rows)}
-
-                    </table>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-
-        else:
-
-            strlit.info(
-                "لم يتم العثور على أجهزة BioTime."
-            )
-
-
-    # ========================================================
-    # 18. SEARCH
-    # ========================================================
-
-    search_query = strlit.text_input(
-        "",
-        placeholder=TEXT_CONFIG[
-            "search_placeholder"
-        ],
-        label_visibility="collapsed",
-    ).strip().lower()
-
-
-    def matches_search(
-        code,
-        name
-    ):
-
-        if not search_query:
-            return True
-
-        return (
-            search_query
-            in str(code).lower()
-            or
-            search_query
-            in str(name).lower()
-        )
-
-
-    view = strlit.session_state[
-        "selected_view"
-    ]
-
-
-    # ========================================================
-    # 19. ALL EMPLOYEES
-    # ========================================================
+    view = strlit.session_state["selected_view"]
 
     if view == "all":
-
-        rows = []
-
-
-        for code, employee in (
-            active_employees.items()
-        ):
-
-            if not matches_search(
-                code,
-                employee["name"]
-            ):
-                continue
-
-
-            rows.append(
-                "<tr>"
-                f"<td>{code}</td>"
-                f"<td>{employee['name']}</td>"
-                f"<td>{employee['dept']}</td>"
-                "<td>"
-                "<span class='badge-present'>"
-                "نشط"
-                "</span>"
-                "</td>"
-                "</tr>"
-            )
-
-
-        strlit.markdown(
-            f"""
-            <table
-                class="responsive-grid-table"
-            >
-
-                <tr>
-                    <th
-                        colspan="4"
-                        class="table-main-title-header"
-                    >
-                        {
-                            TEXT_CONFIG[
-                                "header_all"
-                            ].format(
-                                len(active_employees)
-                            )
-                        }
-                    </th>
-                </tr>
-
-                <tr>
-                    <th>الكود</th>
-                    <th>الاسم</th>
-                    <th>القسم</th>
-                    <th>الحالة</th>
-                </tr>
-
-                {"".join(rows)}
-
-            </table>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
-    # ========================================================
-    # 20. PRESENT
-    # ========================================================
-
+        rows = [f"<tr><td>{c}</td><td>{d_data['name']}</td><td>{d_data['dept']}</td><td><span class='badge-present'>نشط</span></td></tr>" for c, d_data in act.items() if match(c, d_data['name'])]
+        strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        
     elif view == "present":
-
-        if present_staff:
-
-            rows = []
-
-
-            for (
-                code,
-                name,
-                department,
-                time,
-                device
-            ) in present_staff:
-
-                if not matches_search(
-                    code,
-                    name
-                ):
-                    continue
-
-
-                rows.append(
-                    "<tr>"
-                    f"<td>{code}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{department}</td>"
-                    f"<td>{time}</td>"
-                    f"<td>{device}</td>"
-                    "</tr>"
-                )
-
-
-            strlit.markdown(
-                f"""
-                <table
-                    class="responsive-grid-table"
-                >
-
-                    <tr>
-                        <th
-                            colspan="5"
-                            class="table-main-title-header"
-                        >
-                            {
-                                TEXT_CONFIG[
-                                    "header_present"
-                                ].format(
-                                    len(present_staff)
-                                )
-                            }
-                        </th>
-                    </tr>
-
-                    <tr>
-                        <th>الكود</th>
-                        <th>الاسم</th>
-                        <th>القسم</th>
-                        <th>الدخول</th>
-                        <th>جهاز البصمة</th>
-                    </tr>
-
-                    {"".join(rows)}
-
-                </table>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-        else:
-
-            strlit.info(
-                "لا يوجد موظفون متواجدون حالياً."
-            )
-
-
-    # ========================================================
-    # 21. LATE
-    # ========================================================
-
+        if pre:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in pre if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        
     elif view == "late":
-
-        if late_staff:
-
-            rows = []
-
-
-            for (
-                code,
-                name,
-                department,
-                time,
-                device
-            ) in late_staff:
-
-                if not matches_search(
-                    code,
-                    name
-                ):
-                    continue
-
-
-                rows.append(
-                    "<tr>"
-                    f"<td>{code}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{department}</td>"
-                    f"<td>{time}</td>"
-                    "<td>"
-                    "<span class='badge-late'>"
-                    "متأخر"
-                    "</span>"
-                    "</td>"
-                    f"<td>{device}</td>"
-                    "</tr>"
-                )
-
-
-            strlit.markdown(
-                f"""
-                <table
-                    class="responsive-grid-table"
-                >
-
-                    <tr>
-                        <th
-                            colspan="6"
-                            class="table-main-title-header"
-                        >
-                            {
-                                TEXT_CONFIG[
-                                    "header_late"
-                                ].format(
-                                    len(late_staff)
-                                )
-                            }
-                        </th>
-                    </tr>
-
-                    <tr>
-                        <th>الكود</th>
-                        <th>الاسم</th>
-                        <th>القسم</th>
-                        <th>الدخول</th>
-                        <th>الحالة</th>
-                        <th>جهاز البصمة</th>
-                    </tr>
-
-                    {"".join(rows)}
-
-                </table>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-        else:
-
-            strlit.info(
-                "لا يوجد موظفون متأخرون."
-            )
-
-
-    # ========================================================
-    # 22. CHECKOUT
-    # ========================================================
-
+        if lat:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td><span class='badge-late'>متأخر</span></td><td>{d}</td></tr>" for c, n, dpt, t, d in lat if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="6" class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>الحالة</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        
     elif view == "checkout":
-
-        if checkout_staff:
-
-            rows = []
-
-
-            for (
-                code,
-                name,
-                department,
-                time,
-                device
-            ) in checkout_staff:
-
-                if not matches_search(
-                    code,
-                    name
-                ):
-                    continue
-
-
-                rows.append(
-                    "<tr>"
-                    f"<td>{code}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{department}</td>"
-                    f"<td>{time}</td>"
-                    f"<td>{device}</td>"
-                    "</tr>"
-                )
-
-
-            strlit.markdown(
-                f"""
-                <table
-                    class="responsive-grid-table"
-                >
-
-                    <tr>
-                        <th
-                            colspan="5"
-                            class="table-main-title-header"
-                        >
-                            {
-                                TEXT_CONFIG[
-                                    "header_checkout"
-                                ].format(
-                                    len(checkout_staff)
-                                )
-                            }
-                        </th>
-                    </tr>
-
-                    <tr>
-                        <th>الكود</th>
-                        <th>الاسم</th>
-                        <th>القسم</th>
-                        <th>الانصراف</th>
-                        <th>جهاز البصمة</th>
-                    </tr>
-
-                    {"".join(rows)}
-
-                </table>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-        else:
-
-            strlit.info(
-                "لا يوجد موظفون منصرفون."
-            )
-
-
-    # ========================================================
-    # 23. LEAVE
-    # ========================================================
-
+        if chk:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>" for c, n, dpt, t, d in chk if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="5" class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الانصراف</th><th>جهاز البصمة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
+        
     elif view == "leave":
-
-        if leave_staff:
-
-            rows = []
-
-
-            for (
-                code,
-                name,
-                department,
-                reason
-            ) in leave_staff:
-
-                if not matches_search(
-                    code,
-                    name
-                ):
-                    continue
-
-
-                rows.append(
-                    "<tr>"
-                    f"<td>{code}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{department}</td>"
-                    "<td>"
-                    "<span class='badge-leave'>"
-                    f"{reason}"
-                    "</span>"
-                    "</td>"
-                    "</tr>"
-                )
-
-
-            strlit.markdown(
-                f"""
-                <table
-                    class="responsive-grid-table"
-                >
-
-                    <tr>
-                        <th
-                            colspan="4"
-                            class="table-main-title-header"
-                        >
-                            {
-                                TEXT_CONFIG[
-                                    "header_leave"
-                                ].format(
-                                    len(leave_staff)
-                                )
-                            }
-                        </th>
-                    </tr>
-
-                    <tr>
-                        <th>الكود</th>
-                        <th>الاسم</th>
-                        <th>القسم</th>
-                        <th>نوع الإجازة</th>
-                    </tr>
-
-                    {"".join(rows)}
-
-                </table>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-        else:
-
-            strlit.info(
-                "لا يوجد موظفون في إجازة."
-            )
-
-
-    # ========================================================
-    # 24. ABSENT
-    # ========================================================
+        if lev:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-leave'>{r}</span></td></tr>" for c, n, dpt, r in lev if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_leave"].format(len(lev))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>نوع الإجازة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
 
     elif view == "absent":
+        if abs_s:
+            rows = [f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span class='badge-absent'>غياب</span></td></tr>" for c, n, dpt in abs_s if match(c, n)]
+            strlit.markdown(f'<table class="responsive-grid-table"><tr><th colspan="4" class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>', unsafe_allow_html=True)
 
-        if absent_staff:
-
-            rows = []
-
-
-            for (
-                code,
-                name,
-                department
-            ) in absent_staff:
-
-                if not matches_search(
-                    code,
-                    name
-                ):
-                    continue
-
-
-                rows.append(
-                    "<tr>"
-                    f"<td>{code}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{department}</td>"
-                    "<td>"
-                    "<span class='badge-absent'>"
-                    "غياب"
-                    "</span>"
-                    "</td>"
-                    "</tr>"
-                )
-
-
-            strlit.markdown(
-                f"""
-                <table
-                    class="responsive-grid-table"
-                >
-
-                    <tr>
-                        <th
-                            colspan="4"
-                            class="table-main-title-header"
-                        >
-                            {
-                                TEXT_CONFIG[
-                                    "header_absent"
-                                ].format(
-                                    len(absent_staff)
-                                )
-                            }
-                        </th>
-                    </tr>
-
-                    <tr>
-                        <th>الكود</th>
-                        <th>الاسم</th>
-                        <th>القسم</th>
-                        <th>الحالة</th>
-                    </tr>
-
-                    {"".join(rows)}
-
-                </table>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-        else:
-
-            strlit.info(
-                "لا يوجد غياب."
-            )
-
-
-# ============================================================
-# 25. ERROR HANDLING
-# ============================================================
-
-except Exception as error:
-
-    error_message = clean_txt(
-        str(error)
-    )
-
-
-    strlit.markdown(
-        f"""
-        <div class="api-error-box">
-
-            <strong>
-                ❌ BioTime API Error
-            </strong>
-
-            <br><br>
-
-            {error_message}
-
-            <br><br>
-
-            <small>
-                Authentication passwords and tokens
-                are never displayed.
-            </small>
-
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+except Exception as e:
+    strlit.error(TEXT_CONFIG["err_api"].format(str(e)))
