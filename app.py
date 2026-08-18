@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 
 
 # ============================================================
-# 0. PAGE / TEXT CONFIGURATION
+# 0. TEXT CONFIGURATION
 # ============================================================
 
 TEXT_CONFIG = {
@@ -31,6 +31,10 @@ TEXT_CONFIG = {
 }
 
 
+# ============================================================
+# 1. STREAMLIT PAGE CONFIG
+# ============================================================
+
 strlit.set_page_config(
     page_title=TEXT_CONFIG["page_title"],
     page_icon="📡",
@@ -40,7 +44,7 @@ strlit.set_page_config(
 
 
 # ============================================================
-# 1. CSS
+# 2. CSS
 # ============================================================
 
 strlit.markdown(
@@ -68,6 +72,10 @@ strlit.markdown(
         padding-right: 10px !important;
         max-width: 100% !important;
     }
+
+    /* ========================================================
+       ONLINE STATUS
+       ======================================================== */
 
     .status-badge {
         display: flex;
@@ -118,6 +126,7 @@ strlit.markdown(
     }
 
     @keyframes pulse-green {
+
         0% {
             transform: scale(0.95);
             box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
@@ -132,6 +141,7 @@ strlit.markdown(
             transform: scale(0.95);
             box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
         }
+
     }
 
     .online-text {
@@ -140,6 +150,11 @@ strlit.markdown(
         color: #0f172a;
         letter-spacing: 0.5px;
     }
+
+
+    /* ========================================================
+       BUTTONS
+       ======================================================== */
 
     div[data-testid="stColumn"] button {
         width: 100% !important;
@@ -161,6 +176,11 @@ strlit.markdown(
         white-space: pre-line !important;
         line-height: 1.4 !important;
     }
+
+
+    /* ========================================================
+       TABLE
+       ======================================================== */
 
     .responsive-grid-table {
         width: 100%;
@@ -197,6 +217,11 @@ strlit.markdown(
         color: #1e293b;
     }
 
+
+    /* ========================================================
+       BADGES
+       ======================================================== */
+
     .badge-present {
         background-color: #dcfce7;
         color: #166534;
@@ -229,6 +254,11 @@ strlit.markdown(
         font-size: 11px;
     }
 
+
+    /* ========================================================
+       API ERROR
+       ======================================================== */
+
     .api-error-box {
         direction: rtl;
         text-align: right;
@@ -248,7 +278,7 @@ strlit.markdown(
 
 
 # ============================================================
-# 2. BASIC CONFIGURATION
+# 3. GENERAL CONFIGURATION
 # ============================================================
 
 EXCLUDED_MANAGEMENT_CODES = ("40",)
@@ -257,26 +287,23 @@ SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 
 # ============================================================
-# 3. BIOTIME SECRETS
+# 4. BIOTIME CONFIGURATION
 # ============================================================
 #
-# REQUIRED:
+# Streamlit Secrets:
 #
 # [biotime]
 # base_url = "http://YOUR-BIOTIME-SERVER:8090"
-# username = "YOUR_BIOTIME_USERNAME"
-# password = "YOUR_BIOTIME_PASSWORD"
+# username = "YOUR_USERNAME"
+# password = "YOUR_PASSWORD"
 #
-# OPTIONAL:
-#
+# Optional:
 # token_url = "http://YOUR-BIOTIME-SERVER:8090/api-token-auth/"
 #
-# The code also accepts the old "email" key as a fallback for
-# compatibility, but BioTime authentication itself uses it as
-# the username.
 # ============================================================
 
 try:
+
     BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip("/")
 
     BIOTIME_USERNAME = strlit.secrets["biotime"].get(
@@ -292,23 +319,27 @@ try:
     )
 
 except Exception as config_error:
+
     strlit.error(
         "BioTime configuration is missing from Streamlit Secrets. "
         f"Details: {config_error}"
     )
+
     strlit.stop()
 
 
 if not BIOTIME_USERNAME:
+
     strlit.error(
-        "BioTime username is missing. Add 'username' to the [biotime] "
-        "section in Streamlit Secrets."
+        "BioTime username is missing. "
+        "Please add 'username' to the [biotime] section."
     )
+
     strlit.stop()
 
 
 # ============================================================
-# 4. SESSION STATE
+# 5. SESSION STATE
 # ============================================================
 
 if "debug_logs" not in strlit.session_state:
@@ -322,40 +353,46 @@ if "last_selected_date" not in strlit.session_state:
 
 
 # ============================================================
-# 5. HELPER FUNCTIONS
+# 6. HELPERS
 # ============================================================
 
 def clean_txt(raw_text):
+
     if raw_text is None:
         return ""
 
     try:
+
         text = str(raw_text)
-        text = unicodedata.normalize("NFKC", text)
+
+        text = unicodedata.normalize(
+            "NFKC",
+            text
+        )
+
         text = (
             text
             .replace("\u2066", "")
             .replace("\u2069", "")
             .strip()
         )
+
         return text
+
     except Exception:
+
         return str(raw_text).strip()
 
 
 def clean_employee_code(raw_code):
-    """
-    Normalize employee codes such as:
-    0012 -> 12
-    12   -> 12
-    ABC  -> ABC
-    """
+
     if raw_code is None:
         return ""
 
     value = str(raw_code).strip()
 
     if value.isdigit():
+
         try:
             return str(int(value))
         except Exception:
@@ -365,28 +402,26 @@ def clean_employee_code(raw_code):
 
 
 def safe_json(response):
+
     try:
         return response.json()
+
     except Exception:
+
         return {}
 
 
 def extract_token(data):
-    """
-    BioTime versions may expose token information differently.
-    Check the common fields without exposing the token.
-    """
 
     if not isinstance(data, dict):
         return None
 
-    possible_fields = [
+    for field in (
         "token",
         "key",
         "access",
-    ]
+    ):
 
-    for field in possible_fields:
         value = data.get(field)
 
         if value:
@@ -396,7 +431,7 @@ def extract_token(data):
 
 
 # ============================================================
-# 6. BIOTIME AUTHENTICATION
+# 7. GET BIOTIME TOKEN
 # ============================================================
 
 @strlit.cache_data(ttl=300)
@@ -407,21 +442,24 @@ def get_auth_token():
         "password": BIOTIME_PASSWORD,
     }
 
-    # First try the configured endpoint.
-    endpoints_to_try = []
+    endpoints = []
 
-    if TOKEN_URL:
-        endpoints_to_try.append(TOKEN_URL.rstrip("/") + "/")
+    configured_endpoint = (
+        TOKEN_URL.rstrip("/") + "/"
+    )
 
-    # Always keep the documented standard endpoint as fallback.
-    standard_endpoint = f"{BASE_URL}/api-token-auth/"
+    standard_endpoint = (
+        f"{BASE_URL}/api-token-auth/"
+    )
 
-    if standard_endpoint not in endpoints_to_try:
-        endpoints_to_try.append(standard_endpoint)
+    endpoints.append(configured_endpoint)
+
+    if standard_endpoint not in endpoints:
+        endpoints.append(standard_endpoint)
 
     last_error = None
 
-    for endpoint in endpoints_to_try:
+    for endpoint in endpoints:
 
         try:
 
@@ -436,27 +474,33 @@ def get_auth_token():
             )
 
         except requests.exceptions.Timeout:
+
             last_error = (
-                f"Connection timeout while contacting BioTime at "
-                f"{endpoint}"
+                "Connection timeout while contacting BioTime."
             )
+
             continue
 
         except requests.exceptions.ConnectionError as exc:
+
             last_error = (
-                f"Cannot connect to BioTime at {endpoint}. "
+                "Cannot connect to BioTime. "
                 f"Network error: {str(exc)}"
             )
+
             continue
 
         except requests.exceptions.RequestException as exc:
+
             last_error = (
-                f"HTTP request error while contacting BioTime: "
+                "HTTP request error: "
                 f"{str(exc)}"
             )
+
             continue
 
         data = safe_json(response)
+
 
         # ----------------------------------------------------
         # SUCCESS
@@ -470,22 +514,27 @@ def get_auth_token():
                 return token
 
             last_error = (
-                f"BioTime accepted the login request with HTTP "
-                f"{response.status_code}, but no token was found "
-                f"in the response."
+                "BioTime accepted the login request, "
+                "but no authentication token was returned."
             )
 
             continue
+
 
         # ----------------------------------------------------
         # AUTHENTICATION ERROR
         # ----------------------------------------------------
 
-        if response.status_code in (400, 401, 403):
+        if response.status_code in (
+            400,
+            401,
+            403,
+        ):
 
             detail = ""
 
             if isinstance(data, dict):
+
                 detail = (
                     data.get("detail")
                     or data.get("msg")
@@ -498,13 +547,13 @@ def get_auth_token():
                 detail = response.text[:500]
 
             last_error = (
-                f"BioTime authentication failed. "
+                "BioTime authentication failed. "
                 f"HTTP {response.status_code}. "
                 f"Server response: {detail}"
             )
 
-            # Don't keep trying another endpoint for invalid credentials.
             break
+
 
         # ----------------------------------------------------
         # NOT FOUND
@@ -513,18 +562,20 @@ def get_auth_token():
         if response.status_code == 404:
 
             last_error = (
-                f"BioTime token endpoint was not found: {endpoint}. "
-                f"HTTP 404."
+                f"BioTime token endpoint was not found: "
+                f"{endpoint}"
             )
 
             continue
 
+
         # ----------------------------------------------------
-        # OTHER SERVER ERROR
+        # OTHER ERROR
         # ----------------------------------------------------
 
         last_error = (
-            f"BioTime returned HTTP {response.status_code}. "
+            f"BioTime returned HTTP "
+            f"{response.status_code}. "
             f"Response: {response.text[:500]}"
         )
 
@@ -535,10 +586,15 @@ def get_auth_token():
 
 
 # ============================================================
-# 7. GENERIC BIOTIME GET
+# 8. GENERIC BIOTIME GET
 # ============================================================
 
-def biotime_get(endpoint, token, timeout=15, params=None):
+def biotime_get(
+    endpoint,
+    token,
+    timeout=15,
+    params=None
+):
 
     url = f"{BASE_URL}{endpoint}"
 
@@ -553,34 +609,37 @@ def biotime_get(endpoint, token, timeout=15, params=None):
         timeout=timeout,
     )
 
+
     if response.status_code == 401:
 
         raise Exception(
             "BioTime rejected the authentication token "
-            "(HTTP 401). The token may have expired or the "
-            "BioTime user may not have API access."
+            "(HTTP 401)."
         )
+
 
     if response.status_code == 403:
 
         raise Exception(
-            "BioTime denied access to the requested API "
-            f"endpoint (HTTP 403): {endpoint}"
+            "BioTime denied access to this API endpoint "
+            f"(HTTP 403): {endpoint}"
         )
+
 
     if response.status_code != 200:
 
         raise Exception(
-            f"BioTime API returned HTTP {response.status_code} "
-            f"for {endpoint}. "
+            f"BioTime API returned HTTP "
+            f"{response.status_code} for {endpoint}. "
             f"Response: {response.text[:500]}"
         )
+
 
     return safe_json(response)
 
 
 # ============================================================
-# 8. LOAD ATTENDANCE DATA
+# 9. LOAD ATTENDANCE DATA
 # ============================================================
 
 def load_attendance_data_from_api(
@@ -589,29 +648,19 @@ def load_attendance_data_from_api(
     is_today
 ):
 
-    # --------------------------------------------------------
-    # AUTHENTICATION
-    # --------------------------------------------------------
-
     token = get_auth_token()
 
-    if not token:
-        raise Exception(
-            "BioTime authentication token was not returned."
-        )
 
-    # --------------------------------------------------------
-    # 1. DEVICES
-    # --------------------------------------------------------
+    # ========================================================
+    # DEVICES
+    # ========================================================
 
     devices = []
 
-    device_errors = []
-
-    for endpoint in [
+    for endpoint in (
         "/iclock/api/terminals/",
         "/iclock/api/devices/",
-    ]:
+    ):
 
         try:
 
@@ -619,14 +668,19 @@ def load_attendance_data_from_api(
                 endpoint,
                 token,
                 timeout=10,
-                params={"page_size": 1000},
+                params={
+                    "page_size": 1000
+                },
             )
 
             if isinstance(data, dict):
 
                 devices = data.get(
                     "data",
-                    data.get("results", [])
+                    data.get(
+                        "results",
+                        []
+                    )
                 )
 
             elif isinstance(data, list):
@@ -636,11 +690,13 @@ def load_attendance_data_from_api(
             if isinstance(devices, list):
                 break
 
-        except Exception as exc:
-            device_errors.append(str(exc))
+        except Exception:
+            continue
+
 
     if not isinstance(devices, list):
         devices = []
+
 
     terminal_map = {}
 
@@ -649,96 +705,137 @@ def load_attendance_data_from_api(
         if not isinstance(device, dict):
             continue
 
-        sn = str(device.get("sn", "")).strip()
+        sn = str(
+            device.get("sn", "")
+        ).strip()
 
         if not sn:
             continue
 
-        alias = (
+        terminal_map[sn] = clean_txt(
             device.get("alias")
             or device.get("terminal_name")
             or sn
         )
 
-        terminal_map[sn] = clean_txt(alias)
 
-    # --------------------------------------------------------
-    # 2. EMPLOYEES
-    # --------------------------------------------------------
+    # ========================================================
+    # EMPLOYEES
+    # ========================================================
 
     all_employees = []
 
-    try:
+    employee_data = biotime_get(
+        "/personnel/api/employees/",
+        token,
+        timeout=15,
+        params={
+            "page_size": 1000
+        },
+    )
 
-        employee_data = biotime_get(
-            "/personnel/api/employees/",
-            token,
-            timeout=15,
-            params={"page_size": 1000},
-        )
 
-        if isinstance(employee_data, dict):
+    if isinstance(employee_data, dict):
 
-            all_employees = employee_data.get(
-                "data",
-                employee_data.get("results", [])
+        all_employees = employee_data.get(
+            "data",
+            employee_data.get(
+                "results",
+                []
             )
-
-        elif isinstance(employee_data, list):
-
-            all_employees = employee_data
-
-    except Exception as exc:
-
-        raise Exception(
-            f"Unable to load employees from BioTime: {exc}"
         )
+
+    elif isinstance(employee_data, list):
+
+        all_employees = employee_data
+
 
     if not isinstance(all_employees, list):
         all_employees = []
 
+
     active_employees = {}
+
 
     for emp in all_employees:
 
         if not isinstance(emp, dict):
             continue
 
-        raw_code = emp.get("emp_code", "")
-        cleaned_code = clean_employee_code(raw_code)
+
+        cleaned_code = clean_employee_code(
+            emp.get("emp_code", "")
+        )
+
 
         if not cleaned_code:
             continue
 
+
         is_active = str(
-            emp.get("is_active", True)
-        ).lower() in ("true", "1", "yes")
+            emp.get(
+                "is_active",
+                True
+            )
+        ).lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
 
         emp_status = str(
-            emp.get("status", "0")
+            emp.get(
+                "status",
+                "0"
+            )
         ).upper()
 
-        enable_att = str(
-            emp.get("enable_attendance", True)
-        ).lower() in ("true", "1", "yes")
 
-        if (
-            not is_active
-            or emp_status in ("1", "2", "D")
-            or not enable_att
+        enable_att = str(
+            emp.get(
+                "enable_attendance",
+                True
+            )
+        ).lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
+
+        if not is_active:
+            continue
+
+        if emp_status in (
+            "1",
+            "2",
+            "D",
         ):
+            continue
+
+        if not enable_att:
             continue
 
         if cleaned_code in EXCLUDED_MANAGEMENT_CODES:
             continue
 
+
         first_name = str(
-            emp.get("first_name", "")
+            emp.get(
+                "first_name",
+                ""
+            )
         ).strip()
 
+
         last_name = str(
-            emp.get("last_name", "")
+            emp.get(
+                "last_name",
+                ""
+            )
         ).strip()
+
 
         if first_name.lower() == "none":
             first_name = ""
@@ -746,18 +843,30 @@ def load_attendance_data_from_api(
         if last_name.lower() == "none":
             last_name = ""
 
+
         full_name = (
             f"{first_name} {last_name}"
         ).strip()
 
-        # Department
-        department_data = emp.get("department", {})
 
-        if isinstance(department_data, dict):
+        department_data = emp.get(
+            "department",
+            {}
+        )
+
+
+        if isinstance(
+            department_data,
+            dict
+        ):
 
             department_name = (
-                department_data.get("dept_name")
-                or department_data.get("name")
+                department_data.get(
+                    "dept_name"
+                )
+                or department_data.get(
+                    "name"
+                )
                 or ""
             )
 
@@ -767,33 +876,42 @@ def load_attendance_data_from_api(
                 department_data or ""
             )
 
+
         if (
             not department_name
             or department_name.lower() == "none"
         ):
+
             department_name = "غير محدد"
 
-        active_employees[cleaned_code] = {
+
+        active_employees[
+            cleaned_code
+        ] = {
+
             "name": clean_txt(
                 full_name
                 if full_name
                 else f"موظف {cleaned_code}"
             ),
-            "dept": clean_txt(department_name),
+
+            "dept": clean_txt(
+                department_name
+            ),
         }
 
-    # --------------------------------------------------------
-    # 3. LEAVES
-    # --------------------------------------------------------
+
+    # ========================================================
+    # LEAVES
+    # ========================================================
 
     leave_records = []
 
-    leave_endpoints = [
+
+    for endpoint in (
         "/att/api/leave/",
         "/iclock/api/leave/",
-    ]
-
-    for endpoint in leave_endpoints:
+    ):
 
         try:
 
@@ -801,197 +919,295 @@ def load_attendance_data_from_api(
                 endpoint,
                 token,
                 timeout=10,
-                params={"page_size": 1000},
+                params={
+                    "page_size": 1000
+                },
             )
 
-            if isinstance(leave_data, dict):
+
+            if isinstance(
+                leave_data,
+                dict
+            ):
 
                 leave_records = leave_data.get(
                     "data",
-                    leave_data.get("results", [])
+                    leave_data.get(
+                        "results",
+                        []
+                    )
                 )
 
-            elif isinstance(leave_data, list):
+            elif isinstance(
+                leave_data,
+                list
+            ):
 
                 leave_records = leave_data
 
-            if isinstance(leave_records, list):
+
+            if isinstance(
+                leave_records,
+                list
+            ):
                 break
 
+
         except Exception:
+
             continue
 
-    if not isinstance(leave_records, list):
+
+    if not isinstance(
+        leave_records,
+        list
+    ):
+
         leave_records = []
+
 
     on_leave_employees = {}
 
+
     for leave in leave_records:
 
-        if not isinstance(leave, dict):
+        if not isinstance(
+            leave,
+            dict
+        ):
             continue
 
-        raw_code = (
-            leave.get("emp_code")
-            or leave.get("employee_code")
+
+        cleaned_code = clean_employee_code(
+            leave.get(
+                "emp_code"
+            )
+            or leave.get(
+                "employee_code"
+            )
             or ""
         )
 
-        cleaned_code = clean_employee_code(raw_code)
 
         start_time = (
-            leave.get("start_time")
-            or leave.get("start_date")
-            or leave.get("start_datetime")
+            leave.get(
+                "start_time"
+            )
+            or leave.get(
+                "start_date"
+            )
+            or leave.get(
+                "start_datetime"
+            )
         )
+
 
         end_time = (
-            leave.get("end_time")
-            or leave.get("end_date")
-            or leave.get("end_datetime")
+            leave.get(
+                "end_time"
+            )
+            or leave.get(
+                "end_date"
+            )
+            or leave.get(
+                "end_datetime"
+            )
         )
 
-        if not cleaned_code or not start_time or not end_time:
+
+        if (
+            not cleaned_code
+            or not start_time
+            or not end_time
+        ):
+
             continue
+
 
         leave_name = "إجازة"
 
-        if "leave_type" in leave:
 
-            leave_type = leave["leave_type"]
+        leave_type = leave.get(
+            "leave_type"
+        )
 
-            if isinstance(leave_type, dict):
 
-                leave_name = (
-                    leave_type.get("leave_name")
-                    or leave_type.get("name")
-                    or "إجازة"
+        if isinstance(
+            leave_type,
+            dict
+        ):
+
+            leave_name = (
+                leave_type.get(
+                    "leave_name"
                 )
-
-            else:
-
-                leave_name = str(leave_type)
-
-        elif "leave_name" in leave:
-
-            leave_name = str(
-                leave.get("leave_name")
+                or leave_type.get(
+                    "name"
+                )
                 or "إجازة"
             )
 
+        elif leave_type:
+
+            leave_name = str(
+                leave_type
+            )
+
+        elif leave.get(
+            "leave_name"
+        ):
+
+            leave_name = str(
+                leave.get(
+                    "leave_name"
+                )
+            )
+
+
         try:
 
-            start_string = str(start_time)[:10]
-            end_string = str(end_time)[:10]
-
             start_date = datetime.strptime(
-                start_string,
+                str(start_time)[:10],
                 "%Y-%m-%d"
             ).date()
+
 
             end_date = datetime.strptime(
-                end_string,
+                str(end_time)[:10],
                 "%Y-%m-%d"
             ).date()
 
-            if start_date <= selected_date_obj <= end_date:
+
+            if (
+                start_date
+                <= selected_date_obj
+                <= end_date
+            ):
 
                 on_leave_employees[
                     cleaned_code
-                ] = clean_txt(leave_name)
+                ] = clean_txt(
+                    leave_name
+                )
+
 
         except Exception:
+
             continue
 
-    # --------------------------------------------------------
-    # 4. TRANSACTION LOGS
-    # --------------------------------------------------------
+
+    # ========================================================
+    # TRANSACTIONS
+    # ========================================================
 
     start_datetime = (
-        selected_date_obj.strftime("%Y-%m-%d")
+        selected_date_obj.strftime(
+            "%Y-%m-%d"
+        )
         + " 00:00:00"
     )
+
 
     end_datetime = (
         (
             selected_date_obj
             + timedelta(days=1)
-        ).strftime("%Y-%m-%d")
+        ).strftime(
+            "%Y-%m-%d"
+        )
         + " 05:00:00"
     )
 
-    raw_logs = []
 
-    try:
+    transaction_data = biotime_get(
+        "/iclock/api/transactions/",
+        token,
+        timeout=20,
+        params={
+            "start_time": start_datetime,
+            "end_time": end_datetime,
+            "page_size": 5000,
+        },
+    )
 
-        transaction_data = biotime_get(
-            "/iclock/api/transactions/",
-            token,
-            timeout=20,
-            params={
-                "start_time": start_datetime,
-                "end_time": end_datetime,
-                "page_size": 5000,
-            },
-        )
 
-        if isinstance(transaction_data, dict):
+    if isinstance(
+        transaction_data,
+        dict
+    ):
 
-            raw_logs = transaction_data.get(
-                "data",
-                transaction_data.get("results", [])
+        raw_logs = transaction_data.get(
+            "data",
+            transaction_data.get(
+                "results",
+                []
             )
-
-        elif isinstance(transaction_data, list):
-
-            raw_logs = transaction_data
-
-    except Exception as exc:
-
-        raise Exception(
-            f"Unable to load attendance transactions "
-            f"from BioTime: {exc}"
         )
 
-    if not isinstance(raw_logs, list):
+    elif isinstance(
+        transaction_data,
+        list
+    ):
+
+        raw_logs = transaction_data
+
+    else:
+
         raw_logs = []
 
-    # --------------------------------------------------------
-    # ORGANIZE EMPLOYEE PUNCHES
-    # --------------------------------------------------------
+
+    if not isinstance(
+        raw_logs,
+        list
+    ):
+
+        raw_logs = []
+
+
+    # ========================================================
+    # ORGANISE PUNCHES
+    # ========================================================
 
     emp_punches = {}
 
+
     for log in raw_logs:
 
-        if not isinstance(log, dict):
+        if not isinstance(
+            log,
+            dict
+        ):
             continue
 
-        raw_code = log.get(
-            "emp_code",
-            ""
+
+        cleaned_code = clean_employee_code(
+            log.get(
+                "emp_code",
+                ""
+            )
         )
 
-        cleaned_code = clean_employee_code(raw_code)
 
         if cleaned_code not in active_employees:
             continue
 
-        punch_time_raw = log.get("punch_time")
+
+        punch_time_raw = log.get(
+            "punch_time"
+        )
+
 
         if not punch_time_raw:
             continue
 
+
         try:
 
-            punch_string = str(
-                punch_time_raw
-            )[:19]
-
             punch_time = datetime.strptime(
-                punch_string,
+                str(punch_time_raw)[:19],
                 "%Y-%m-%d %H:%M:%S"
             )
+
 
             device_sn = str(
                 log.get(
@@ -1000,14 +1216,21 @@ def load_attendance_data_from_api(
                 )
             )
 
+
             device_name = (
-                log.get("terminal_alias")
-                or log.get("terminal_name")
+                log.get(
+                    "terminal_alias"
+                )
+                or log.get(
+                    "terminal_name"
+                )
                 or terminal_map.get(
                     device_sn,
-                    device_sn or "جهاز رئيسي"
+                    device_sn
+                    or "جهاز رئيسي"
                 )
             )
+
 
             emp_punches.setdefault(
                 cleaned_code,
@@ -1015,16 +1238,21 @@ def load_attendance_data_from_api(
             ).append(
                 (
                     punch_time,
-                    clean_txt(device_name)
+                    clean_txt(
+                        device_name
+                    )
                 )
             )
 
+
         except Exception:
+
             continue
 
-    # --------------------------------------------------------
-    # OUTPUT COLLECTIONS
-    # --------------------------------------------------------
+
+    # ========================================================
+    # RESULT LISTS
+    # ========================================================
 
     present_staff = []
     late_staff = []
@@ -1033,22 +1261,29 @@ def load_attendance_data_from_api(
     leave_staff = []
     excel_rows = []
 
-    # --------------------------------------------------------
-    # PROCESS EACH ACTIVE EMPLOYEE
-    # --------------------------------------------------------
 
-    for code, employee_data in active_employees.items():
+    # ========================================================
+    # PROCESS EMPLOYEES
+    # ========================================================
 
-        name = employee_data["name"]
-        department = employee_data["dept"]
+    for code, employee in active_employees.items():
+
+        name = employee["name"]
+        department = employee["dept"]
+
 
         punches = sorted(
-            emp_punches.get(code, []),
-            key=lambda item: item[0]
+            emp_punches.get(
+                code,
+                []
+            ),
+            key=lambda x: x[0]
         )
 
-        # Remove duplicate punches within 60 seconds.
+
+        # Remove duplicate punches
         filtered_punches = []
+
 
         for punch_time, device_name in punches:
 
@@ -1069,25 +1304,34 @@ def load_attendance_data_from_api(
                     )
                 )
 
-        # Only punches after 05:00 on the selected date.
+
+        # Only punches from 05:00 onward
         day_punches = [
-            (punch, device)
+            (
+                punch,
+                device
+            )
             for punch, device in filtered_punches
             if (
-                punch.date() == selected_date_obj
+                punch.date()
+                == selected_date_obj
                 and punch.hour >= 5
             )
         ]
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # NO PUNCH
-        # ----------------------------------------------------
+        # ====================================================
 
         if not day_punches:
 
             if code in on_leave_employees:
 
-                leave_reason = on_leave_employees[code]
+                leave_reason = (
+                    on_leave_employees[code]
+                )
+
 
                 leave_staff.append(
                     (
@@ -1098,6 +1342,7 @@ def load_attendance_data_from_api(
                     )
                 )
 
+
                 excel_rows.append({
                     "Employee ID": code,
                     "First Name": name,
@@ -1106,8 +1351,12 @@ def load_attendance_data_from_api(
                     "Clock In": "",
                     "Clock Out": "",
                     "Total WT": "",
-                    "Status": f"Leave - {leave_reason}",
+                    "Status": (
+                        f"Leave - "
+                        f"{leave_reason}"
+                    ),
                 })
+
 
             else:
 
@@ -1118,6 +1367,7 @@ def load_attendance_data_from_api(
                         department
                     )
                 )
+
 
                 excel_rows.append({
                     "Employee ID": code,
@@ -1130,13 +1380,18 @@ def load_attendance_data_from_api(
                     "Status": "Absence(A)",
                 })
 
+
             continue
 
-        # ----------------------------------------------------
-        # FIRST PUNCH
-        # ----------------------------------------------------
 
-        first_punch, first_device = day_punches[0]
+        # ====================================================
+        # FIRST PUNCH
+        # ====================================================
+
+        first_punch, first_device = (
+            day_punches[0]
+        )
+
 
         is_late = (
             first_punch.hour > 9
@@ -1146,38 +1401,50 @@ def load_attendance_data_from_api(
             )
         )
 
-        # ----------------------------------------------------
-        # NEXT MORNING PUNCHES
-        # ----------------------------------------------------
+
+        # ====================================================
+        # NEXT MORNING
+        # ====================================================
 
         next_morning = [
-            (punch, device)
+            (
+                punch,
+                device
+            )
             for punch, device in filtered_punches
             if (
                 punch.date()
-                == selected_date_obj + timedelta(days=1)
+                == selected_date_obj
+                + timedelta(days=1)
                 and punch.hour < 5
             )
         ]
 
-        # ----------------------------------------------------
-        # DETERMINE PUNCH COUNT
-        # ----------------------------------------------------
 
-        punch_count = len(day_punches)
+        # ====================================================
+        # PUNCH COUNT
+        # ====================================================
+
+        punch_count = len(
+            day_punches
+        )
+
 
         if (
             len(day_punches) % 2 != 0
             and next_morning
         ):
+
             punch_count = 2
 
-        # ----------------------------------------------------
-        # DETERMINE LAST PUNCH
-        # ----------------------------------------------------
+
+        # ====================================================
+        # LAST PUNCH
+        # ====================================================
 
         last_punch = None
         last_device = first_device
+
 
         if punch_count % 2 == 0:
 
@@ -1196,50 +1463,61 @@ def load_attendance_data_from_api(
                     day_punches[-1]
                 )
 
-        elif not is_today and len(day_punches) > 1:
+
+        elif (
+            not is_today
+            and len(day_punches) > 1
+        ):
 
             last_punch, last_device = (
                 day_punches[-1]
             )
 
-        # ----------------------------------------------------
-        # TOTAL WORK TIME
-        # ----------------------------------------------------
+
+        # ====================================================
+        # WORK TIME
+        # ====================================================
 
         total_work_time = ""
 
-        if last_punch and first_punch:
 
-            difference = (
-                last_punch - first_punch
+        if (
+            first_punch
+            and last_punch
+        ):
+
+            seconds = int(
+                (
+                    last_punch
+                    - first_punch
+                ).total_seconds()
             )
 
-            total_seconds = int(
-                difference.total_seconds()
-            )
 
-            if total_seconds >= 0:
+            if seconds >= 0:
 
                 hours, remainder = divmod(
-                    total_seconds,
+                    seconds,
                     3600
                 )
 
-                minutes = remainder // 60
-
-                total_work_time = (
-                    f"{hours:02d}:{minutes:02d}"
+                minutes = (
+                    remainder // 60
                 )
 
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
+
+                total_work_time = (
+                    f"{hours:02d}:"
+                    f"{minutes:02d}"
+                )
+
 
         status_string = (
             "Late(LT)"
             if is_late
             else "Present(P)"
         )
+
 
         if is_late:
 
@@ -1248,10 +1526,13 @@ def load_attendance_data_from_api(
                     code,
                     name,
                     department,
-                    first_punch.strftime("%I:%M %p"),
+                    first_punch.strftime(
+                        "%I:%M %p"
+                    ),
                     first_device,
                 )
             )
+
 
         # ====================================================
         # TODAY
@@ -1259,7 +1540,7 @@ def load_attendance_data_from_api(
 
         if is_today:
 
-            # Odd number of punches = currently inside.
+            # Currently inside
             if punch_count % 2 != 0:
 
                 present_staff.append(
@@ -1267,23 +1548,29 @@ def load_attendance_data_from_api(
                         code,
                         name,
                         department,
-                        first_punch.strftime("%I:%M %p"),
+                        first_punch.strftime(
+                            "%I:%M %p"
+                        ),
                         first_device,
                     )
                 )
+
 
                 excel_rows.append({
                     "Employee ID": code,
                     "First Name": name,
                     "Department": department,
                     "Date": selected_date_str,
-                    "Clock In": first_punch.strftime("%H:%M"),
+                    "Clock In": first_punch.strftime(
+                        "%H:%M"
+                    ),
                     "Clock Out": "",
                     "Total WT": "",
                     "Status": status_string,
                 })
 
-            # Even number of punches = checked out.
+
+            # Checked out
             else:
 
                 if (
@@ -1291,36 +1578,45 @@ def load_attendance_data_from_api(
                     and next_morning
                 ):
 
-                    last_real_punch, last_real_device = (
+                    real_last_punch, real_last_device = (
                         next_morning[-1]
                     )
 
                 else:
 
-                    last_real_punch, last_real_device = (
+                    real_last_punch, real_last_device = (
                         day_punches[-1]
                     )
+
 
                 checkout_staff.append(
                     (
                         code,
                         name,
                         department,
-                        last_real_punch.strftime("%I:%M %p"),
-                        last_real_device,
+                        real_last_punch.strftime(
+                            "%I:%M %p"
+                        ),
+                        real_last_device,
                     )
                 )
+
 
                 excel_rows.append({
                     "Employee ID": code,
                     "First Name": name,
                     "Department": department,
                     "Date": selected_date_str,
-                    "Clock In": first_punch.strftime("%H:%M"),
-                    "Clock Out": last_real_punch.strftime("%H:%M"),
+                    "Clock In": first_punch.strftime(
+                        "%H:%M"
+                    ),
+                    "Clock Out": real_last_punch.strftime(
+                        "%H:%M"
+                    ),
                     "Total WT": total_work_time,
                     "Status": status_string,
                 })
+
 
         # ====================================================
         # HISTORICAL DATE
@@ -1335,7 +1631,9 @@ def load_attendance_data_from_api(
                         code,
                         name,
                         department,
-                        last_punch.strftime("%I:%M %p"),
+                        last_punch.strftime(
+                            "%I:%M %p"
+                        ),
                         last_device,
                     )
                 )
@@ -1347,19 +1645,26 @@ def load_attendance_data_from_api(
                         code,
                         name,
                         department,
-                        first_punch.strftime("%I:%M %p"),
+                        first_punch.strftime(
+                            "%I:%M %p"
+                        ),
                         first_device,
                     )
                 )
+
 
             excel_rows.append({
                 "Employee ID": code,
                 "First Name": name,
                 "Department": department,
                 "Date": selected_date_str,
-                "Clock In": first_punch.strftime("%H:%M"),
+                "Clock In": first_punch.strftime(
+                    "%H:%M"
+                ),
                 "Clock Out": (
-                    last_punch.strftime("%H:%M")
+                    last_punch.strftime(
+                        "%H:%M"
+                    )
                     if last_punch
                     else ""
                 ),
@@ -1367,23 +1672,47 @@ def load_attendance_data_from_api(
                 "Status": status_string,
             })
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # SORT
-    # --------------------------------------------------------
+    # ========================================================
 
     def sort_key(item):
+
         code = str(item[0])
 
         if code.isdigit():
-            return (0, int(code))
+            return (
+                0,
+                int(code)
+            )
 
-        return (1, code.lower())
+        return (
+            1,
+            code.lower()
+        )
 
-    absent_staff.sort(key=sort_key)
-    present_staff.sort(key=sort_key)
-    late_staff.sort(key=sort_key)
-    leave_staff.sort(key=sort_key)
-    checkout_staff.sort(key=sort_key)
+
+    absent_staff.sort(
+        key=sort_key
+    )
+
+    present_staff.sort(
+        key=sort_key
+    )
+
+    late_staff.sort(
+        key=sort_key
+    )
+
+    leave_staff.sort(
+        key=sort_key
+    )
+
+    checkout_staff.sort(
+        key=sort_key
+    )
+
 
     return (
         active_employees,
@@ -1398,19 +1727,24 @@ def load_attendance_data_from_api(
 
 
 # ============================================================
-# 9. CURRENT TIME
+# 10. DATE / TIME
 # ============================================================
 
-now_syria = datetime.now(SYRIA_TZ)
+now_syria = datetime.now(
+    SYRIA_TZ
+)
 
-today_str = now_syria.strftime("%Y-%m-%d")
+today_str = now_syria.strftime(
+    "%Y-%m-%d"
+)
 
 
 # ============================================================
-# 10. HEADER IMAGE
+# 11. DISH / STATUS IMAGE
 # ============================================================
 
 dish_img_tag = ""
+
 
 try:
 
@@ -1419,9 +1753,12 @@ try:
         "rb"
     ) as image_file:
 
-        encoded_string = base64.b64encode(
-            image_file.read()
-        ).decode()
+        encoded_string = (
+            base64.b64encode(
+                image_file.read()
+            ).decode()
+        )
+
 
         dish_img_tag = (
             '<img '
@@ -1429,34 +1766,45 @@ try:
             'class="animated-dish" />'
         )
 
+
 except Exception:
 
-    dish_img_tag = (
-        '<div '
-        'class="animated-dish" '
-        'style="font-size: 24px;">'
-        '📡'
-        '</div>'
-    )
+    dish_img_tag = """
+        <div
+            class="animated-dish"
+            style="font-size: 24px;"
+        >
+            📡
+        </div>
+    """
 
 
 # ============================================================
-# 11. DATE + REFRESH
+# 12. DATE + REFRESH
 # ============================================================
 
-column_date, column_refresh = strlit.columns(2)
+column_date, column_refresh = (
+    strlit.columns(2)
+)
+
 
 with column_date:
 
-    selected_date_obj_input = strlit.date_input(
-        "",
-        value=now_syria.date(),
-        label_visibility="collapsed",
+    selected_date_obj_input = (
+        strlit.date_input(
+            "",
+            value=now_syria.date(),
+            label_visibility="collapsed",
+        )
     )
 
+
     selected_date_str = (
-        selected_date_obj_input.strftime("%Y-%m-%d")
+        selected_date_obj_input.strftime(
+            "%Y-%m-%d"
+        )
     )
+
 
 with column_refresh:
 
@@ -1466,20 +1814,24 @@ with column_refresh:
     ):
 
         strlit.cache_data.clear()
+
         strlit.rerun()
 
 
 is_today = (
-    selected_date_str == today_str
+    selected_date_str
+    == today_str
 )
 
 
 # ============================================================
-# 12. RESET VIEW WHEN DATE CHANGES
+# 13. RESET VIEW WHEN DATE CHANGES
 # ============================================================
 
 if (
-    strlit.session_state["last_selected_date"]
+    strlit.session_state[
+        "last_selected_date"
+    ]
     is None
 ):
 
@@ -1489,13 +1841,16 @@ if (
 
 
 if (
-    strlit.session_state["last_selected_date"]
+    strlit.session_state[
+        "last_selected_date"
+    ]
     != selected_date_str
 ):
 
     strlit.session_state[
         "last_selected_date"
     ] = selected_date_str
+
 
     strlit.session_state[
         "selected_view"
@@ -1507,7 +1862,7 @@ if (
 
 
 # ============================================================
-# 13. ONLINE / ARCHIVE STATUS
+# 14. ONLINE / HISTORICAL STATUS
 # ============================================================
 
 if is_today:
@@ -1533,6 +1888,7 @@ if is_today:
         unsafe_allow_html=True,
     )
 
+
 else:
 
     strlit.markdown(
@@ -1556,7 +1912,8 @@ else:
                         font-size: 14px;
                     "
                 >
-                    أرشيف تاريخي ({selected_date_str})
+                    أرشيف تاريخي
+                    ({selected_date_str})
                 </span>
 
             </div>
@@ -1568,7 +1925,7 @@ else:
 
 
 # ============================================================
-# 14. LOAD DATA
+# 15. MAIN APPLICATION
 # ============================================================
 
 try:
@@ -1588,11 +1945,10 @@ try:
         is_today,
     )
 
-    # ========================================================
-    # 15. EXCEL REPORT
-    # ========================================================
 
-    df_excel = pd.DataFrame(excel_rows)
+    # ========================================================
+    # EXCEL REPORT
+    # ========================================================
 
     output = io.BytesIO()
 
@@ -1601,6 +1957,7 @@ try:
     worksheet = workbook.active
 
     worksheet.title = "Attendance Report"
+
 
     thin_border = Border(
         left=Side(
@@ -1621,6 +1978,7 @@ try:
         ),
     )
 
+
     headers = [
         "Employee ID",
         "First Name",
@@ -1632,9 +1990,16 @@ try:
         "Status",
     ]
 
-    worksheet.append(headers)
 
-    worksheet.row_dimensions[1].height = 24
+    worksheet.append(
+        headers
+    )
+
+
+    worksheet.row_dimensions[
+        1
+    ].height = 24
+
 
     for column_index in range(
         1,
@@ -1646,6 +2011,7 @@ try:
             column=column_index
         )
 
+
         cell.font = Font(
             name="Calibri",
             size=11,
@@ -1653,27 +2019,27 @@ try:
             color="FFFFFF",
         )
 
+
         cell.fill = PatternFill(
             start_color="1F4E78",
             end_color="1F4E78",
             fill_type="solid",
         )
 
+
         cell.alignment = Alignment(
             horizontal="center",
             vertical="center",
         )
 
+
         cell.border = thin_border
+
 
     for row_index, row_data in enumerate(
         excel_rows,
         2
     ):
-
-        worksheet.row_dimensions[
-            row_index
-        ].height = 20
 
         worksheet.append([
             row_data["Employee ID"],
@@ -1686,16 +2052,18 @@ try:
             row_data["Status"],
         ])
 
+
         status_value = str(
             row_data["Status"]
         )
 
+
         row_fill = None
         row_font_color = "000000"
 
+
         if (
             "Leave" in status_value
-            or status_value == "L"
         ):
 
             row_fill = PatternFill(
@@ -1706,9 +2074,9 @@ try:
 
             row_font_color = "002060"
 
+
         elif (
             "Absence" in status_value
-            or status_value == "A"
         ):
 
             row_fill = PatternFill(
@@ -1719,12 +2087,17 @@ try:
 
             row_font_color = "9C0006"
 
-        for column_index in range(1, 9):
+
+        for column_index in range(
+            1,
+            9
+        ):
 
             cell = worksheet.cell(
                 row=row_index,
                 column=column_index
             )
+
 
             if row_fill:
 
@@ -1741,8 +2114,9 @@ try:
 
                 cell.font = Font(
                     name="Calibri",
-                    size=11
+                    size=11,
                 )
+
 
             # Status column
             if (
@@ -1768,6 +2142,7 @@ try:
                         fill_type="solid",
                     )
 
+
                 elif (
                     "Present" in status_value
                     or "P" in status_value
@@ -1786,15 +2161,18 @@ try:
                         fill_type="solid",
                     )
 
+
             cell.alignment = Alignment(
                 horizontal="center",
                 vertical="center",
             )
 
+
             cell.border = thin_border
 
+
     # ========================================================
-    # AUTO WIDTH
+    # EXCEL COLUMN WIDTH
     # ========================================================
 
     for column in worksheet.columns:
@@ -1805,6 +2183,7 @@ try:
             column[0].column
         )
 
+
         for cell in column:
 
             if cell.value is not None:
@@ -1814,6 +2193,7 @@ try:
                     len(str(cell.value))
                 )
 
+
         worksheet.column_dimensions[
             column_letter
         ].width = max(
@@ -1821,9 +2201,14 @@ try:
             14
         )
 
-    workbook.save(output)
+
+    workbook.save(
+        output
+    )
+
 
     excel_data = output.getvalue()
+
 
     strlit.download_button(
         label="📥 تحميل تقرير Excel",
@@ -1839,8 +2224,9 @@ try:
         use_container_width=True,
     )
 
+
     # ========================================================
-    # 16. VIEW BUTTONS
+    # 16. NAVIGATION BUTTONS
     # ========================================================
 
     if is_today:
@@ -1855,7 +2241,11 @@ try:
                 "selected_view"
             ] = "all"
 
-        column_present, column_late = strlit.columns(2)
+
+        column_present, column_late = (
+            strlit.columns(2)
+        )
+
 
         with column_present:
 
@@ -1869,6 +2259,7 @@ try:
                     "selected_view"
                 ] = "present"
 
+
         with column_late:
 
             if strlit.button(
@@ -1881,7 +2272,11 @@ try:
                     "selected_view"
                 ] = "late"
 
-        column_checkout, column_absent = strlit.columns(2)
+
+        column_checkout, column_absent = (
+            strlit.columns(2)
+        )
+
 
         with column_checkout:
 
@@ -1895,6 +2290,7 @@ try:
                     "selected_view"
                 ] = "checkout"
 
+
         with column_absent:
 
             if strlit.button(
@@ -1907,7 +2303,11 @@ try:
                     "selected_view"
                 ] = "absent"
 
-        column_leave, column_dummy = strlit.columns(2)
+
+        column_leave, _ = (
+            strlit.columns(2)
+        )
+
 
         with column_leave:
 
@@ -1920,6 +2320,7 @@ try:
                 strlit.session_state[
                     "selected_view"
                 ] = "leave"
+
 
     # ========================================================
     # 17. DEVICES
@@ -1934,53 +2335,73 @@ try:
 
             device_rows = []
 
+
             for device in devices:
 
-                if not isinstance(device, dict):
+                if not isinstance(
+                    device,
+                    dict
+                ):
                     continue
 
+
                 device_name = (
-                    device.get("alias")
-                    or device.get("terminal_name")
-                    or device.get("sn")
+                    device.get(
+                        "alias"
+                    )
+                    or device.get(
+                        "terminal_name"
+                    )
+                    or device.get(
+                        "sn"
+                    )
                     or "جهاز غير محدد"
                 )
+
 
                 device_sn = device.get(
                     "sn",
                     "N/A"
                 )
 
+
                 device_ip = device.get(
                     "ip_address",
                     "غير متوفر"
                 )
 
+
                 last_activity = device.get(
                     "last_activity"
                 )
 
+
                 status_badge = (
-                    "<span class='badge-absent'>"
-                    "غير متصل 🔴"
-                    "</span>"
+                    '<span class="badge-absent">'
+                    'غير متصل 🔴'
+                    '</span>'
                 )
+
 
                 if last_activity:
 
                     try:
 
-                        last_activity_dt = datetime.strptime(
-                            str(last_activity)[:19],
-                            "%Y-%m-%d %H:%M:%S"
+                        last_activity_dt = (
+                            datetime.strptime(
+                                str(
+                                    last_activity
+                                )[:19],
+                                "%Y-%m-%d %H:%M:%S"
+                            )
                         )
 
-                        now_naive = datetime.now()
 
                         seconds_since_activity = (
-                            now_naive
+                            datetime.now()
                             - last_activity_dt
                         ).total_seconds()
+
 
                         if (
                             seconds_since_activity
@@ -1988,14 +2409,17 @@ try:
                         ):
 
                             status_badge = (
-                                "<span "
-                                "class='badge-present'>"
-                                "متصل 🟢"
-                                "</span>"
+                                '<span '
+                                'class="badge-present">'
+                                'متصل 🟢'
+                                '</span>'
                             )
 
+
                     except Exception:
+
                         pass
+
 
                 device_rows.append(
                     "<tr>"
@@ -2006,6 +2430,7 @@ try:
                     "</tr>"
                 )
 
+
             if device_rows:
 
                 strlit.markdown(
@@ -2013,6 +2438,7 @@ try:
                     <table
                         class="responsive-grid-table"
                     >
+
                         <tr>
                             <th>اسم الجهاز</th>
                             <th>الرقم التسلسلي (SN)</th>
@@ -2027,11 +2453,13 @@ try:
                     unsafe_allow_html=True,
                 )
 
+
         else:
 
             strlit.info(
                 "لم يتم العثور على أجهزة BioTime."
             )
+
 
     # ========================================================
     # 18. SEARCH
@@ -2045,19 +2473,28 @@ try:
         label_visibility="collapsed",
     ).strip().lower()
 
-    def matches_search(code, name):
+
+    def matches_search(
+        code,
+        name
+    ):
 
         if not search_query:
             return True
 
         return (
-            search_query in str(code).lower()
-            or search_query in str(name).lower()
+            search_query
+            in str(code).lower()
+            or
+            search_query
+            in str(name).lower()
         )
+
 
     view = strlit.session_state[
         "selected_view"
     ]
+
 
     # ========================================================
     # 19. ALL EMPLOYEES
@@ -2067,21 +2504,23 @@ try:
 
         rows = []
 
-        for code, employee_data in (
+
+        for code, employee in (
             active_employees.items()
         ):
 
             if not matches_search(
                 code,
-                employee_data["name"]
+                employee["name"]
             ):
                 continue
+
 
             rows.append(
                 "<tr>"
                 f"<td>{code}</td>"
-                f"<td>{employee_data['name']}</td>"
-                f"<td>{employee_data['dept']}</td>"
+                f"<td>{employee['name']}</td>"
+                f"<td>{employee['dept']}</td>"
                 "<td>"
                 "<span class='badge-present'>"
                 "نشط"
@@ -2090,11 +2529,13 @@ try:
                 "</tr>"
             )
 
+
         strlit.markdown(
             f"""
             <table
                 class="responsive-grid-table"
             >
+
                 <tr>
                     <th
                         colspan="4"
@@ -2124,6 +2565,7 @@ try:
             unsafe_allow_html=True,
         )
 
+
     # ========================================================
     # 20. PRESENT
     # ========================================================
@@ -2134,13 +2576,21 @@ try:
 
             rows = []
 
-            for code, name, department, time, device in present_staff:
+
+            for (
+                code,
+                name,
+                department,
+                time,
+                device
+            ) in present_staff:
 
                 if not matches_search(
                     code,
                     name
                 ):
                     continue
+
 
                 rows.append(
                     "<tr>"
@@ -2152,11 +2602,13 @@ try:
                     "</tr>"
                 )
 
+
             strlit.markdown(
                 f"""
                 <table
                     class="responsive-grid-table"
                 >
+
                     <tr>
                         <th
                             colspan="5"
@@ -2187,11 +2639,13 @@ try:
                 unsafe_allow_html=True,
             )
 
+
         else:
 
             strlit.info(
                 "لا يوجد موظفون متواجدون حالياً."
             )
+
 
     # ========================================================
     # 21. LATE
@@ -2203,13 +2657,21 @@ try:
 
             rows = []
 
-            for code, name, department, time, device in late_staff:
+
+            for (
+                code,
+                name,
+                department,
+                time,
+                device
+            ) in late_staff:
 
                 if not matches_search(
                     code,
                     name
                 ):
                     continue
+
 
                 rows.append(
                     "<tr>"
@@ -2226,11 +2688,13 @@ try:
                     "</tr>"
                 )
 
+
             strlit.markdown(
                 f"""
                 <table
                     class="responsive-grid-table"
                 >
+
                     <tr>
                         <th
                             colspan="6"
@@ -2262,11 +2726,13 @@ try:
                 unsafe_allow_html=True,
             )
 
+
         else:
 
             strlit.info(
                 "لا يوجد موظفون متأخرون."
             )
+
 
     # ========================================================
     # 22. CHECKOUT
@@ -2278,13 +2744,21 @@ try:
 
             rows = []
 
-            for code, name, department, time, device in checkout_staff:
+
+            for (
+                code,
+                name,
+                department,
+                time,
+                device
+            ) in checkout_staff:
 
                 if not matches_search(
                     code,
                     name
                 ):
                     continue
+
 
                 rows.append(
                     "<tr>"
@@ -2296,11 +2770,13 @@ try:
                     "</tr>"
                 )
 
+
             strlit.markdown(
                 f"""
                 <table
                     class="responsive-grid-table"
                 >
+
                     <tr>
                         <th
                             colspan="5"
@@ -2331,11 +2807,13 @@ try:
                 unsafe_allow_html=True,
             )
 
+
         else:
 
             strlit.info(
                 "لا يوجد موظفون منصرفون."
             )
+
 
     # ========================================================
     # 23. LEAVE
@@ -2347,13 +2825,20 @@ try:
 
             rows = []
 
-            for code, name, department, reason in leave_staff:
+
+            for (
+                code,
+                name,
+                department,
+                reason
+            ) in leave_staff:
 
                 if not matches_search(
                     code,
                     name
                 ):
                     continue
+
 
                 rows.append(
                     "<tr>"
@@ -2368,11 +2853,13 @@ try:
                     "</tr>"
                 )
 
+
             strlit.markdown(
                 f"""
                 <table
                     class="responsive-grid-table"
                 >
+
                     <tr>
                         <th
                             colspan="4"
@@ -2402,11 +2889,13 @@ try:
                 unsafe_allow_html=True,
             )
 
+
         else:
 
             strlit.info(
                 "لا يوجد موظفون في إجازة."
             )
+
 
     # ========================================================
     # 24. ABSENT
@@ -2418,13 +2907,19 @@ try:
 
             rows = []
 
-            for code, name, department in absent_staff:
+
+            for (
+                code,
+                name,
+                department
+            ) in absent_staff:
 
                 if not matches_search(
                     code,
                     name
                 ):
                     continue
+
 
                 rows.append(
                     "<tr>"
@@ -2439,11 +2934,13 @@ try:
                     "</tr>"
                 )
 
+
             strlit.markdown(
                 f"""
                 <table
                     class="responsive-grid-table"
                 >
+
                     <tr>
                         <th
                             colspan="4"
@@ -2473,6 +2970,7 @@ try:
                 unsafe_allow_html=True,
             )
 
+
         else:
 
             strlit.info(
@@ -2486,7 +2984,10 @@ try:
 
 except Exception as error:
 
-    error_message = str(error)
+    error_message = clean_txt(
+        str(error)
+    )
+
 
     strlit.markdown(
         f"""
@@ -2498,13 +2999,13 @@ except Exception as error:
 
             <br><br>
 
-            {clean_txt(error_message)}
+            {error_message}
 
             <br><br>
 
             <small>
-                The password and authentication token are
-                intentionally not displayed.
+                Authentication passwords and tokens
+                are never displayed.
             </small>
 
         </div>
