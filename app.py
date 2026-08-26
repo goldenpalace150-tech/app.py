@@ -765,157 +765,437 @@ try:
         key="monthly_attendance_template",
     )
 
-    def normalize_name(value):
-        value = clean_txt(value).lower()
-        value = unicodedata.normalize("NFKD", value)
-        value = "".join(ch for ch in value if not unicodedata.combining(ch))
-        value = re.sub(r"[إأآا]", "ا", value)
-        value = value.replace("ى", "ي").replace("ة", "ه").replace("ؤ", "و").replace("ئ", "ي")
-        value = re.sub(r"[^a-z0-9\u0621-\u064a\s]", " ", value)
-        return " ".join(value.split())
+    def normalize_excel_name(value):
+      value = clean_txt(value).lower()
+      value = unicodedata.normalize("NFKD", value)
+      value = "".join(
+          ch for ch in value if not unicodedata.combining(ch)
+      )
+      value = re.sub(r"[إأآا]", "ا", value)
+      value = value.replace("ى", "ي").replace("ة", "ه")
+      value = value.replace("ؤ", "و").replace("ئ", "ي")
+      value = re.sub(r"[^a-zA-Z0-9\u0621-\u064A\s]", " ", value)
+      return " ".join(value.split())
 
     def name_score(template_name, api_name):
-        a, b = normalize_name(template_name), normalize_name(api_name)
-        if not a or not b:
-            return 0
-        if a == b:
-            return 100
-        a_tokens, b_tokens = set(a.split()), set(b.split())
-        overlap = len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens), 1)
-        sequence = difflib.SequenceMatcher(None, a, b).ratio()
-        token_similarity = difflib.SequenceMatcher(
-            None, " ".join(sorted(a_tokens)), " ".join(sorted(b_tokens))
-        ).ratio()
-        # Handles missing middle names, nicknames, extra words and small spelling differences.
-        return round(100 * max(sequence, token_similarity, overlap))
+      a = normalize_excel_name(template_name)
+      b = normalize_excel_name(api_name)
+      if not a or not b:
+        return 0
+      if a == b:
+        return 100
+
+      a_tokens = set(a.split())
+      b_tokens = set(b.split())
+      token_overlap = len(a_tokens & b_tokens) / max(
+          len(a_tokens), len(b_tokens), 1
+      )
+      sequence_score = difflib.SequenceMatcher(None, a, b).ratio()
+      sorted_token_score = difflib.SequenceMatcher(
+          None,
+          " ".join(sorted(a_tokens)),
+          " ".join(sorted(b_tokens)),
+      ).ratio()
+
+      return round(
+          max(
+              token_overlap,
+              sequence_score,
+              sorted_token_score,
+          ) * 100
+      )
 
     def detect_month_sheet(workbook):
-        preferred = [
-            s for s in workbook.sheetnames
-            if any(k in s for k in ["دوام", "ساعات", "حضور", "August", "اغسطس", "أغسطس"])
-        ]
-        return workbook[preferred[0] if preferred else workbook.sheetnames[0]]
+      preferred = [
+          sheet_name
+          for sheet_name in workbook.sheetnames
+          if any(
+              key in sheet_name
+              for key in [
+                  "مجموع ساعات الدوام",
+                  "دوام",
+                  "ساعات",
+                  "حضور",
+                  "August",
+                  "اغسطس",
+                  "أغسطس",
+              ]
+          )
+      ]
+      return workbook[
+          preferred[0] if preferred else workbook.sheetnames[0]
+      ]
 
-    def detect_employee_rows_and_dates(ws):
-        date_columns = {}
-        for row in ws.iter_rows():
-            for cell in row:
-                value = cell.value
-                parsed = None
-                if isinstance(value, datetime):
-                    parsed = value.date()
-                elif hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-                    parsed = value
-                elif isinstance(value, str):
-                    raw = value.strip()
-                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"):
-                        try:
-                            parsed = datetime.strptime(raw, fmt).date()
-                            break
-                        except Exception:
-                            pass
-                if parsed:
-                    date_columns[cell.column] = parsed
-        return date_columns
+    def detect_date_columns(ws):
+      """The attendance template has its dates in row 1."""
+      date_columns = {}
+
+      for column in range(1, ws.max_column + 1):
+        value = ws.cell(row=1, column=column).value
+        parsed = None
+
+        if isinstance(value, datetime):
+          parsed = value.date()
+        elif hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+          parsed = value
+        elif isinstance(value, str):
+          raw = value.strip()
+          for fmt in (
+              "%Y-%m-%d",
+              "%d/%m/%Y",
+              "%d-%m-%Y",
+              "%d/%m/%y",
+              "%d-%m-%y",
+          ):
+            try:
+              parsed = datetime.strptime(raw, fmt).date()
+              break
+            except ValueError:
+              continue
+
+        if parsed:
+          date_columns[column] = parsed
+
+      return date_columns
+
+    def time_to_excel_value(value):
+      """Convert HH:MM to a real Excel time fraction."""
+      if value is None or str(value).strip() == "":
+        return None
+
+      raw = str(value).strip()
+      parts = raw.split(":")
+      if len(parts) < 2:
+        return None
+
+      try:
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        seconds = int(parts[2]) if len(parts) > 2 else 0
+        return (hours * 3600 + minutes * 60 + seconds) / 86400
+      except (TypeError, ValueError):
+        return None
+
+    @strlit.cache_data(ttl=300, show_spinner=False)
+    def fetch_month_date(attendance_date):
+      date_str = attendance_date.strftime("%Y-%m-%d")
+      is_date_today = attendance_date == now_syria.date()
+      return load_attendance_data_from_api(
+          date_str,
+          attendance_date,
+          is_date_today,
+      )
 
     if uploaded_template is not None:
-        try:
-            keep_vba = uploaded_template.name.lower().endswith(".xlsm")
-            template_wb = openpyxl.load_workbook(uploaded_template, keep_vba=keep_vba)
-            ws_target = detect_month_sheet(template_wb)
+      try:
+        keep_vba = uploaded_template.name.lower().endswith(".xlsm")
+        template_wb = openpyxl.load_workbook(
+            uploaded_template,
+            keep_vba=keep_vba,
+        )
+        ws_target = detect_month_sheet(template_wb)
 
-            date_columns = detect_employee_rows_and_dates(ws_target)
-            api_employees = [
+        date_columns = detect_date_columns(ws_target)
+        if not date_columns:
+          strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
+          raise RuntimeError("No monthly date columns detected")
+
+        sorted_dates = sorted(set(date_columns.values()))
+        dates_to_fetch = [
+            attendance_date
+            for attendance_date in sorted_dates
+            if attendance_date <= now_syria.date()
+        ]
+
+        # The uploaded template is ID in column A and employee name in column B.
+        excel_employees = []
+        for row in range(2, ws_target.max_row + 1):
+          employee_id = ws_target.cell(row=row, column=1).value
+          employee_name = ws_target.cell(row=row, column=2).value
+
+          if employee_id is None and employee_name is None:
+            continue
+
+          excel_employees.append(
+              {
+                  "row": row,
+                  "id": str(employee_id).strip() if employee_id is not None else "",
+                  "name": clean_txt(employee_name),
+              }
+          )
+
+        if not excel_employees:
+          strlit.error("لم يتم العثور على موظفين في الملف. تأكد من أن ID في العمود A والاسم في العمود B.")
+          raise RuntimeError("No employee rows detected")
+
+        # Fetch BioTime for every date in the Excel file up to today.
+        all_attendance = {}
+        employee_catalog = {}
+        progress = strlit.progress(
+            0,
+            text="جاري تحميل بيانات الدوام لجميع التواريخ...",
+        )
+
+        total_dates = len(dates_to_fetch)
+        for index, attendance_date in enumerate(dates_to_fetch, start=1):
+          (
+              active_employees,
+              _present,
+              _late,
+              _absent,
+              _checkout,
+              _leave,
+              _devices,
+              excel_rows_for_date,
+          ) = fetch_month_date(attendance_date)
+
+          for employee_id, employee_data in active_employees.items():
+            employee_catalog[str(employee_id).strip()] = clean_txt(
+                employee_data.get("name", "")
+            )
+
+          date_map = {}
+          for item in excel_rows_for_date:
+            employee_id = str(item.get("Employee ID", "")).strip()
+            if employee_id:
+              date_map[employee_id] = item
+          all_attendance[attendance_date] = date_map
+
+          progress.progress(
+              index / max(total_dates, 1),
+              text=(
+                  f"جاري معالجة {attendance_date.strftime('%d/%m/%Y')} "
+                  f"({index}/{total_dates})"
+              ),
+          )
+
+        progress.empty()
+
+        # Match Excel employees: exact ID first, then intelligent name matching.
+        employee_matches = []
+        for excel_employee in excel_employees:
+          matched_id = None
+          matched_api_name = ""
+          match_score = 0
+
+          excel_id = excel_employee["id"]
+          if excel_id and excel_id in employee_catalog:
+            matched_id = excel_id
+            matched_api_name = employee_catalog[excel_id]
+            match_score = 100
+          else:
+            best_id = None
+            best_name = ""
+            best_score = 0
+            for api_id, api_name in employee_catalog.items():
+              score = name_score(excel_employee["name"], api_name)
+              if score > best_score:
+                best_id = api_id
+                best_name = api_name
+                best_score = score
+
+            if best_score >= 65:
+              matched_id = best_id
+              matched_api_name = best_name
+              match_score = best_score
+
+          if matched_id is not None:
+            employee_matches.append(
                 {
-                    "code": str(item["Employee ID"]).strip(),
-                    "name": clean_txt(item["First Name"]),
-                    "attendance": item,
+                    "row": excel_employee["row"],
+                    "excel_name": excel_employee["name"],
+                    "employee_id": matched_id,
+                    "api_name": matched_api_name,
+                    "score": match_score,
                 }
-                for item in exc
-            ]
+            )
 
-            candidate_rows = []
-            for row in range(1, ws_target.max_row + 1):
-                best_cell = None
-                best_score = 0
-                for col in range(1, min(ws_target.max_column, 8) + 1):
-                    value = ws_target.cell(row=row, column=col).value
-                    if isinstance(value, str) and normalize_name(value):
-                        for emp in api_employees:
-                            score = name_score(value, emp["name"])
-                            if score > best_score:
-                                best_score, best_cell = score, (col, value, emp)
-                if best_cell and best_score >= 65:
-                    candidate_rows.append(
-                        {
-                            "row": row,
-                            "template_name": best_cell[1],
-                            "employee": best_cell[2],
-                            "score": best_score,
-                        }
-                    )
+        preview_rows = [
+            {
+                "اسم الملف": match["excel_name"],
+                "الموظف المطابق": match["api_name"],
+                "نسبة المطابقة": f'{match["score"]}%',
+                "ID": match["employee_id"],
+            }
+            for match in employee_matches
+        ]
 
-            if not date_columns:
-                strlit.warning("لم يتم العثور تلقائياً على أعمدة التواريخ في هذا الملف.")
-            elif not candidate_rows:
-                strlit.warning("لم يتم العثور على أسماء موظفين يمكن مطابقتها تلقائياً.")
-            else:
-                preview_rows = []
-                for match_row in candidate_rows:
-                    emp = match_row["employee"]
-                    preview_rows.append({
-                        "اسم الملف": clean_txt(match_row["template_name"]),
-                        "الموظف المطابق": emp["name"],
-                        "نسبة المطابقة": f'{match_row["score"]}%',
-                    })
-                strlit.success(
-                    f"تم التعرف على {len(candidate_rows)} موظف و {len(date_columns)} تاريخ تلقائياً."
-                )
-                strlit.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+        strlit.success(
+            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق."
+        )
+        strlit.dataframe(
+            pd.DataFrame(preview_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-                if strlit.button("⚙️ تشغيل تعبئة جدول الدوام", use_container_width=True):
-                    filled = 0
-                    for match_row in candidate_rows:
-                        emp = match_row["employee"]
-                        attendance = emp["attendance"]
-                        for col, col_date in date_columns.items():
-                            if col_date == selected_date_obj_input:
-                                cell = ws_target.cell(row=match_row["row"], column=col)
-                                status = str(attendance.get("Status", ""))
-                                if "Absence" in status:
-                                    cell.value = "A"
-                                elif "Leave" in status:
-                                    cell.value = "L"
-                                else:
-                                    clock_in = attendance.get("Clock In", "")
-                                    clock_out = attendance.get("Clock Out", "")
-                                    total = attendance.get("Total WT", "")
-                                    # Use the actual attendance data in the monthly date cell.
-                                    cell.value = total or (
-                                        f"{clock_in} - {clock_out}".strip(" -")
-                                    ) or "P"
-                                cell.alignment = Alignment(horizontal="center", vertical="center")
-                                filled += 1
+        if strlit.button(
+            "⚙️ تشغيل تعبئة جميع التواريخ",
+            use_container_width=True,
+            key="run_monthly_attendance",
+        ):
+          filled_cells = 0
+          import_log = []
 
-                    temp_output = io.BytesIO()
-                    template_wb.save(temp_output)
-                    strlit.session_state["monthly_attendance_export"] = temp_output.getvalue()
-                    strlit.session_state["monthly_attendance_filename"] = (
-                        f"Attendance_Completed_{selected_date_obj_input.strftime('%Y_%m_%d')}.xlsx"
-                    )
-                    strlit.success(f"تمت تعبئة {filled} خانة دوام بنجاح.")
+          # IMPORTANT: every date column is processed here.
+          # There is intentionally NO condition restricting this to selected_date_obj_input.
+          for match in employee_matches:
+            employee_id = match["employee_id"]
+            excel_row = match["row"]
 
-            if "monthly_attendance_export" in strlit.session_state:
-                strlit.download_button(
-                    label="📥 تحميل ملف الدوام الجاهز",
-                    data=strlit.session_state["monthly_attendance_export"],
-                    file_name=strlit.session_state["monthly_attendance_filename"],
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-        except Exception as template_error:
-            strlit.error(f"تعذر معالجة ملف الدوام: {template_error}")
+            for date_column, attendance_date in date_columns.items():
+              cell = ws_target.cell(
+                  row=excel_row,
+                  column=date_column,
+              )
 
+              # Future dates stay blank because there cannot be attendance yet.
+              if attendance_date > now_syria.date():
+                cell.value = None
+                continue
+
+              attendance = all_attendance.get(
+                  attendance_date,
+                  {},
+              ).get(employee_id)
+
+              if attendance is None:
+                cell.value = "A"
+                status = "Absence(A)"
+                clock_in = ""
+                clock_out = ""
+                total_work = ""
+              else:
+                status = str(attendance.get("Status", ""))
+                clock_in = str(attendance.get("Clock In", "") or "")
+                clock_out = str(attendance.get("Clock Out", "") or "")
+                total_work = str(attendance.get("Total WT", "") or "")
+
+                if "Leave" in status:
+                  cell.value = "L"
+                elif "Absence" in status:
+                  cell.value = "A"
+                else:
+                  excel_time = time_to_excel_value(total_work)
+                  if excel_time is not None:
+                    cell.value = excel_time
+                    cell.number_format = "[h]:mm"
+                  else:
+                    cell.value = None
+
+              cell.alignment = Alignment(
+                  horizontal="center",
+                  vertical="center",
+              )
+              filled_cells += 1
+
+              import_log.append(
+                  [
+                      employee_id,
+                      match["excel_name"],
+                      match["api_name"],
+                      match["score"],
+                      attendance_date,
+                      clock_in,
+                      clock_out,
+                      total_work,
+                      status,
+                  ]
+              )
+
+          # Keep the workbook's existing structured formulas for the monthly totals.
+          # They sum the daily numeric time values across the full date range.
+          for row in range(2, ws_target.max_row + 1):
+            total_col = None
+            actual_hours_col = None
+
+            for column in range(1, ws_target.max_column + 1):
+              header = ws_target.cell(row=1, column=column).value
+              if header == "الإجمالي الكلي":
+                total_col = column
+              elif header == "اجمالي ساعات الدوام الفعلية":
+                actual_hours_col = column
+
+            if total_col is not None:
+              first_date_col = min(date_columns.keys())
+              last_date_col = max(date_columns.keys())
+              first_letter = get_column_letter(first_date_col)
+              last_letter = get_column_letter(last_date_col)
+              ws_target.cell(row=row, column=total_col).value = (
+                  f"=SUM({first_letter}{row}:{last_letter}{row})"
+              )
+
+            if total_col is not None and actual_hours_col is not None:
+              total_letter = get_column_letter(total_col)
+              ws_target.cell(row=row, column=actual_hours_col).value = (
+                  f"={total_letter}{row}*24"
+              )
+
+          # Detailed verification sheet: one row per employee/date.
+          if "سجل الدوام المستورد" in template_wb.sheetnames:
+            del template_wb["سجل الدوام المستورد"]
+
+          log_ws = template_wb.create_sheet("سجل الدوام المستورد")
+          log_ws.append(
+              [
+                  "Employee ID",
+                  "Excel Name",
+                  "Matched BioTime Name",
+                  "Match %",
+                  "Date",
+                  "Clock In",
+                  "Clock Out",
+                  "Total Work Hours",
+                  "Status",
+              ]
+          )
+
+          for log_row in import_log:
+            log_ws.append(log_row)
+            log_ws.cell(row=log_ws.max_row, column=5).number_format = "dd/mm/yyyy"
+
+          # Tell Excel to recalculate the formulas when the file is opened.
+          try:
+            template_wb.calculation.fullCalcOnLoad = True
+            template_wb.calculation.forceFullCalc = True
+            template_wb.calculation.calcMode = "auto"
+          except Exception:
+            pass
+
+          temp_output = io.BytesIO()
+          template_wb.save(temp_output)
+          temp_output.seek(0)
+
+          strlit.session_state["monthly_attendance_export"] = temp_output.getvalue()
+          strlit.session_state["monthly_attendance_filename"] = (
+              "Attendance_Completed_"
+              f"{sorted_dates[0].strftime('%Y_%m_%d')}"
+              "_to_"
+              f"{sorted_dates[-1].strftime('%Y_%m_%d')}.xlsx"
+          )
+
+          strlit.success(
+              f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
+              f"({filled_cells} خانة)."
+          )
+
+        if "monthly_attendance_export" in strlit.session_state:
+          strlit.download_button(
+              label="📥 تحميل ملف الدوام الجاهز",
+              data=strlit.session_state["monthly_attendance_export"],
+              file_name=strlit.session_state["monthly_attendance_filename"],
+              mime=(
+                  "application/vnd.openxmlformats-officedocument."
+                  "spreadsheetml.sheet"
+              ),
+              use_container_width=True,
+              key="download_monthly_attendance",
+          )
+
+      except Exception as template_error:
+        strlit.error(
+            f"تعذر معالجة ملف الدوام: {template_error}"
+        )
   if is_today:
     if strlit.button(
         f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True
