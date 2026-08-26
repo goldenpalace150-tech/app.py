@@ -2,6 +2,8 @@ import base64
 from datetime import datetime, timedelta
 import io
 import unicodedata
+import re
+import difflib
 import zoneinfo
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -756,54 +758,163 @@ try:
     )
 
   with col_up:
-    # File Uploader to inject attendance values into attached monthly format/template
     uploaded_template = strlit.file_uploader(
-        "📂 رفع قالب إكسل وتعبئته بالدوام",
-        type=["xlsx", "xls"],
+        "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
+        type=["xlsx", "xlsm"],
         label_visibility="collapsed",
+        key="monthly_attendance_template",
     )
 
+    def normalize_name(value):
+        value = clean_txt(value).lower()
+        value = unicodedata.normalize("NFKD", value)
+        value = "".join(ch for ch in value if not unicodedata.combining(ch))
+        value = re.sub(r"[إأآا]", "ا", value)
+        value = value.replace("ى", "ي").replace("ة", "ه").replace("ؤ", "و").replace("ئ", "ي")
+        value = re.sub(r"[^a-z0-9\u0621-\u064a\s]", " ", value)
+        return " ".join(value.split())
+
+    def name_score(template_name, api_name):
+        a, b = normalize_name(template_name), normalize_name(api_name)
+        if not a or not b:
+            return 0
+        if a == b:
+            return 100
+        a_tokens, b_tokens = set(a.split()), set(b.split())
+        overlap = len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens), 1)
+        sequence = difflib.SequenceMatcher(None, a, b).ratio()
+        token_similarity = difflib.SequenceMatcher(
+            None, " ".join(sorted(a_tokens)), " ".join(sorted(b_tokens))
+        ).ratio()
+        # Handles missing middle names, nicknames, extra words and small spelling differences.
+        return round(100 * max(sequence, token_similarity, overlap))
+
+    def detect_month_sheet(workbook):
+        preferred = [
+            s for s in workbook.sheetnames
+            if any(k in s for k in ["دوام", "ساعات", "حضور", "August", "اغسطس", "أغسطس"])
+        ]
+        return workbook[preferred[0] if preferred else workbook.sheetnames[0]]
+
+    def detect_employee_rows_and_dates(ws):
+        date_columns = {}
+        for row in ws.iter_rows():
+            for cell in row:
+                value = cell.value
+                parsed = None
+                if isinstance(value, datetime):
+                    parsed = value.date()
+                elif hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+                    parsed = value
+                elif isinstance(value, str):
+                    raw = value.strip()
+                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"):
+                        try:
+                            parsed = datetime.strptime(raw, fmt).date()
+                            break
+                        except Exception:
+                            pass
+                if parsed:
+                    date_columns[cell.column] = parsed
+        return date_columns
+
     if uploaded_template is not None:
-      # Open original template preserving all sheets, formatting, and formulas
-      template_wb = openpyxl.load_workbook(uploaded_template)
+        try:
+            keep_vba = uploaded_template.name.lower().endswith(".xlsm")
+            template_wb = openpyxl.load_workbook(uploaded_template, keep_vba=keep_vba)
+            ws_target = detect_month_sheet(template_wb)
 
-      # Populate or overlay attendance data into target sheet if available
-      target_sheet_name = (
-          "مجموع ساعات الدوام"
-          if "مجموع ساعات الدوام" in template_wb.sheetnames
-          else template_wb.sheetnames[0]
-      )
-      ws_target = template_wb[target_sheet_name]
+            date_columns = detect_employee_rows_and_dates(ws_target)
+            api_employees = [
+                {
+                    "code": str(item["Employee ID"]).strip(),
+                    "name": clean_txt(item["First Name"]),
+                    "attendance": item,
+                }
+                for item in exc
+            ]
 
-      # Map fetched API attendance values by Employee ID
-      att_dict = {str(item["Employee ID"]): item for item in exc}
+            candidate_rows = []
+            for row in range(1, ws_target.max_row + 1):
+                best_cell = None
+                best_score = 0
+                for col in range(1, min(ws_target.max_column, 8) + 1):
+                    value = ws_target.cell(row=row, column=col).value
+                    if isinstance(value, str) and normalize_name(value):
+                        for emp in api_employees:
+                            score = name_score(value, emp["name"])
+                            if score > best_score:
+                                best_score, best_cell = score, (col, value, emp)
+                if best_cell and best_score >= 65:
+                    candidate_rows.append(
+                        {
+                            "row": row,
+                            "template_name": best_cell[1],
+                            "employee": best_cell[2],
+                            "score": best_score,
+                        }
+                    )
 
-      # Populate attendance status/hours into matching employee rows
-      for row in range(2, ws_target.max_row + 1):
-        emp_code_cell = ws_target.cell(row=row, column=1).value
-        if emp_code_cell:
-          emp_code_str = str(emp_code_cell).strip()
-          if emp_code_str in att_dict:
-            emp_info = att_dict[emp_code_str]
-            # Populate Clock In, Clock Out, or Attendance values
-            if ws_target.max_column >= 5:
-              ws_target.cell(row=row, column=5).value = emp_info["Clock In"]
-            if ws_target.max_column >= 6:
-              ws_target.cell(row=row, column=6).value = emp_info["Clock Out"]
+            if not date_columns:
+                strlit.warning("لم يتم العثور تلقائياً على أعمدة التواريخ في هذا الملف.")
+            elif not candidate_rows:
+                strlit.warning("لم يتم العثور على أسماء موظفين يمكن مطابقتها تلقائياً.")
+            else:
+                preview_rows = []
+                for match_row in candidate_rows:
+                    emp = match_row["employee"]
+                    preview_rows.append({
+                        "اسم الملف": clean_txt(match_row["template_name"]),
+                        "الموظف المطابق": emp["name"],
+                        "نسبة المطابقة": f'{match_row["score"]}%',
+                    })
+                strlit.success(
+                    f"تم التعرف على {len(candidate_rows)} موظف و {len(date_columns)} تاريخ تلقائياً."
+                )
+                strlit.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
 
-      temp_output = io.BytesIO()
-      template_wb.save(temp_output)
-      temp_output.seek(0)
+                if strlit.button("⚙️ تشغيل تعبئة جدول الدوام", use_container_width=True):
+                    filled = 0
+                    for match_row in candidate_rows:
+                        emp = match_row["employee"]
+                        attendance = emp["attendance"]
+                        for col, col_date in date_columns.items():
+                            if col_date == selected_date_obj_input:
+                                cell = ws_target.cell(row=match_row["row"], column=col)
+                                status = str(attendance.get("Status", ""))
+                                if "Absence" in status:
+                                    cell.value = "A"
+                                elif "Leave" in status:
+                                    cell.value = "L"
+                                else:
+                                    clock_in = attendance.get("Clock In", "")
+                                    clock_out = attendance.get("Clock Out", "")
+                                    total = attendance.get("Total WT", "")
+                                    # Use the actual attendance data in the monthly date cell.
+                                    cell.value = total or (
+                                        f"{clock_in} - {clock_out}".strip(" -")
+                                    ) or "P"
+                                cell.alignment = Alignment(horizontal="center", vertical="center")
+                                filled += 1
 
-      strlit.download_button(
-          label="📤 تصدير ملف القالب المعدل (مع قيم الدوام)",
-          data=temp_output,
-          file_name=f"Attendance_Export_{selected_date_str}.xlsx",
-          mime=(
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          ),
-          use_container_width=True,
-      )
+                    temp_output = io.BytesIO()
+                    template_wb.save(temp_output)
+                    strlit.session_state["monthly_attendance_export"] = temp_output.getvalue()
+                    strlit.session_state["monthly_attendance_filename"] = (
+                        f"Attendance_Completed_{selected_date_obj_input.strftime('%Y_%m_%d')}.xlsx"
+                    )
+                    strlit.success(f"تمت تعبئة {filled} خانة دوام بنجاح.")
+
+            if "monthly_attendance_export" in strlit.session_state:
+                strlit.download_button(
+                    label="📥 تحميل ملف الدوام الجاهز",
+                    data=strlit.session_state["monthly_attendance_export"],
+                    file_name=strlit.session_state["monthly_attendance_filename"],
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+        except Exception as template_error:
+            strlit.error(f"تعذر معالجة ملف الدوام: {template_error}")
 
   if is_today:
     if strlit.button(
