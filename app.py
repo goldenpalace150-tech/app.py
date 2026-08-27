@@ -194,6 +194,26 @@ def clean_txt(raw_text):
   )
 
 
+def normalize_id(value):
+  """Normalize an identifier for exact matching without changing its meaning."""
+  if value is None:
+    return ""
+
+  raw = str(value).strip()
+  if not raw:
+    return ""
+
+  # Excel/API values can arrive as integers, floats such as 1.0, or strings.
+  # Remove only an Excel-style trailing .0 and surrounding whitespace.
+  if re.fullmatch(r"\d+\.0+", raw):
+    raw = raw.split(".", 1)[0]
+
+  if raw.isdigit():
+    return str(int(raw))
+
+  return raw
+
+
 @strlit.cache_data(ttl=300)
 def get_auth_token():
   try:
@@ -267,10 +287,15 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
   except Exception:
     pass
 
+  # IMPORTANT: the POI/BioTime employee reference used for the Excel import
+  # is the API employee `id` field, NOT `emp_code`.
+  # We keep emp_code separately because attendance transactions use emp_code.
   active_employees = {}
+  emp_code_to_app_id = {}
+
   for emp in all_employees:
-    raw_code = str(emp.get("emp_code", "")).strip()
-    cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
+    app_id = normalize_id(emp.get("id"))
+    biotime_code = normalize_id(emp.get("emp_code"))
 
     is_active = (
         str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
@@ -283,7 +308,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     if not is_active or emp_status in ("1", "2", "D") or not enable_att:
       continue
 
-    if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
+    # Staff matching is ONLY against the app/BioTime API `id`.
+    if app_id and app_id not in EXCLUDED_MANAGEMENT_CODES:
       f_name = str(emp.get("first_name", "")).strip()
       l_name = str(emp.get("last_name", "")).strip()
       if f_name.lower() == "none":
@@ -301,10 +327,15 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
       if not dept_name or dept_name.lower() == "none":
         dept_name = "غير محدد"
 
-      active_employees[cleaned_code] = {
-          "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
+      active_employees[app_id] = {
+          "name": clean_txt(full_name if full_name else f"موظف {app_id}"),
           "dept": clean_txt(dept_name),
+          "app_id": app_id,
+          "emp_code": biotime_code,
       }
+
+      if biotime_code:
+        emp_code_to_app_id[biotime_code] = app_id
 
   leave_records = []
   try:
@@ -364,7 +395,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         s_date = datetime.strptime(str(start_t)[:10], "%Y-%m-%d").date()
         e_date = datetime.strptime(str(end_t)[:10], "%Y-%m-%d").date()
         if s_date <= selected_date_obj <= e_date:
-          on_leave_employees[cleaned_code] = clean_txt(leave_name)
+          # Leave records generally expose emp_code. Convert that transaction
+          # identifier to the API employee `id` used by Excel matching.
+          app_id = emp_code_to_app_id.get(cleaned_code, cleaned_code)
+          on_leave_employees[app_id] = clean_txt(leave_name)
       except Exception:
         pass
 
@@ -387,9 +421,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
 
   emp_punches = {}
   for log in raw_logs:
-    raw_code = str(log.get("emp_code", "")).strip()
-    cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-    if cleaned_code in active_employees and log.get("punch_time"):
+    cleaned_code = normalize_id(log.get("emp_code"))
+    app_id = emp_code_to_app_id.get(cleaned_code)
+
+    if app_id in active_employees and log.get("punch_time"):
       try:
         p_time = datetime.strptime(
             log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S"
@@ -400,7 +435,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             or log.get("terminal_name")
             or terminal_map.get(dev_sn, dev_sn or "جهاز رئيسي")
         )
-        emp_punches.setdefault(cleaned_code, []).append((p_time, dev_name))
+        emp_punches.setdefault(app_id, []).append((p_time, dev_name))
       except Exception:
         continue
 
@@ -1100,7 +1135,7 @@ try:
         progress.empty()
 
         # EXACT MATCH ONLY:
-        # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
+        # Excel Column B (BioTime ID) == app/BioTime employee ID (`id`).
         # No name fallback and no fuzzy matching.
         # Excel Column A is ignored for employee identification.
         employee_matches = []
@@ -1194,7 +1229,7 @@ try:
           cell_updates = []
           import_log = []
 
-          # Process every date column. Only exact BioTime ID matches are eligible.
+          # Process every date column. Only exact BioTime ID -> app ID matches are eligible.
           for match in employee_matches:
             employee_id = match["employee_id"]
             excel_row = match["row"]
