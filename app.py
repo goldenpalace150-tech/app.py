@@ -835,6 +835,18 @@ try:
       except (TypeError, ValueError):
         return None
 
+    def normalize_id(value):
+      """Normalize an Excel/BioTime ID for exact comparison only."""
+      if value is None:
+        return ""
+      raw = str(value).strip()
+      if not raw:
+        return ""
+      # Excel may expose a numeric ID as e.g. 2230101.0.
+      if raw.endswith(".0") and raw[:-2].isdigit():
+        raw = raw[:-2]
+      return raw
+
     @strlit.cache_data(ttl=300, show_spinner=False)
     def fetch_month_date(attendance_date):
       date_str = attendance_date.strftime("%Y-%m-%d")
@@ -866,33 +878,27 @@ try:
             if attendance_date <= now_syria.date()
         ]
 
-        # IMPORTANT: Match employees ONLY by ID.
-        # Excel reference: BioTime ID (column A)
-        # BioTime/app reference: ID / emp_code
-        # Employee names are never used for matching.
+        # IMPORTANT: The uploaded Excel uses COLUMN B for BioTime ID.
+        # COLUMN A is not used for employee identification.
+        # Employee names are not used for matching.
         excel_employees = []
         for row in range(2, ws_target.max_row + 1):
-          biotime_id = ws_target.cell(row=row, column=1).value
-          employee_name = ws_target.cell(row=row, column=2).value
+          excel_biotime_id = normalize_id(ws_target.cell(row=row, column=2).value)
 
-          if biotime_id is None and employee_name is None:
+          # Ignore rows that do not contain a BioTime ID in column B.
+          if not excel_biotime_id:
             continue
-
-          normalized_id = str(biotime_id).strip() if biotime_id is not None else ""
-          if normalized_id.isdigit():
-            normalized_id = str(int(normalized_id))
 
           excel_employees.append(
               {
                   "row": row,
-                  "biotime_id": normalized_id,
-                  "excel_name": clean_txt(employee_name),
+                  "biotime_id": excel_biotime_id,
               }
           )
 
         if not excel_employees:
-          strlit.error("لم يتم العثور على موظفين في الملف. تأكد من أن BioTime ID موجود في العمود A.")
-          raise RuntimeError("No employee rows detected")
+          strlit.error("لم يتم العثور على BioTime ID في العمود B من ملف الدوام.")
+          raise RuntimeError("No BioTime IDs detected in Excel column B")
 
         # Fetch BioTime for every date in the Excel file up to today.
         all_attendance = {}
@@ -916,13 +922,13 @@ try:
           ) = fetch_month_date(attendance_date)
 
           for employee_id, employee_data in active_employees.items():
-            employee_catalog[str(employee_id).strip()] = clean_txt(
+            employee_catalog[normalize_id(employee_id)] = clean_txt(
                 employee_data.get("name", "")
             )
 
           date_map = {}
           for item in excel_rows_for_date:
-            employee_id = str(item.get("Employee ID", "")).strip()
+            employee_id = normalize_id(item.get("Employee ID", ""))
             if employee_id:
               date_map[employee_id] = item
           all_attendance[attendance_date] = date_map
@@ -937,61 +943,74 @@ try:
 
         progress.empty()
 
-        # Match ONLY by BioTime ID from Excel -> ID/emp_code from the app.
-        # There is intentionally NO name matching or fallback.
+        # STRICT MATCHING RULE:
+        # Excel COLUMN B (BioTime ID) MUST exactly match the application/BioTime ID (emp_code).
+        # There is NO name matching fallback and COLUMN A is ignored for identification.
         employee_matches = []
-        unmatched_employees = []
-        for excel_employee in excel_employees:
-          biotime_id = excel_employee["biotime_id"]
+        unmatched_excel_rows = []
 
-          if biotime_id and biotime_id in employee_catalog:
+        for excel_employee in excel_employees:
+          excel_biotime_id = normalize_id(excel_employee["biotime_id"])
+
+          if excel_biotime_id and excel_biotime_id in employee_catalog:
             employee_matches.append(
                 {
                     "row": excel_employee["row"],
-                    "excel_name": excel_employee["excel_name"],
-                    "biotime_id": biotime_id,
-                    "employee_id": biotime_id,
-                    "api_name": employee_catalog[biotime_id],
-                    "score": 100,
+                    "biotime_id": excel_biotime_id,
+                    "employee_id": excel_biotime_id,
+                    "api_name": employee_catalog[excel_biotime_id],
+                    "match_method": "BioTime ID (Excel B) = ID (App/BioTime)",
                 }
             )
           else:
-            unmatched_employees.append(
+            unmatched_excel_rows.append(
                 {
                     "row": excel_employee["row"],
-                    "excel_name": excel_employee["excel_name"],
-                    "biotime_id": biotime_id or "(فارغ)",
-                    "status": "BioTime ID غير موجود في التطبيق",
+                    "biotime_id": excel_biotime_id,
+                    "reason": "BioTime ID not found in application/BioTime ID list",
                 }
             )
 
         preview_rows = [
             {
-                "BioTime ID": match["biotime_id"],
-                "اسم الملف": match["excel_name"],
-                "الموظف في BioTime": match["api_name"],
-                "حالة المطابقة": "Matched by ID",
+                "Excel Row": match["row"],
+                "BioTime ID (Excel Column B)": match["biotime_id"],
+                "ID (App/BioTime)": match["employee_id"],
+                "Staff Name (App)": match["api_name"],
+                "Match": "✅ Exact ID",
             }
             for match in employee_matches
         ]
 
+        unmatched_preview_rows = [
+            {
+                "Excel Row": item["row"],
+                "BioTime ID (Excel Column B)": item["biotime_id"],
+                "Status": "❌ ID not found",
+                "Reason": item["reason"],
+            }
+            for item in unmatched_excel_rows
+        ]
+
         strlit.success(
-            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق بواسطة BioTime ID فقط."
+            f"تم العثور على {len(sorted_dates)} تاريخ، وتمت مطابقة {len(employee_matches)} موظف باستخدام BioTime ID في العمود B فقط."
         )
-        if unmatched_employees:
-          strlit.warning(
-              f"⚠️ يوجد {len(unmatched_employees)} موظف لم تتم مطابقته. لن يتم استيراد الدوام لهم."
-          )
+        if preview_rows:
           strlit.dataframe(
-              pd.DataFrame(unmatched_employees),
+              pd.DataFrame(preview_rows),
               use_container_width=True,
               hide_index=True,
           )
-        strlit.dataframe(
-            pd.DataFrame(preview_rows),
-            use_container_width=True,
-            hide_index=True,
-        )
+
+        if unmatched_preview_rows:
+          strlit.warning(
+              f"⚠️ يوجد {len(unmatched_preview_rows)} صف في Excel بدون BioTime ID مطابق. لن يتم استيراد الحضور لهذه الصفوف."
+          )
+          strlit.dataframe(
+              pd.DataFrame(unmatched_preview_rows),
+              use_container_width=True,
+              hide_index=True,
+          )
 
         if strlit.button(
             "⚙️ تشغيل تعبئة جميع التواريخ",
@@ -1056,9 +1075,9 @@ try:
               import_log.append(
                   [
                       employee_id,
-                      match["excel_name"],
+                      match["biotime_id"],
                       match["api_name"],
-                      match["score"],
+                      match["match_method"],
                       attendance_date,
                       clock_in,
                       clock_out,
@@ -1102,10 +1121,10 @@ try:
           log_ws = template_wb.create_sheet("سجل الدوام المستورد")
           log_ws.append(
               [
-                  "Employee ID",
-                  "Excel Name",
-                  "Matched BioTime Name",
-                  "Match %",
+                  "ID (App/BioTime)",
+                  "BioTime ID (Excel Column B)",
+                  "Matched Staff Name",
+                  "Match Method",
                   "Date",
                   "Clock In",
                   "Clock Out",
