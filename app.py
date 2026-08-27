@@ -15,6 +15,7 @@ import streamlit as strlit
 
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
+# VERSION: strict BioTime ID match from Excel Column B; daily attendance written as Excel time values; monthly formula caches refreshed
 # ==========================================
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -269,6 +270,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
 
   active_employees = {}
   for emp in all_employees:
+    raw_emp_id = emp.get("id")
+    if raw_emp_id is None or str(raw_emp_id).strip() == "":
+      continue
+    app_id = str(raw_emp_id).strip()
+    if app_id.isdigit():
+      app_id = str(int(app_id))
+
     raw_code = str(emp.get("emp_code", "")).strip()
     cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
 
@@ -283,7 +291,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     if not is_active or emp_status in ("1", "2", "D") or not enable_att:
       continue
 
-    if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
+    if app_id and cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
       f_name = str(emp.get("first_name", "")).strip()
       l_name = str(emp.get("last_name", "")).strip()
       if f_name.lower() == "none":
@@ -301,9 +309,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
       if not dept_name or dept_name.lower() == "none":
         dept_name = "غير محدد"
 
-      active_employees[cleaned_code] = {
-          "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
+      active_employees[app_id] = {
+          "name": clean_txt(full_name if full_name else f"موظف {app_id}"),
           "dept": clean_txt(dept_name),
+          "emp_code": cleaned_code,
       }
 
   leave_records = []
@@ -385,11 +394,18 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
   except Exception:
     pass
 
+  emp_code_to_app_id = {
+      emp_data.get("emp_code"): app_id
+      for app_id, emp_data in active_employees.items()
+      if emp_data.get("emp_code")
+  }
+
   emp_punches = {}
   for log in raw_logs:
     raw_code = str(log.get("emp_code", "")).strip()
     cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-    if cleaned_code in active_employees and log.get("punch_time"):
+    app_id = emp_code_to_app_id.get(cleaned_code)
+    if app_id and log.get("punch_time"):
       try:
         p_time = datetime.strptime(
             log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S"
@@ -400,7 +416,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             or log.get("terminal_name")
             or terminal_map.get(dev_sn, dev_sn or "جهاز رئيسي")
         )
-        emp_punches.setdefault(cleaned_code, []).append((p_time, dev_name))
+        emp_punches.setdefault(app_id, []).append((p_time, dev_name))
       except Exception:
         continue
 
@@ -433,11 +449,12 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     ]
 
     if not day_punches:
-      if code in on_leave_employees:
-        leave_reason = on_leave_employees[code]
+      if emp_data.get("emp_code") in on_leave_employees:
+        leave_reason = on_leave_employees[emp_data.get("emp_code")]
         leave_staff.append((code, name, dept, leave_reason))
         excel_rows.append({
-            "Employee ID": code,
+            "Employee ID": emp_data.get("emp_code", ""),
+            "BioTime ID": code,
             "First Name": name,
             "Department": dept,
             "Date": selected_date_str,
@@ -449,7 +466,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
       else:
         absent_staff.append((code, name, dept))
         excel_rows.append({
-            "Employee ID": code,
+            "Employee ID": emp_data.get("emp_code", ""),
+            "BioTime ID": code,
             "First Name": name,
             "Department": dept,
             "Date": selected_date_str,
@@ -504,7 +522,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
         )
         excel_rows.append({
-            "Employee ID": code,
+            "Employee ID": emp_data.get("emp_code", ""),
+            "BioTime ID": code,
             "First Name": name,
             "Department": dept,
             "Date": selected_date_str,
@@ -527,7 +546,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             last_dev_real,
         ))
         excel_rows.append({
-            "Employee ID": code,
+            "Employee ID": emp_data.get("emp_code", ""),
+            "BioTime ID": code,
             "First Name": name,
             "Department": dept,
             "Date": selected_date_str,
@@ -547,7 +567,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
         )
 
       excel_rows.append({
-          "Employee ID": code,
+          "Employee ID": emp_data.get("emp_code", ""),
+          "BioTime ID": code,
           "First Name": name,
           "Department": dept,
           "Date": selected_date_str,
@@ -766,24 +787,6 @@ try:
         key="monthly_attendance_template",
     )
 
-    def normalize_id(value):
-      """Normalize an employee ID without changing its identity."""
-      if value is None:
-        return ""
-
-      # Excel may give a numeric ID as 1.0 when the source cell is numeric.
-      if isinstance(value, float) and value.is_integer():
-        value = int(value)
-
-      raw = str(value).strip()
-      if not raw:
-        return ""
-
-      if raw.endswith(".0") and raw[:-2].isdigit():
-        raw = raw[:-2]
-
-      return raw
-
     def detect_month_sheet(workbook):
       preferred = [
           sheet_name
@@ -855,142 +858,6 @@ try:
       except (TypeError, ValueError):
         return None
 
-    def excel_col_letter(column_number):
-      return get_column_letter(column_number)
-
-    def patch_cell_value_xml(xml_text, row_number, column_number, value):
-      """Patch only a non-formula attendance cell in worksheet XML.
-
-      Formula cells are deliberately rejected so the workbook's existing Excel
-      formulas (including structured table formulas) can never be overwritten.
-      """
-      coordinate = f"{get_column_letter(column_number)}{row_number}"
-
-      pattern = re.compile(
-          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)/>'
-          rf'|<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>(.*?)</c>',
-          re.DOTALL,
-      )
-
-      match = pattern.search(xml_text)
-      if not match:
-        raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
-
-      attrs = match.group(1) if match.group(1) is not None else match.group(2)
-      inner = match.group(3) if match.group(3) is not None else ""
-
-      if re.search(r'<f\b', inner):
-        raise RuntimeError(
-            f"رفض تعديل الخلية {coordinate} لأنها تحتوي على معادلة Excel موجودة مسبقاً."
-        )
-
-      attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
-
-      if value is None or value == "":
-        replacement = f"<c{attrs}/>"
-      elif isinstance(value, str):
-        safe_text = (
-            value.replace("&", "&amp;")
-                 .replace("<", "&lt;")
-                 .replace(">", "&gt;")
-                 .replace('"', "&quot;")
-        )
-        replacement = f'<c{attrs} t="inlineStr"><is><t>{safe_text}</t></is></c>'
-      else:
-        replacement = f"<c{attrs}><v>{value}</v></c>"
-
-      return xml_text[:match.start()] + replacement + xml_text[match.end():]
-
-    def extract_formula_map(xml_text):
-      """Return every worksheet formula keyed by cell reference."""
-      root = ET.fromstring(xml_text)
-      formula_map = {}
-      for cell in root.iter():
-        if cell.tag.rsplit("}", 1)[-1] != "c":
-          continue
-        coordinate = cell.get("r")
-        if not coordinate:
-          continue
-        for child in list(cell):
-          if child.tag.rsplit("}", 1)[-1] == "f":
-            formula_map[coordinate] = ET.tostring(child, encoding="unicode")
-            break
-      return formula_map
-
-    def find_sheet_xml_path(zip_file, sheet_name):
-      """Resolve a workbook sheet name to its worksheet XML path."""
-      main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-      rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-      pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
-
-      workbook_xml = zip_file.read("xl/workbook.xml").decode("utf-8")
-      rels_xml = zip_file.read("xl/_rels/workbook.xml.rels").decode("utf-8")
-
-      workbook_root = ET.fromstring(workbook_xml)
-      rel_root = ET.fromstring(rels_xml)
-
-      rel_targets = {}
-      for rel in rel_root.findall(f"{{{pkg_rel_ns}}}Relationship"):
-        rel_targets[rel.get("Id")] = rel.get("Target")
-
-      for sheet in workbook_root.findall(f"{{{main_ns}}}sheets/{{{main_ns}}}sheet"):
-        if sheet.get("name") == sheet_name:
-          rel_id = sheet.get(f"{{{rel_ns}}}id")
-          target = rel_targets.get(rel_id)
-          if not target:
-            raise RuntimeError(f"Could not resolve worksheet relationship for {sheet_name}")
-          target = target.lstrip("/")
-          if not target.startswith("xl/"):
-            target = "xl/" + target
-          return target
-
-      raise RuntimeError(f"Worksheet not found: {sheet_name}")
-
-    def export_template_preserving_package(original_bytes, sheet_name, cell_updates):
-      """Patch attendance values into the original OOXML package.
-
-      The uploaded workbook is not rebuilt. Only the requested attendance cells
-      are changed. Existing formulas, structured table formulas, tables, styles,
-      metadata, printer settings, and other workbook features are preserved.
-      """
-      input_buffer = io.BytesIO(original_bytes)
-      output_buffer = io.BytesIO()
-
-      with zipfile.ZipFile(input_buffer, "r") as zin:
-        sheet_xml_path = find_sheet_xml_path(zin, sheet_name)
-        original_sheet_xml = zin.read(sheet_xml_path).decode("utf-8")
-        sheet_xml_text = original_sheet_xml
-        original_formula_map = extract_formula_map(original_sheet_xml)
-
-        # Only attendance cells are allowed to change. Total/formula cells are
-        # never included, and patch_cell_value_xml rejects formula cells anyway.
-        for update in cell_updates:
-          sheet_xml_text = patch_cell_value_xml(
-              sheet_xml_text,
-              update["row"],
-              update["column"],
-              update["value"],
-          )
-
-        patched_formula_map = extract_formula_map(sheet_xml_text)
-        if patched_formula_map != original_formula_map:
-          raise RuntimeError(
-              "تم إيقاف التصدير لأن إحدى معادلات Excel الأصلية تغيّرت. "
-              "لن يتم إنشاء ملف قد يفسد صيغ الجدول."
-          )
-
-        patched_sheet_xml = sheet_xml_text.encode("utf-8")
-
-        with zipfile.ZipFile(output_buffer, "w") as zout:
-          for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == sheet_xml_path:
-              data = patched_sheet_xml
-            zout.writestr(item, data)
-
-      output_buffer.seek(0)
-      return output_buffer.getvalue()
-
     @strlit.cache_data(ttl=300, show_spinner=False)
     def fetch_month_date(attendance_date):
       date_str = attendance_date.strftime("%Y-%m-%d")
@@ -1003,15 +870,10 @@ try:
 
     if uploaded_template is not None:
       try:
-        # Keep the exact original XLSX/XLSM bytes. The final export will patch
-        # only the attendance cells into this original package.
-        original_template_bytes = uploaded_template.getvalue()
         keep_vba = uploaded_template.name.lower().endswith(".xlsm")
-
         template_wb = openpyxl.load_workbook(
-            io.BytesIO(original_template_bytes),
+            uploaded_template,
             keep_vba=keep_vba,
-            data_only=False,
         )
         ws_target = detect_month_sheet(template_wb)
 
@@ -1020,8 +882,6 @@ try:
           strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
           raise RuntimeError("No monthly date columns detected")
 
-        # Fetch only dates that are present in the uploaded monthly sheet and
-        # are not in the future. This must be defined before the BioTime loop.
         sorted_dates = sorted(set(date_columns.values()))
         dates_to_fetch = [
             attendance_date
@@ -1029,30 +889,34 @@ try:
             if attendance_date <= now_syria.date()
         ]
 
-        # IMPORTANT:
-        # Excel Column B is the BioTime ID.
-        # Excel Column A is NOT used for employee matching.
-        # Employee names are NOT used for matching.
+        # Matching reference: Excel Column B (BioTime ID) -> app/BioTime employee `id`.
+        # Column A and employee names are NOT used for matching.
+        excel_id_col = None
+        excel_name_col = None
+        for column in range(1, ws_target.max_column + 1):
+          header = clean_txt(ws_target.cell(row=1, column=column).value)
+          if header.lower() == "biotime id":
+            excel_id_col = column
+          elif header.lower() in ("الاسم", "اسم الموظف", "employee name", "name"):
+            excel_name_col = column
+
+        excel_id_col = excel_id_col or 2
+        excel_name_col = excel_name_col or 3
+
         excel_employees = []
         for row in range(2, ws_target.max_row + 1):
-          biotime_id = normalize_id(ws_target.cell(row=row, column=2).value)
-          employee_name = clean_txt(ws_target.cell(row=row, column=3).value)
-
-          if not biotime_id and not employee_name:
+          biotime_id = ws_target.cell(row=row, column=excel_id_col).value
+          employee_name = ws_target.cell(row=row, column=excel_name_col).value
+          if biotime_id is None and employee_name is None:
             continue
-
-          excel_employees.append(
-              {
-                  "row": row,
-                  "biotime_id": biotime_id,
-                  "name": employee_name,
-              }
-          )
+          excel_employees.append({
+              "row": row,
+              "biotime_id": str(biotime_id).strip() if biotime_id is not None else "",
+              "name": clean_txt(employee_name),
+          })
 
         if not excel_employees:
-          strlit.error(
-              "لم يتم العثور على موظفين في الملف. تأكد من أن BioTime ID موجود في العمود B."
-          )
+          strlit.error("لم يتم العثور على موظفين. تأكد من وجود BioTime ID في العمود B.")
           raise RuntimeError("No employee rows detected")
 
         # Fetch BioTime for every date in the Excel file up to today.
@@ -1077,16 +941,15 @@ try:
           ) = fetch_month_date(attendance_date)
 
           for employee_id, employee_data in active_employees.items():
-            normalized_employee_id = normalize_id(employee_id)
-            employee_catalog[normalized_employee_id] = clean_txt(
+            employee_catalog[str(employee_id).strip()] = clean_txt(
                 employee_data.get("name", "")
             )
 
           date_map = {}
           for item in excel_rows_for_date:
-            employee_id = normalize_id(item.get("Employee ID", ""))
-            if employee_id:
-              date_map[employee_id] = item
+            biotime_id = str(item.get("BioTime ID", "")).strip()
+            if biotime_id:
+              date_map[biotime_id] = item
           all_attendance[attendance_date] = date_map
 
           progress.progress(
@@ -1099,91 +962,50 @@ try:
 
         progress.empty()
 
-        # EXACT MATCH ONLY:
-        # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
-        # No name fallback and no fuzzy matching.
-        # Excel Column A is ignored for employee identification.
+        # STRICT ID-ONLY MATCH: Excel BioTime ID == app/BioTime employee ID.
         employee_matches = []
         unmatched_employees = []
-        duplicate_excel_ids = set()
-        seen_excel_ids = set()
-
         for excel_employee in excel_employees:
           excel_id = excel_employee["biotime_id"]
-
-          if not excel_id:
-            unmatched_employees.append(
-                {
-                    "row": excel_employee["row"],
-                    "biotime_id": "",
-                    "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID is empty",
-                }
-            )
-            continue
-
-          if excel_id in seen_excel_ids:
-            duplicate_excel_ids.add(excel_id)
-          seen_excel_ids.add(excel_id)
-
-          if excel_id in employee_catalog:
-            employee_matches.append(
-                {
-                    "row": excel_employee["row"],
-                    "excel_name": excel_employee["name"],
-                    "employee_id": excel_id,
-                    "api_name": employee_catalog[excel_id],
-                    "score": 100,
-                    "match_type": "Exact ID",
-                }
-            )
+          if excel_id and excel_id in employee_catalog:
+            employee_matches.append({
+                "row": excel_employee["row"],
+                "excel_name": excel_employee["name"],
+                "employee_id": excel_id,
+                "api_name": employee_catalog[excel_id],
+            })
           else:
-            unmatched_employees.append(
-                {
-                    "row": excel_employee["row"],
-                    "biotime_id": excel_id,
-                    "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID not found in app/BioTime ID list",
-                }
-            )
+            unmatched_employees.append({
+                "row": excel_employee["row"],
+                "excel_name": excel_employee["name"],
+                "employee_id": excel_id,
+            })
 
         preview_rows = [
             {
                 "اسم الملف": match["excel_name"],
-                "BioTime ID (Excel B)": match["employee_id"],
+                "BioTime ID (Excel Column B)": match["employee_id"],
                 "ID (App/BioTime)": match["employee_id"],
-                "المطابقة": "Exact ID",
+                "طريقة المطابقة": "Exact ID",
+                "الموظف": match["api_name"],
             }
             for match in employee_matches
         ]
-
-        strlit.success(
-            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق بالـ ID فقط."
-        )
-        if duplicate_excel_ids:
-          strlit.warning(
-              "يوجد BioTime ID مكرر في ملف Excel: "
-              + ", ".join(sorted(duplicate_excel_ids))
-          )
         if unmatched_employees:
-          strlit.warning(
-              f"يوجد {len(unmatched_employees)} موظف غير مطابق. لن يتم استيراد أي حضور لهم."
+          preview_rows.extend(
+              {
+                  "اسم الملف": item["excel_name"],
+                  "BioTime ID (Excel Column B)": item["employee_id"],
+                  "ID (App/BioTime)": "",
+                  "طريقة المطابقة": "NOT FOUND",
+                  "الموظف": "غير موجود في قائمة IDs",
+              }
+              for item in unmatched_employees
           )
-
-        if preview_rows:
-          strlit.dataframe(
-              pd.DataFrame(preview_rows),
-              use_container_width=True,
-              hide_index=True,
-          )
-
+        strlit.success(f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق بالـ ID فقط.")
         if unmatched_employees:
-          with strlit.expander("⚠️ الموظفون غير المطابقين", expanded=False):
-            strlit.dataframe(
-                pd.DataFrame(unmatched_employees),
-                use_container_width=True,
-                hide_index=True,
-            )
+          strlit.warning(f"يوجد {len(unmatched_employees)} موظف بدون BioTime ID مطابق، ولن يتم استيراد دوامهم.")
+        strlit.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
 
         if strlit.button(
             "⚙️ تشغيل تعبئة جميع التواريخ",
@@ -1191,17 +1013,24 @@ try:
             key="run_monthly_attendance",
         ):
           filled_cells = 0
-          cell_updates = []
           import_log = []
+          row_monthly_totals = {}
 
-          # Process every date column. Only exact BioTime ID matches are eligible.
+          # IMPORTANT: every date column is processed here.
+          # There is intentionally NO condition restricting this to selected_date_obj_input.
           for match in employee_matches:
             employee_id = match["employee_id"]
             excel_row = match["row"]
 
             for date_column, attendance_date in date_columns.items():
-              # Future dates stay unchanged/blank.
+              cell = ws_target.cell(
+                  row=excel_row,
+                  column=date_column,
+              )
+
+              # Future dates stay blank because there cannot be attendance yet.
               if attendance_date > now_syria.date():
+                cell.value = None
                 continue
 
               attendance = all_attendance.get(
@@ -1210,7 +1039,7 @@ try:
               ).get(employee_id)
 
               if attendance is None:
-                cell_value = "A"
+                cell.value = "A"
                 status = "Absence(A)"
                 clock_in = ""
                 clock_out = ""
@@ -1222,19 +1051,24 @@ try:
                 total_work = str(attendance.get("Total WT", "") or "")
 
                 if "Leave" in status:
-                  cell_value = "L"
+                  cell.value = "L"
+                  cell.number_format = "General"
                 elif "Absence" in status:
-                  cell_value = "A"
+                  cell.value = "A"
+                  cell.number_format = "General"
                 else:
                   excel_time = time_to_excel_value(total_work)
-                  cell_value = excel_time if excel_time is not None else None
+                  if excel_time is not None:
+                    cell.value = excel_time
+                    row_monthly_totals[excel_row] = row_monthly_totals.get(excel_row, 0.0) + excel_time
+                    cell.number_format = "[h]:mm"
+                  else:
+                    cell.value = None
+                    cell.number_format = "[h]:mm"
 
-              cell_updates.append(
-                  {
-                      "row": excel_row,
-                      "column": date_column,
-                      "value": cell_value,
-                  }
+              cell.alignment = Alignment(
+                  horizontal="center",
+                  vertical="center",
               )
               filled_cells += 1
 
@@ -1252,59 +1086,119 @@ try:
                   ]
               )
 
-          try:
-            export_bytes = export_template_preserving_package(
-                original_template_bytes,
-                ws_target.title,
-                cell_updates,
-            )
-          except Exception as export_error:
-            raise RuntimeError(
-                "تعذر إنشاء ملف Excel النهائي مع الحفاظ على بنية الملف الأصلية: "
-                + str(export_error)
-            ) from export_error
+          # Preserve the existing structured monthly-total formulas exactly; do not overwrite them.
+          # Cached totals are refreshed after the workbook is saved.
 
-          strlit.session_state["monthly_attendance_export"] = export_bytes
-          output_extension = ".xlsm" if keep_vba else ".xlsx"
+          # Detailed verification sheet: one row per employee/date.
+          if "سجل الدوام المستورد" in template_wb.sheetnames:
+            del template_wb["سجل الدوام المستورد"]
+
+          log_ws = template_wb.create_sheet("سجل الدوام المستورد")
+          log_ws.append(
+              [
+                  "Employee ID",
+                  "Excel Name",
+                  "Matched BioTime Name",
+                  "Match Method",
+                  "Date",
+                  "Clock In",
+                  "Clock Out",
+                  "Total Work Hours",
+                  "Status",
+              ]
+          )
+
+          for log_row in import_log:
+            log_ws.append(log_row)
+            log_ws.cell(row=log_ws.max_row, column=5).number_format = "dd/mm/yyyy"
+
+          # Tell Excel to recalculate the formulas when the file is opened.
+          try:
+            template_wb.calculation.fullCalcOnLoad = True
+            template_wb.calculation.forceFullCalc = True
+            template_wb.calculation.calcMode = "auto"
+          except Exception:
+            pass
+
+          try:
+            template_wb.calculation.fullCalcOnLoad = True
+            template_wb.calculation.forceFullCalc = True
+            template_wb.calculation.calcMode = "auto"
+          except Exception:
+            pass
+
+          total_col = None
+          actual_hours_col = None
+          for column in range(1, ws_target.max_column + 1):
+            header = ws_target.cell(row=1, column=column).value
+            if header == "الإجمالي الكلي":
+              total_col = column
+            elif header == "اجمالي ساعات الدوام الفعلية":
+              actual_hours_col = column
+
+          temp_output = io.BytesIO()
+          template_wb.save(temp_output)
+          temp_output.seek(0)
+
+          # Preserve formulas and also populate their cached results so totals are immediately visible.
+          source_xlsx = temp_output.getvalue()
+          ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+          sheet_index = template_wb.worksheets.index(ws_target) + 1
+          target_sheet_path = f"xl/worksheets/sheet{sheet_index}.xml"
+          patched_output = io.BytesIO()
+          with zipfile.ZipFile(io.BytesIO(source_xlsx), "r") as zin, zipfile.ZipFile(patched_output, "w", zipfile.ZIP_DEFLATED) as zout:
+            for info in zin.infolist():
+              data = zin.read(info.filename)
+              if info.filename == target_sheet_path and row_monthly_totals and total_col is not None:
+                root = ET.fromstring(data)
+                for row_node in root.findall(".//main:row", ns):
+                  row_attr = row_node.attrib.get("r", "")
+                  row_num = int(row_attr) if row_attr.isdigit() else 0
+                  if row_num not in row_monthly_totals:
+                    continue
+                  total_cell = None
+                  actual_cell = None
+                  for c in row_node.findall("main:c", ns):
+                    ref = c.attrib.get("r", "")
+                    if ref == f"{get_column_letter(total_col)}{row_num}":
+                      total_cell = c
+                    elif actual_hours_col is not None and ref == f"{get_column_letter(actual_hours_col)}{row_num}":
+                      actual_cell = c
+                  total_value = row_monthly_totals[row_num]
+                  if total_cell is not None:
+                    v = total_cell.find("main:v", ns)
+                    if v is None:
+                      v = ET.SubElement(total_cell, "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
+                    v.text = str(total_value)
+                  if actual_cell is not None:
+                    v = actual_cell.find("main:v", ns)
+                    if v is None:
+                      v = ET.SubElement(actual_cell, "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
+                    v.text = str(total_value * 24)
+                data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+              zout.writestr(info, data)
+          patched_output.seek(0)
+          strlit.session_state["monthly_attendance_export"] = patched_output.getvalue()
           strlit.session_state["monthly_attendance_filename"] = (
               "Attendance_Completed_"
               f"{sorted_dates[0].strftime('%Y_%m_%d')}"
               "_to_"
-              f"{sorted_dates[-1].strftime('%Y_%m_%d')}"
-              f"{output_extension}"
+              f"{sorted_dates[-1].strftime('%Y_%m_%d')}.xlsx"
           )
-          strlit.session_state["monthly_attendance_mime"] = (
-              "application/vnd.ms-excel.sheet.macroEnabled.12"
-              if keep_vba
-              else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          )
-          strlit.session_state["monthly_attendance_import_summary"] = {
-              "matched": len(employee_matches),
-              "unmatched": len(unmatched_employees),
-              "filled": filled_cells,
-          }
 
           strlit.success(
               f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
-              f"({filled_cells} خانة). تم الحفاظ على معادلات Excel الأصلية دون تعديل."
+              f"({filled_cells} خانة)."
           )
 
         if "monthly_attendance_export" in strlit.session_state:
-          summary = strlit.session_state.get("monthly_attendance_import_summary", {})
-          if summary:
-            strlit.info(
-                f"مطابق: {summary.get('matched', 0)} | "
-                f"غير مطابق: {summary.get('unmatched', 0)} | "
-                f"خانات الدوام المعبأة: {summary.get('filled', 0)}"
-            )
-
           strlit.download_button(
               label="📥 تحميل ملف الدوام الجاهز",
               data=strlit.session_state["monthly_attendance_export"],
               file_name=strlit.session_state["monthly_attendance_filename"],
-              mime=strlit.session_state.get(
-                  "monthly_attendance_mime",
-                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              mime=(
+                  "application/vnd.openxmlformats-officedocument."
+                  "spreadsheetml.sheet"
               ),
               use_container_width=True,
               key="download_monthly_attendance",
