@@ -859,18 +859,16 @@ try:
       return get_column_letter(column_number)
 
     def patch_cell_value_xml(xml_text, row_number, column_number, value):
-      """Change one cell in worksheet XML with a minimal text patch.
+      """Patch only a non-formula attendance cell in worksheet XML.
 
-      This preserves the original XML structure, namespaces, metadata, tables,
-      printer settings, cloud extensions, and any unsupported Excel features.
+      Formula cells are deliberately rejected so the workbook's existing Excel
+      formulas (including structured table formulas) can never be overwritten.
       """
       coordinate = f"{get_column_letter(column_number)}{row_number}"
 
-      # Match either a self-closing cell or a normal cell element while preserving
-      # every attribute except the value/type attributes we intentionally change.
       pattern = re.compile(
           rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)/>'
-          rf'|<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>.*?</c>',
+          rf'|<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>(.*?)</c>',
           re.DOTALL,
       )
 
@@ -879,8 +877,13 @@ try:
         raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
 
       attrs = match.group(1) if match.group(1) is not None else match.group(2)
+      inner = match.group(3) if match.group(3) is not None else ""
 
-      # Remove an existing type attribute. We put back only the type we need.
+      if re.search(r'<f\b', inner):
+        raise RuntimeError(
+            f"رفض تعديل الخلية {coordinate} لأنها تحتوي على معادلة Excel موجودة مسبقاً."
+        )
+
       attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
 
       if value is None or value == "":
@@ -897,6 +900,22 @@ try:
         replacement = f"<c{attrs}><v>{value}</v></c>"
 
       return xml_text[:match.start()] + replacement + xml_text[match.end():]
+
+    def extract_formula_map(xml_text):
+      """Return every worksheet formula keyed by cell reference."""
+      root = ET.fromstring(xml_text)
+      formula_map = {}
+      for cell in root.iter():
+        if cell.tag.rsplit("}", 1)[-1] != "c":
+          continue
+        coordinate = cell.get("r")
+        if not coordinate:
+          continue
+        for child in list(cell):
+          if child.tag.rsplit("}", 1)[-1] == "f":
+            formula_map[coordinate] = ET.tostring(child, encoding="unicode")
+            break
+      return formula_map
 
     def find_sheet_xml_path(zip_file, sheet_name):
       """Resolve a workbook sheet name to its worksheet XML path."""
@@ -930,24 +949,34 @@ try:
     def export_template_preserving_package(original_bytes, sheet_name, cell_updates):
       """Patch attendance values into the original OOXML package.
 
-      Unlike openpyxl.save(), this does not rebuild the workbook. It copies the
-      original ZIP package byte-for-byte except for the specific attendance cells
-      that need changing. This is designed to avoid damaging modern Excel metadata
-      and workbook features that can be lost during a full openpyxl rewrite.
+      The uploaded workbook is not rebuilt. Only the requested attendance cells
+      are changed. Existing formulas, structured table formulas, tables, styles,
+      metadata, printer settings, and other workbook features are preserved.
       """
       input_buffer = io.BytesIO(original_bytes)
       output_buffer = io.BytesIO()
 
       with zipfile.ZipFile(input_buffer, "r") as zin:
         sheet_xml_path = find_sheet_xml_path(zin, sheet_name)
-        sheet_xml_text = zin.read(sheet_xml_path).decode("utf-8")
+        original_sheet_xml = zin.read(sheet_xml_path).decode("utf-8")
+        sheet_xml_text = original_sheet_xml
+        original_formula_map = extract_formula_map(original_sheet_xml)
 
+        # Only attendance cells are allowed to change. Total/formula cells are
+        # never included, and patch_cell_value_xml rejects formula cells anyway.
         for update in cell_updates:
           sheet_xml_text = patch_cell_value_xml(
               sheet_xml_text,
               update["row"],
               update["column"],
               update["value"],
+          )
+
+        patched_formula_map = extract_formula_map(sheet_xml_text)
+        if patched_formula_map != original_formula_map:
+          raise RuntimeError(
+              "تم إيقاف التصدير لأن إحدى معادلات Excel الأصلية تغيّرت. "
+              "لن يتم إنشاء ملف قد يفسد صيغ الجدول."
           )
 
         patched_sheet_xml = sheet_xml_text.encode("utf-8")
@@ -990,6 +1019,15 @@ try:
         if not date_columns:
           strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
           raise RuntimeError("No monthly date columns detected")
+
+        # Fetch only dates that are present in the uploaded monthly sheet and
+        # are not in the future. This must be defined before the BioTime loop.
+        sorted_dates = sorted(set(date_columns.values()))
+        dates_to_fetch = [
+            attendance_date
+            for attendance_date in sorted_dates
+            if attendance_date <= now_syria.date()
+        ]
 
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
@@ -1064,6 +1102,7 @@ try:
         # EXACT MATCH ONLY:
         # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
         # No name fallback and no fuzzy matching.
+        # Excel Column A is ignored for employee identification.
         employee_matches = []
         unmatched_employees = []
         duplicate_excel_ids = set()
@@ -1247,7 +1286,7 @@ try:
 
           strlit.success(
               f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
-              f"({filled_cells} خانة). تم تصدير الملف مع الحفاظ على بنية Excel الأصلية."
+              f"({filled_cells} خانة). تم الحفاظ على معادلات Excel الأصلية دون تعديل."
           )
 
         if "monthly_attendance_export" in strlit.session_state:
