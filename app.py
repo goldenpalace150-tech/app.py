@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 import io
 import unicodedata
 import re
-import difflib
 import zoneinfo
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -765,46 +764,6 @@ try:
         key="monthly_attendance_template",
     )
 
-    def normalize_excel_name(value):
-      value = clean_txt(value).lower()
-      value = unicodedata.normalize("NFKD", value)
-      value = "".join(
-          ch for ch in value if not unicodedata.combining(ch)
-      )
-      value = re.sub(r"[إأآا]", "ا", value)
-      value = value.replace("ى", "ي").replace("ة", "ه")
-      value = value.replace("ؤ", "و").replace("ئ", "ي")
-      value = re.sub(r"[^a-zA-Z0-9\u0621-\u064A\s]", " ", value)
-      return " ".join(value.split())
-
-    def name_score(template_name, api_name):
-      a = normalize_excel_name(template_name)
-      b = normalize_excel_name(api_name)
-      if not a or not b:
-        return 0
-      if a == b:
-        return 100
-
-      a_tokens = set(a.split())
-      b_tokens = set(b.split())
-      token_overlap = len(a_tokens & b_tokens) / max(
-          len(a_tokens), len(b_tokens), 1
-      )
-      sequence_score = difflib.SequenceMatcher(None, a, b).ratio()
-      sorted_token_score = difflib.SequenceMatcher(
-          None,
-          " ".join(sorted(a_tokens)),
-          " ".join(sorted(b_tokens)),
-      ).ratio()
-
-      return round(
-          max(
-              token_overlap,
-              sequence_score,
-              sorted_token_score,
-          ) * 100
-      )
-
     def detect_month_sheet(workbook):
       preferred = [
           sheet_name
@@ -907,25 +866,32 @@ try:
             if attendance_date <= now_syria.date()
         ]
 
-        # The uploaded template is ID in column A and employee name in column B.
+        # IMPORTANT: Match employees ONLY by ID.
+        # Excel reference: BioTime ID (column A)
+        # BioTime/app reference: ID / emp_code
+        # Employee names are never used for matching.
         excel_employees = []
         for row in range(2, ws_target.max_row + 1):
-          employee_id = ws_target.cell(row=row, column=1).value
+          biotime_id = ws_target.cell(row=row, column=1).value
           employee_name = ws_target.cell(row=row, column=2).value
 
-          if employee_id is None and employee_name is None:
+          if biotime_id is None and employee_name is None:
             continue
+
+          normalized_id = str(biotime_id).strip() if biotime_id is not None else ""
+          if normalized_id.isdigit():
+            normalized_id = str(int(normalized_id))
 
           excel_employees.append(
               {
                   "row": row,
-                  "id": str(employee_id).strip() if employee_id is not None else "",
-                  "name": clean_txt(employee_name),
+                  "biotime_id": normalized_id,
+                  "excel_name": clean_txt(employee_name),
               }
           )
 
         if not excel_employees:
-          strlit.error("لم يتم العثور على موظفين في الملف. تأكد من أن ID في العمود A والاسم في العمود B.")
+          strlit.error("لم يتم العثور على موظفين في الملف. تأكد من أن BioTime ID موجود في العمود A.")
           raise RuntimeError("No employee rows detected")
 
         # Fetch BioTime for every date in the Excel file up to today.
@@ -971,58 +937,56 @@ try:
 
         progress.empty()
 
-        # Match Excel employees: exact ID first, then intelligent name matching.
+        # Match ONLY by BioTime ID from Excel -> ID/emp_code from the app.
+        # There is intentionally NO name matching or fallback.
         employee_matches = []
+        unmatched_employees = []
         for excel_employee in excel_employees:
-          matched_id = None
-          matched_api_name = ""
-          match_score = 0
+          biotime_id = excel_employee["biotime_id"]
 
-          excel_id = excel_employee["id"]
-          if excel_id and excel_id in employee_catalog:
-            matched_id = excel_id
-            matched_api_name = employee_catalog[excel_id]
-            match_score = 100
-          else:
-            best_id = None
-            best_name = ""
-            best_score = 0
-            for api_id, api_name in employee_catalog.items():
-              score = name_score(excel_employee["name"], api_name)
-              if score > best_score:
-                best_id = api_id
-                best_name = api_name
-                best_score = score
-
-            if best_score >= 65:
-              matched_id = best_id
-              matched_api_name = best_name
-              match_score = best_score
-
-          if matched_id is not None:
+          if biotime_id and biotime_id in employee_catalog:
             employee_matches.append(
                 {
                     "row": excel_employee["row"],
-                    "excel_name": excel_employee["name"],
-                    "employee_id": matched_id,
-                    "api_name": matched_api_name,
-                    "score": match_score,
+                    "excel_name": excel_employee["excel_name"],
+                    "biotime_id": biotime_id,
+                    "employee_id": biotime_id,
+                    "api_name": employee_catalog[biotime_id],
+                    "score": 100,
+                }
+            )
+          else:
+            unmatched_employees.append(
+                {
+                    "row": excel_employee["row"],
+                    "excel_name": excel_employee["excel_name"],
+                    "biotime_id": biotime_id or "(فارغ)",
+                    "status": "BioTime ID غير موجود في التطبيق",
                 }
             )
 
         preview_rows = [
             {
+                "BioTime ID": match["biotime_id"],
                 "اسم الملف": match["excel_name"],
-                "الموظف المطابق": match["api_name"],
-                "نسبة المطابقة": f'{match["score"]}%',
-                "ID": match["employee_id"],
+                "الموظف في BioTime": match["api_name"],
+                "حالة المطابقة": "Matched by ID",
             }
             for match in employee_matches
         ]
 
         strlit.success(
-            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق."
+            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق بواسطة BioTime ID فقط."
         )
+        if unmatched_employees:
+          strlit.warning(
+              f"⚠️ يوجد {len(unmatched_employees)} موظف لم تتم مطابقته. لن يتم استيراد الدوام لهم."
+          )
+          strlit.dataframe(
+              pd.DataFrame(unmatched_employees),
+              use_container_width=True,
+              hide_index=True,
+          )
         strlit.dataframe(
             pd.DataFrame(preview_rows),
             use_container_width=True,
