@@ -13,6 +13,14 @@ import pandas as pd
 import requests
 import streamlit as strlit
 
+# ================================================================
+# GOLDEN PALACE ATTENDANCE APP - FINAL ID-ONLY IMPORT VERSION
+# Version: 2026-08-27-BIOTIME-ID-COLUMN-B-ID-ONLY
+# IMPORTANT MATCHING RULE:
+#   Excel Column B (BioTime ID) == App/BioTime ID (emp_code)
+#   Employee names and Excel Column A are NEVER used for matching.
+# ================================================================
+
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
@@ -760,11 +768,13 @@ try:
 
   with col_up:
     uploaded_template = strlit.file_uploader(
-        "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
+        "📂 رفع جدول الدوام الشهري — المطابقة من BioTime ID في العمود B فقط",
         type=["xlsx", "xlsm"],
         label_visibility="collapsed",
         key="monthly_attendance_template",
     )
+
+    strlit.caption("🔐 Matching rule: Excel Column B = BioTime ID → App/BioTime ID (exact match only). Names are ignored for matching.")
 
     def normalize_id(value):
       """Normalize an employee ID without changing its identity."""
@@ -990,6 +1000,15 @@ try:
         if not date_columns:
           strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
           raise RuntimeError("No monthly date columns detected")
+
+        # Fetch only dates that are present in the uploaded monthly sheet and
+        # are not in the future. This must be defined before the BioTime loop.
+        sorted_dates = sorted(set(date_columns.values()))
+        dates_to_fetch = [
+            attendance_date
+            for attendance_date in sorted_dates
+            if attendance_date <= now_syria.date()
+        ]
 
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
