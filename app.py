@@ -991,15 +991,6 @@ try:
           strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
           raise RuntimeError("No monthly date columns detected")
 
-        # Sort the detected template dates once and prepare the subset that
-        # should be fetched from BioTime (all dates up to today only).
-        sorted_dates = sorted(set(date_columns.values()))
-        dates_to_fetch = [
-            attendance_date
-            for attendance_date in sorted_dates
-            if attendance_date <= now_syria.date()
-        ]
-
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
         # Excel Column A is NOT used for employee matching.
