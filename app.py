@@ -761,18 +761,14 @@ try:
     )
 
   with col_up:
-    uploaded_template = strlit.file_uploader(
+    # ONE upload box only. It can receive the monthly attendance template and,
+    # when needed, the BioTime Basic Report used for single-punch work time.
+    uploaded_attendance_files = strlit.file_uploader(
         "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
         type=["xlsx", "xlsm"],
+        accept_multiple_files=True,
         label_visibility="collapsed",
-        key="monthly_attendance_template",
-    )
-
-    uploaded_basic_report = strlit.file_uploader(
-        "BioTime Basic Report",
-        type=["xlsx"],
-        label_visibility="collapsed",
-        key="biotime_basic_report",
+        key="monthly_attendance_files",
     )
 
     def normalize_id(value):
@@ -1080,6 +1076,22 @@ try:
           is_date_today,
       )
 
+    # Classify files selected in the single upload box by their contents.
+    # The monthly template remains the main file. A Basic Report is optional
+    # and is used only to recover work time for missing IN/OUT (single punch).
+    uploaded_template = None
+    basic_report_data = {}
+
+    for uploaded_attendance_file in uploaded_attendance_files or []:
+      candidate_basic_report = parse_basic_report(uploaded_attendance_file)
+
+      if candidate_basic_report and not basic_report_data:
+        basic_report_data = candidate_basic_report
+        continue
+
+      if uploaded_template is None:
+        uploaded_template = uploaded_attendance_file
+
     if uploaded_template is not None:
       try:
         # Keep the exact original XLSX/XLSM bytes. The final export will patch
@@ -1132,8 +1144,6 @@ try:
             for column, attendance_date in date_columns.items()
             if attendance_date <= now_syria.date()
         ]
-
-        basic_report_data = parse_basic_report(uploaded_basic_report)
 
         all_attendance = {}
         employee_catalog = {}
