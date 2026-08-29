@@ -1017,54 +1017,69 @@ try:
           )
           raise RuntimeError("No employee rows detected")
 
-        # Fetch BioTime for every date in the Excel file up to today.
+          # Fetch BioTime for every date in the Excel file up to today.
+        sorted_dates = sorted(set(date_columns.values()))
+
+        dates_list = [
+            (column, attendance_date)
+            for column, attendance_date in date_columns.items()
+            if attendance_date <= now_syria.date()
+        ]
+
         all_attendance = {}
         employee_catalog = {}
+
         progress = strlit.progress(
             0,
             text="جاري تحميل بيانات الدوام لجميع التواريخ...",
         )
 
-               total_dates = len(dates_list)
+                total_dates = len(dates_list)
 
         for index, (date_column, attendance_date) in enumerate(
             dates_list,
             start=1,
         ):
-          (
-              active_employees,
-              _present,
-              _late,
-              _absent,
-              _checkout,
-              _leave,
-              _devices,
-              excel_rows_for_date,
-          ) = fetch_month_date(attendance_date)
+            (
+                active_employees,
+                _present,
+                _late,
+                _absent,
+                _checkout,
+                _leave,
+                _devices,
+                excel_rows_for_date,
+            ) = fetch_month_date(attendance_date)
 
-          for employee_id, employee_data in active_employees.items():
-            normalized_employee_id = normalize_id(employee_id)
-            employee_catalog[normalized_employee_id] = clean_txt(
-                employee_data.get("name", "")
+            for employee_id, employee_data in active_employees.items():
+                normalized_employee_id = normalize_id(employee_id)
+
+                employee_catalog[normalized_employee_id] = clean_txt(
+                    employee_data.get("name", "")
+                )
+
+            date_map = {}
+
+            for item in excel_rows_for_date:
+                employee_id = normalize_id(
+                    item.get("Employee ID", "")
+                )
+
+                if employee_id:
+                    date_map[employee_id] = item
+
+            all_attendance[attendance_date] = date_map
+
+            progress.progress(
+                index / max(total_dates, 1),
+                text=(
+                    f"جاري معالجة "
+                    f"{attendance_date.strftime('%d/%m/%Y')} "
+                    f"({index}/{total_dates})"
+                ),
             )
 
-          date_map = {}
-          for item in excel_rows_for_date:
-            employee_id = normalize_id(item.get("Employee ID", ""))
-            if employee_id:
-              date_map[employee_id] = item
-          all_attendance[attendance_date] = date_map
-
-          progress.progress(
-              index / max(total_dates, 1),
-              text=(
-                  f"جاري معالجة {attendance_date.strftime('%d/%m/%Y')} "
-                  f"({index}/{total_dates})"
-              ),
-          )
-
         progress.empty()
-
         # EXACT MATCH ONLY:
         # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
         # No name fallback and no fuzzy matching.
