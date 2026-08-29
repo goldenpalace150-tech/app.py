@@ -1026,7 +1026,6 @@ try:
         )
 
         
-          (
               active_employees,
               _present,
               _late,
