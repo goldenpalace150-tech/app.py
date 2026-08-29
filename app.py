@@ -986,23 +986,10 @@ try:
         )
         ws_target = detect_month_sheet(template_wb)
 
-       date_columns = detect_date_columns(ws_target)
-
-if not date_columns:
-    strlit.error(
-        "لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام."
-    )
-    raise RuntimeError("No monthly date columns detected")
-
-sorted_dates = sorted(set(date_columns.values()))
-
-dates_to_fetch = [
-    attendance_date
-    for attendance_date in sorted_dates
-    if attendance_date <= now_syria.date()
-]
-
-total_dates = len(dates_to_fetch)
+        date_columns = detect_date_columns(ws_target)
+        if not date_columns:
+          strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
+          raise RuntimeError("No monthly date columns detected")
 
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
