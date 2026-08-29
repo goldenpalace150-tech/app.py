@@ -16,6 +16,8 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
+APP_VERSION = "BIO-ATTENDANCE-CURRENT-FIX-2026-08-29"
+
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
     "title_main": "✨ شركة القصر الذهبي ✨",
@@ -1018,6 +1020,13 @@ try:
           raise RuntimeError("No employee rows detected")
 
         # Fetch BioTime for every date in the Excel file up to today.
+        sorted_dates = sorted(set(date_columns.values()))
+        dates_list = [
+            (column, attendance_date)
+            for column, attendance_date in date_columns.items()
+            if attendance_date <= now_syria.date()
+        ]
+
         all_attendance = {}
         employee_catalog = {}
         progress = strlit.progress(
@@ -1025,7 +1034,9 @@ try:
             text="جاري تحميل بيانات الدوام لجميع التواريخ...",
         )
 
-        
+        total_dates = len(dates_list)
+        for index, (date_column, attendance_date) in enumerate(dates_list, start=1):
+          (
               active_employees,
               _present,
               _late,
