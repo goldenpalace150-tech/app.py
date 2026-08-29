@@ -1182,6 +1182,20 @@ try:
           ).items():
             api_record = date_map.get(employee_id, {})
 
+            # The Basic Report is authoritative ONLY for a true single-punch
+            # record (one of Clock In / Clock Out is missing). Normal two-punch
+            # days continue to use the existing API calculation unchanged.
+            report_clock_in = str(
+                basic_record.get("Clock In", "") or ""
+            ).strip()
+            report_clock_out = str(
+                basic_record.get("Clock Out", "") or ""
+            ).strip()
+            is_report_single_punch = bool(report_clock_in) != bool(report_clock_out)
+
+            if not is_report_single_punch:
+              continue
+
             actual_wt = str(basic_record.get("Actual WT", "") or "").strip()
             report_total_wt = str(
                 basic_record.get("Total WT", "") or ""
@@ -1189,40 +1203,31 @@ try:
             api_total_wt = str(api_record.get("Total WT", "") or "").strip()
             work_time = actual_wt or report_total_wt or api_total_wt
 
-            clock_in = str(
-                basic_record.get("Clock In", "")
-                or api_record.get("Clock In", "")
-                or ""
-            ).strip()
-            clock_out = str(
-                basic_record.get("Clock Out", "")
-                or api_record.get("Clock Out", "")
-                or ""
-            ).strip()
+            if not work_time:
+              continue
 
-            if work_time:
-              if clock_in and not clock_out:
-                merged_status = "Present(P) / Missing OUT"
-              elif clock_out and not clock_in:
-                merged_status = "Present(P) / Missing IN"
-              elif not clock_in and not clock_out:
-                merged_status = "Present(P) / BioTime Work Time"
-              else:
-                merged_status = str(
-                    api_record.get("Status", "") or "Present(P)"
-                )
+            # Preserve whichever punch BioTime Basic Report says really exists.
+            # Do not invent the missing side from the raw transaction API.
+            clock_in = report_clock_in
+            clock_out = report_clock_out
 
-              date_map[employee_id] = {
-                  "Employee ID": employee_id,
-                  "First Name": api_record.get("First Name", ""),
-                  "Department": api_record.get("Department", ""),
-                  "Date": attendance_date.strftime("%Y-%m-%d"),
-                  "Clock In": clock_in,
-                  "Clock Out": clock_out,
-                  "Actual WT": actual_wt,
-                  "Total WT": work_time,
-                  "Status": merged_status,
-              }
+            merged_status = (
+                "Present(P) / Missing OUT"
+                if clock_in and not clock_out
+                else "Present(P) / Missing IN"
+            )
+
+            date_map[employee_id] = {
+                "Employee ID": employee_id,
+                "First Name": api_record.get("First Name", ""),
+                "Department": api_record.get("Department", ""),
+                "Date": attendance_date.strftime("%Y-%m-%d"),
+                "Clock In": clock_in,
+                "Clock Out": clock_out,
+                "Actual WT": actual_wt,
+                "Total WT": work_time,
+                "Status": merged_status,
+            }
 
           all_attendance[attendance_date] = date_map
 
@@ -1321,10 +1326,51 @@ try:
                 hide_index=True,
             )
 
+        # Never silently export a blank cell for a single-punch day. The same
+        # ONE upload control can contain both the monthly template and the
+        # BioTime Basic Report. If the Basic Report was not selected (or does
+        # not cover a single-punch date), stop before export instead of writing
+        # an empty duration.
+        unresolved_single_punch = []
+        for employee_match in employee_matches:
+          employee_id = employee_match["employee_id"]
+          for _date_column, attendance_date in date_columns.items():
+            if attendance_date > now_syria.date():
+              continue
+
+            attendance = all_attendance.get(attendance_date, {}).get(employee_id)
+            if not attendance:
+              continue
+
+            status = str(attendance.get("Status", "") or "")
+            if "Leave" in status or "Absence" in status:
+              continue
+
+            clock_in = str(attendance.get("Clock In", "") or "").strip()
+            clock_out = str(attendance.get("Clock Out", "") or "").strip()
+            total_work = str(
+                attendance.get("Actual WT", "")
+                or attendance.get("Total WT", "")
+                or ""
+            ).strip()
+
+            if bool(clock_in) != bool(clock_out) and not total_work:
+              unresolved_single_punch.append(
+                  (employee_id, attendance_date)
+              )
+
+        if unresolved_single_punch:
+          strlit.error(
+              "يوجد سجلات بصمة واحدة بدون ساعات محسوبة من Basic Report. "
+              "اختر ملف جدول الدوام وملف BioTime Basic Report معاً من نفس زر الرفع. "
+              f"عدد السجلات غير المحسوبة: {len(unresolved_single_punch)}"
+          )
+
         if strlit.button(
             "⚙️ تشغيل تعبئة جميع التواريخ",
             use_container_width=True,
             key="run_monthly_attendance",
+            disabled=bool(unresolved_single_punch),
         ):
           filled_cells = 0
           cell_updates = []
