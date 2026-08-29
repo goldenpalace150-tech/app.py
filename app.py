@@ -1025,8 +1025,7 @@ try:
             text="جاري تحميل بيانات الدوام لجميع التواريخ...",
         )
 
-        total_dates = len(dates_to_fetch)
-        for index, attendance_date in enumerate(dates_to_fetch, start=1):
+        
           (
               active_employees,
               _present,
