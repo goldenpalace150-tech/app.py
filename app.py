@@ -13,6 +13,8 @@ import pandas as pd
 import requests
 import streamlit as strlit
 
+APP_VERSION = "BIO-ATTENDANCE-2026-08-29-AUDITED-03"
+
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
@@ -35,6 +37,9 @@ strlit.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# Internal deployment marker used to verify that Streamlit is running this exact source.
+strlit.caption(f"App Version: {APP_VERSION}")
 
 # ==========================================
 # 1. CSS STYLING & ANIMATIONS
@@ -194,6 +199,20 @@ def clean_txt(raw_text):
   )
 
 
+def normalize_id(value):
+  """Normalize an employee/BioTime ID without changing its identity."""
+  if value is None:
+    return ""
+  if isinstance(value, float) and value.is_integer():
+    value = int(value)
+  raw = str(value).strip()
+  if not raw:
+    return ""
+  if raw.endswith(".0") and raw[:-2].isdigit():
+    raw = raw[:-2]
+  return raw
+
+
 @strlit.cache_data(ttl=300)
 def get_auth_token():
   try:
@@ -218,6 +237,92 @@ def get_auth_token():
     strlit.error(f"Connection Failed: {str(e)}")
     return None
 
+
+
+def _parse_report_time(value):
+  """Return HH:MM text from a Basic Report time value."""
+  if value is None:
+    return ""
+  raw = str(value).strip()
+  if not raw or raw.lower() in ("none", "nan"):
+    return ""
+  # Excel/number representations are not used here; BioTime Basic Report uses text HH:MM.
+  if ":" in raw:
+    parts = raw.split(":")
+    try:
+      return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    except (ValueError, TypeError):
+      return ""
+  return ""
+
+
+def parse_biotime_basic_report(report_bytes):
+  """Parse BioTime Daily Attendance Report (Basic Report).
+
+  Returns:
+      dict[BioTime ID][date] = {
+          "Clock In", "Clock Out", "Actual WT", "Actual WT"
+      }
+
+  The report format used by BioTime places an employee header such as
+  'Employee Name: ..., Employee ID: 1' above a Date/Clock In/Clock Out/
+  Actual WT/Actual WT table. Actual WT is intentionally preferred because it
+  remains available when one punch is missing.
+  """
+  result = {}  # {date: {BioTime ID: attendance_record}}
+  wb = openpyxl.load_workbook(io.BytesIO(report_bytes), data_only=True, read_only=True)
+  employee_id = None
+  reading_rows = False
+
+  employee_re = re.compile(r"Employee ID\s*:\s*([^,]+)", re.IGNORECASE)
+
+  for ws in wb.worksheets:
+    for row in ws.iter_rows(values_only=True):
+      first = row[0] if row else None
+      first_text = str(first).strip() if first is not None else ""
+
+      if first_text.startswith("Employee Name:"):
+        match = employee_re.search(first_text)
+        employee_id = normalize_id(match.group(1)) if match else ""
+        reading_rows = False
+        continue
+
+      normalized_header = [str(v).strip().lower() if v is not None else "" for v in row[:5]]
+      if normalized_header[:5] == ["date", "clock in", "clock out", "actual wt", "Actual WT"]:
+        reading_rows = True
+        continue
+
+      if not reading_rows or not employee_id:
+        continue
+
+      date_text = first_text
+      parsed_date = None
+      for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+          parsed_date = datetime.strptime(date_text, fmt).date()
+          break
+        except (ValueError, TypeError):
+          pass
+      if parsed_date is None:
+        # A new employee header or another report section ends the current table.
+        if first_text.startswith("Employee "):
+          reading_rows = False
+        continue
+
+      clock_in = _parse_report_time(row[1] if len(row) > 1 else None)
+      clock_out = _parse_report_time(row[2] if len(row) > 2 else None)
+      actual_wt = _parse_report_time(row[3] if len(row) > 3 else None)
+      total_wt = _parse_report_time(row[4] if len(row) > 4 else None)
+
+      result.setdefault(parsed_date, {})[employee_id] = {
+          "Clock In": clock_in,
+          "Clock Out": clock_out,
+          "Actual WT": actual_wt,
+          "Actual WT": total_wt,
+      }
+
+  wb.close()
+  return result
 
 def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
   token = get_auth_token()
@@ -443,7 +548,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             "Date": selected_date_str,
             "Clock In": "",
             "Clock Out": "",
-            "Total WT": "",
+            "Actual WT": "",
             "Status": f"Leave - {leave_reason}",
         })
       else:
@@ -455,7 +560,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             "Date": selected_date_str,
             "Clock In": "",
             "Clock Out": "",
-            "Total WT": "",
+            "Actual WT": "",
             "Status": "Absence(A)",
         })
       continue
@@ -510,8 +615,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             "Date": selected_date_str,
             "Clock In": first_p.strftime("%H:%M"),
             "Clock Out": "",
-            "Total WT": "",
-            "Status": status_str,
+            "Actual WT": "",
+            "Status": status_str + " / Missing OUT",
         })
       else:
         last_p_real, last_dev_real = (
@@ -533,7 +638,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
             "Date": selected_date_str,
             "Clock In": first_p.strftime("%H:%M"),
             "Clock Out": last_p_real.strftime("%H:%M"),
-            "Total WT": total_wt_str,
+            "Actual WT": total_wt_str,
             "Status": status_str,
         })
     else:
@@ -553,7 +658,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
           "Date": selected_date_str,
           "Clock In": first_p.strftime("%H:%M"),
           "Clock Out": last_p.strftime("%H:%M") if last_p else "",
-          "Total WT": total_wt_str,
+          "Actual WT": total_wt_str,
           "Status": status_str,
       })
 
@@ -666,7 +771,7 @@ try:
         "Date",
         "Clock In",
         "Clock Out",
-        "Total WT",
+        "Actual WT",
         "Status",
     ]
     ws.append(headers)
@@ -690,7 +795,7 @@ try:
           row_data["Date"],
           row_data["Clock In"],
           row_data["Clock Out"],
-          row_data["Total WT"],
+          row_data["Actual WT"],
           row_data["Status"],
       ])
 
@@ -759,6 +864,14 @@ try:
     )
 
   with col_up:
+    uploaded_basic_report = strlit.file_uploader(
+        "📄 رفع BioTime Basic Report (اختياري - الأفضل للحضور مع بصمة ناقصة)",
+        type=["xlsx"],
+        label_visibility="visible",
+        key="biotime_basic_report",
+        help="يُستخدم Actual WT من تقرير BioTime حتى عند غياب دخول أو خروج.",
+    )
+
     uploaded_template = strlit.file_uploader(
         "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
         type=["xlsx", "xlsm"],
@@ -858,7 +971,7 @@ try:
     def excel_col_letter(column_number):
       return get_column_letter(column_number)
 
-    def patch_cell_value_xml(xml_text, row_number, column_number, value):
+    def patch_cell_value_xml(xml_text, row_number, column_number, value, force_time_style=False):
       """Change one cell in worksheet XML with a minimal text patch.
 
       This preserves the original XML structure, namespaces, metadata, tables,
@@ -882,6 +995,16 @@ try:
 
       # Remove an existing type attribute. We put back only the type we need.
       attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
+
+      # In the supplied monthly template the existing body cells from the later
+      # date columns use raw OOXML style 7, whose number format is [h]:mm.
+      # Reusing that existing style fixes the early date columns (29/07, 30/07)
+      # without rebuilding the workbook.
+      if force_time_style:
+        if re.search(r'\s+s="[^"]*"', attrs):
+          attrs = re.sub(r'\s+s="[^"]*"', ' s="7"', attrs)
+        else:
+          attrs += ' s="7"'
 
       if value is None or value == "":
         replacement = f"<c{attrs}/>"
@@ -927,7 +1050,41 @@ try:
 
       raise RuntimeError(f"Worksheet not found: {sheet_name}")
 
-    def export_template_preserving_package(original_bytes, sheet_name, cell_updates):
+
+
+    def patch_formula_cached_values(xml_text, cache_updates):
+      """Update cached <v> values of existing formula cells without replacing formulas."""
+      for coordinate, cached_value in cache_updates.items():
+        pattern = re.compile(
+            rf'(<c\b(?=[^>]*\br="{re.escape(coordinate)}")[^>]*>.*?<f\b[^>]*>.*?</f>)(<v>.*?</v>)?(</c>)',
+            re.DOTALL,
+        )
+        match = pattern.search(xml_text)
+        if not match:
+          continue
+        value_xml = f"<v>{cached_value}</v>"
+        replacement = match.group(1) + value_xml + match.group(3)
+        xml_text = xml_text[:match.start()] + replacement + xml_text[match.end():]
+      return xml_text
+
+    def patch_calc_pr(archive_text):
+      """Force Excel/WPS to recalculate formulas when the exported workbook opens."""
+      if "<calcPr" in archive_text:
+        archive_text = re.sub(
+            r'<calcPr\b[^>]*/>',
+            '<calcPr calcId="191029" calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>',
+            archive_text,
+            count=1,
+        )
+      elif "</workbook>" in archive_text:
+        archive_text = archive_text.replace(
+            "</workbook>",
+            '<calcPr calcId="191029" calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>',
+            1,
+        )
+      return archive_text
+
+    def export_template_preserving_package(original_bytes, sheet_name, cell_updates, formula_cache_updates=None):
       """Patch attendance values into the original OOXML package.
 
       Unlike openpyxl.save(), this does not rebuild the workbook. It copies the
@@ -948,6 +1105,12 @@ try:
               update["row"],
               update["column"],
               update["value"],
+              force_time_style=update.get("force_time_style", False),
+          )
+
+        if formula_cache_updates:
+          sheet_xml_text = patch_formula_cached_values(
+              sheet_xml_text, formula_cache_updates
           )
 
         patched_sheet_xml = sheet_xml_text.encode("utf-8")
@@ -957,6 +1120,9 @@ try:
             data = zin.read(item.filename)
             if item.filename == sheet_xml_path:
               data = patched_sheet_xml
+            elif item.filename == "xl/workbook.xml":
+              workbook_text = data.decode("utf-8")
+              data = patch_calc_pr(workbook_text).encode("utf-8")
             zout.writestr(item, data)
 
       output_buffer.seek(0)
@@ -985,6 +1151,18 @@ try:
             data_only=False,
         )
         ws_target = detect_month_sheet(template_wb)
+
+        basic_report_data = {}
+        if uploaded_basic_report is not None:
+          try:
+            basic_report_data = parse_biotime_basic_report(uploaded_basic_report.getvalue())
+            strlit.success(
+                f"✅ تم تحميل BioTime Basic Report: {len(basic_report_data)} موظف. سيتم استخدام Actual WT عند توفره."
+            )
+          except Exception as basic_error:
+            strlit.warning(
+                f"تعذر قراءة BioTime Basic Report، سيتم الاعتماد على بيانات BioTime API: {basic_error}"
+            )
 
         date_columns = detect_date_columns(ws_target)
         if not date_columns:
@@ -1018,6 +1196,14 @@ try:
           raise RuntimeError("No employee rows detected")
 
         # Fetch BioTime for every date in the Excel file up to today.
+        # IMPORTANT: define dates_to_fetch before it is used.
+        sorted_dates = sorted(set(date_columns.values()))
+        dates_to_fetch = [
+            attendance_date
+            for attendance_date in sorted_dates
+            if attendance_date <= now_syria.date()
+        ]
+
         all_attendance = {}
         employee_catalog = {}
         progress = strlit.progress(
@@ -1049,6 +1235,22 @@ try:
             employee_id = normalize_id(item.get("Employee ID", ""))
             if employee_id:
               date_map[employee_id] = item
+          # Prefer BioTime Basic Report Actual WT for this date. This is the
+          # official calculated work time and works even when Clock In/Out is missing.
+          report_date_map = basic_report_data.get(attendance_date, {})
+          for employee_id, report_row in report_date_map.items():
+            existing = date_map.get(employee_id, {})
+            actual_wt = report_row.get("Actual WT") or report_row.get("Actual WT")
+            if actual_wt:
+              date_map[employee_id] = {
+                  **existing,
+                  "Employee ID": employee_id,
+                  "Clock In": report_row.get("Clock In", existing.get("Clock In", "")),
+                  "Clock Out": report_row.get("Clock Out", existing.get("Clock Out", "")),
+                  "Actual WT": actual_wt,
+                  "Status": existing.get("Status", "Present(P)"),
+                  "Source": "BioTime Basic Report / Actual WT",
+              }
           all_attendance[attendance_date] = date_map
 
           progress.progress(
@@ -1180,7 +1382,7 @@ try:
                 status = str(attendance.get("Status", ""))
                 clock_in = str(attendance.get("Clock In", "") or "")
                 clock_out = str(attendance.get("Clock Out", "") or "")
-                total_work = str(attendance.get("Total WT", "") or "")
+                total_work = str(attendance.get("Actual WT", "") or "")
 
                 if "Leave" in status:
                   cell_value = "L"
@@ -1195,6 +1397,7 @@ try:
                       "row": excel_row,
                       "column": date_column,
                       "value": cell_value,
+                      "force_time_style": isinstance(cell_value, (int, float)) and not isinstance(cell_value, bool),
                   }
               )
               filled_cells += 1
@@ -1213,11 +1416,43 @@ try:
                   ]
               )
 
+          # Pre-calculate the visible cached values for existing monthly formulas.
+          # The formulas themselves are left untouched. This makes the total visible
+          # immediately in Excel/WPS while also asking the application to recalculate.
+          formula_cache_updates = {}
+          daily_values_by_row = {}
+          for update in cell_updates:
+            daily_values_by_row.setdefault(update["row"], {})[update["column"]] = update["value"]
+
+          for match in employee_matches:
+            row_number = match["row"]
+            total_fraction = 0.0
+            for date_column, attendance_date in date_columns.items():
+              if attendance_date > now_syria.date():
+                continue
+              value = daily_values_by_row.get(row_number, {}).get(date_column)
+              if isinstance(value, (int, float)) and not isinstance(value, bool):
+                total_fraction += float(value)
+
+            for column_number in range(1, ws_target.max_column + 1):
+              formula_cell = ws_target.cell(row=row_number, column=column_number)
+              formula = formula_cell.value
+              if not (isinstance(formula, str) and formula.startswith("=")):
+                continue
+
+              upper_formula = formula.upper()
+              coordinate = formula_cell.coordinate
+              if "SUM(" in upper_formula:
+                formula_cache_updates[coordinate] = f"{total_fraction:.15f}"
+              elif "*24" in upper_formula.replace(" ", ""):
+                formula_cache_updates[coordinate] = f"{(total_fraction * 24):.15f}"
+
           try:
             export_bytes = export_template_preserving_package(
                 original_template_bytes,
                 ws_target.title,
                 cell_updates,
+                formula_cache_updates=formula_cache_updates,
             )
           except Exception as export_error:
             raise RuntimeError(
@@ -1243,6 +1478,7 @@ try:
               "matched": len(employee_matches),
               "unmatched": len(unmatched_employees),
               "filled": filled_cells,
+              "basic_report": bool(basic_report_data),
           }
 
           strlit.success(
@@ -1256,7 +1492,8 @@ try:
             strlit.info(
                 f"مطابق: {summary.get('matched', 0)} | "
                 f"غير مطابق: {summary.get('unmatched', 0)} | "
-                f"خانات الدوام المعبأة: {summary.get('filled', 0)}"
+                f"خانات الدوام المعبأة: {summary.get('filled', 0)} | "
+                f"Basic Report: {'نعم' if summary.get('basic_report') else 'لا'}"
             )
 
           strlit.download_button(
