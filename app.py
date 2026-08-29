@@ -768,6 +768,13 @@ try:
         key="monthly_attendance_template",
     )
 
+    uploaded_basic_report = strlit.file_uploader(
+        "BioTime Basic Report",
+        type=["xlsx"],
+        label_visibility="collapsed",
+        key="biotime_basic_report",
+    )
+
     def normalize_id(value):
       """Normalize an employee ID without changing its identity."""
       if value is None:
@@ -785,6 +792,105 @@ try:
         raw = raw[:-2]
 
       return raw
+
+    def parse_basic_report(uploaded_file):
+      """Read BioTime Basic Report work time by exact Employee ID and date."""
+      if uploaded_file is None:
+        return {}
+
+      basic_bytes = uploaded_file.getvalue()
+      basic_wb = openpyxl.load_workbook(
+          io.BytesIO(basic_bytes),
+          data_only=True,
+          read_only=True,
+      )
+
+      result = {}
+      employee_id_pattern = re.compile(
+          r"Employee\s*ID\s*:\s*([A-Za-z0-9._/-]+)",
+          re.IGNORECASE,
+      )
+
+      for basic_ws in basic_wb.worksheets:
+        current_employee_id = ""
+        header_map = None
+
+        for row_values in basic_ws.iter_rows(values_only=True):
+          values = list(row_values)
+          row_text = " ".join(
+              clean_txt(value) for value in values if value not in (None, "")
+          )
+
+          employee_match = employee_id_pattern.search(row_text)
+          if employee_match:
+            current_employee_id = normalize_id(employee_match.group(1))
+            header_map = None
+            continue
+
+          normalized_headers = [clean_txt(value).lower() for value in values]
+          if "date" in normalized_headers and "actual wt" in normalized_headers:
+            header_map = {
+                header: index
+                for index, header in enumerate(normalized_headers)
+                if header
+            }
+            continue
+
+          if not current_employee_id or header_map is None:
+            continue
+
+          date_index = header_map.get("date")
+          if date_index is None or date_index >= len(values):
+            continue
+
+          raw_date = values[date_index]
+          attendance_date = None
+
+          if isinstance(raw_date, datetime):
+            attendance_date = raw_date.date()
+          elif (
+              hasattr(raw_date, "year")
+              and hasattr(raw_date, "month")
+              and hasattr(raw_date, "day")
+          ):
+            attendance_date = raw_date
+          elif raw_date not in (None, ""):
+            raw_date_text = str(raw_date).strip()
+            for date_format in (
+                "%d-%m-%Y",
+                "%d/%m/%Y",
+                "%Y-%m-%d",
+                "%d-%m-%y",
+                "%d/%m/%y",
+            ):
+              try:
+                attendance_date = datetime.strptime(
+                    raw_date_text[:10],
+                    date_format,
+                ).date()
+                break
+              except ValueError:
+                continue
+
+          if attendance_date is None:
+            continue
+
+          def report_value(header_name):
+            value_index = header_map.get(header_name)
+            if value_index is None or value_index >= len(values):
+              return ""
+            value = values[value_index]
+            return str(value).strip() if value not in (None, "") else ""
+
+          result.setdefault(attendance_date, {})[current_employee_id] = {
+              "Employee ID": current_employee_id,
+              "Clock In": report_value("clock in"),
+              "Clock Out": report_value("clock out"),
+              "Actual WT": report_value("actual wt"),
+              "Total WT": report_value("total wt"),
+          }
+
+      return result
 
     def detect_month_sheet(workbook):
       preferred = [
@@ -1027,6 +1133,8 @@ try:
             if attendance_date <= now_syria.date()
         ]
 
+        basic_report_data = parse_basic_report(uploaded_basic_report)
+
         all_attendance = {}
         employee_catalog = {}
         progress = strlit.progress(
@@ -1058,6 +1166,54 @@ try:
             employee_id = normalize_id(item.get("Employee ID", ""))
             if employee_id:
               date_map[employee_id] = item
+
+          for employee_id, basic_record in basic_report_data.get(
+              attendance_date, {}
+          ).items():
+            api_record = date_map.get(employee_id, {})
+
+            actual_wt = str(basic_record.get("Actual WT", "") or "").strip()
+            report_total_wt = str(
+                basic_record.get("Total WT", "") or ""
+            ).strip()
+            api_total_wt = str(api_record.get("Total WT", "") or "").strip()
+            work_time = actual_wt or report_total_wt or api_total_wt
+
+            clock_in = str(
+                basic_record.get("Clock In", "")
+                or api_record.get("Clock In", "")
+                or ""
+            ).strip()
+            clock_out = str(
+                basic_record.get("Clock Out", "")
+                or api_record.get("Clock Out", "")
+                or ""
+            ).strip()
+
+            if work_time:
+              if clock_in and not clock_out:
+                merged_status = "Present(P) / Missing OUT"
+              elif clock_out and not clock_in:
+                merged_status = "Present(P) / Missing IN"
+              elif not clock_in and not clock_out:
+                merged_status = "Present(P) / BioTime Work Time"
+              else:
+                merged_status = str(
+                    api_record.get("Status", "") or "Present(P)"
+                )
+
+              date_map[employee_id] = {
+                  "Employee ID": employee_id,
+                  "First Name": api_record.get("First Name", ""),
+                  "Department": api_record.get("Department", ""),
+                  "Date": attendance_date.strftime("%Y-%m-%d"),
+                  "Clock In": clock_in,
+                  "Clock Out": clock_out,
+                  "Actual WT": actual_wt,
+                  "Total WT": work_time,
+                  "Status": merged_status,
+              }
+
           all_attendance[attendance_date] = date_map
 
           progress.progress(
@@ -1189,7 +1345,11 @@ try:
                 status = str(attendance.get("Status", ""))
                 clock_in = str(attendance.get("Clock In", "") or "")
                 clock_out = str(attendance.get("Clock Out", "") or "")
-                total_work = str(attendance.get("Total WT", "") or "")
+                total_work = str(
+                    attendance.get("Actual WT", "")
+                    or attendance.get("Total WT", "")
+                    or ""
+                ).strip()
 
                 if "Leave" in status:
                   cell_value = "L"
