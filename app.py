@@ -761,8 +761,8 @@ try:
     )
 
   with col_up:
-    # ONE upload box only. It can receive the monthly attendance template and,
-    # when needed, the BioTime Basic Report used for single-punch work time.
+    # ONE upload box only. It can receive the monthly attendance template and
+    # the BioTime Basic Report used as the source of truth for monthly values.
     uploaded_attendance_files = strlit.file_uploader(
         "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
         type=["xlsx", "xlsm"],
@@ -1077,8 +1077,8 @@ try:
       )
 
     # Classify files selected in the single upload box by their contents.
-    # The monthly template remains the main file. A Basic Report is optional
-    # and is used only to recover work time for missing IN/OUT (single punch).
+    # The monthly template remains the main file. The BioTime Basic Report is
+    # the source of truth for EVERY attendance date cell in the monthly sheet.
     uploaded_template = None
     basic_report_data = {}
 
@@ -1137,97 +1137,44 @@ try:
           )
           raise RuntimeError("No employee rows detected")
 
-        # Fetch BioTime for every date in the Excel file up to today.
+        # Process EVERY date column in the uploaded monthly sheet.
+        # Basic Report values overwrite existing values, including blanks.
         sorted_dates = sorted(set(date_columns.values()))
-        dates_list = [
-            (column, attendance_date)
-            for column, attendance_date in date_columns.items()
-            if attendance_date <= now_syria.date()
-        ]
+        dates_list = list(date_columns.items())
 
         all_attendance = {}
+
+        # Keep the existing exact-ID validation against the app/BioTime list.
+        # Also accept IDs that exist in the uploaded BioTime Basic Report, since
+        # its Employee ID is the same BioTime emp_code used for Column B matching.
         employee_catalog = {}
+        for employee_id, employee_data in act.items():
+          normalized_employee_id = normalize_id(employee_id)
+          employee_catalog[normalized_employee_id] = clean_txt(
+              employee_data.get("name", "")
+          )
+
+        for report_date_map in basic_report_data.values():
+          for employee_id in report_date_map:
+            normalized_employee_id = normalize_id(employee_id)
+            employee_catalog.setdefault(normalized_employee_id, "")
+
         progress = strlit.progress(
             0,
             text="جاري تحميل بيانات الدوام لجميع التواريخ...",
         )
 
         total_dates = len(dates_list)
-        for index, (date_column, attendance_date) in enumerate(dates_list, start=1):
-          (
-              active_employees,
-              _present,
-              _late,
-              _absent,
-              _checkout,
-              _leave,
-              _devices,
-              excel_rows_for_date,
-          ) = fetch_month_date(attendance_date)
-
-          for employee_id, employee_data in active_employees.items():
-            normalized_employee_id = normalize_id(employee_id)
-            employee_catalog[normalized_employee_id] = clean_txt(
-                employee_data.get("name", "")
-            )
-
+        for index, (_date_column, attendance_date) in enumerate(dates_list, start=1):
+          # No API attendance calculation or fallback is used here.
+          # The Basic Report is copied as-is for this date.
           date_map = {}
-          for item in excel_rows_for_date:
-            employee_id = normalize_id(item.get("Employee ID", ""))
-            if employee_id:
-              date_map[employee_id] = item
-
           for employee_id, basic_record in basic_report_data.get(
               attendance_date, {}
           ).items():
-            api_record = date_map.get(employee_id, {})
-
-            # The Basic Report is authoritative ONLY for a true single-punch
-            # record (one of Clock In / Clock Out is missing). Normal two-punch
-            # days continue to use the existing API calculation unchanged.
-            report_clock_in = str(
-                basic_record.get("Clock In", "") or ""
-            ).strip()
-            report_clock_out = str(
-                basic_record.get("Clock Out", "") or ""
-            ).strip()
-            is_report_single_punch = bool(report_clock_in) != bool(report_clock_out)
-
-            if not is_report_single_punch:
-              continue
-
-            actual_wt = str(basic_record.get("Actual WT", "") or "").strip()
-            report_total_wt = str(
-                basic_record.get("Total WT", "") or ""
-            ).strip()
-            api_total_wt = str(api_record.get("Total WT", "") or "").strip()
-            work_time = actual_wt or report_total_wt or api_total_wt
-
-            if not work_time:
-              continue
-
-            # Preserve whichever punch BioTime Basic Report says really exists.
-            # Do not invent the missing side from the raw transaction API.
-            clock_in = report_clock_in
-            clock_out = report_clock_out
-
-            merged_status = (
-                "Present(P) / Missing OUT"
-                if clock_in and not clock_out
-                else "Present(P) / Missing IN"
-            )
-
-            date_map[employee_id] = {
-                "Employee ID": employee_id,
-                "First Name": api_record.get("First Name", ""),
-                "Department": api_record.get("Department", ""),
-                "Date": attendance_date.strftime("%Y-%m-%d"),
-                "Clock In": clock_in,
-                "Clock Out": clock_out,
-                "Actual WT": actual_wt,
-                "Total WT": work_time,
-                "Status": merged_status,
-            }
+            normalized_employee_id = normalize_id(employee_id)
+            if normalized_employee_id:
+              date_map[normalized_employee_id] = basic_record
 
           all_attendance[attendance_date] = date_map
 
@@ -1326,51 +1273,19 @@ try:
                 hide_index=True,
             )
 
-        # Never silently export a blank cell for a single-punch day. The same
-        # ONE upload control can contain both the monthly template and the
-        # BioTime Basic Report. If the Basic Report was not selected (or does
-        # not cover a single-punch date), stop before export instead of writing
-        # an empty duration.
-        unresolved_single_punch = []
-        for employee_match in employee_matches:
-          employee_id = employee_match["employee_id"]
-          for _date_column, attendance_date in date_columns.items():
-            if attendance_date > now_syria.date():
-              continue
-
-            attendance = all_attendance.get(attendance_date, {}).get(employee_id)
-            if not attendance:
-              continue
-
-            status = str(attendance.get("Status", "") or "")
-            if "Leave" in status or "Absence" in status:
-              continue
-
-            clock_in = str(attendance.get("Clock In", "") or "").strip()
-            clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            total_work = str(
-                attendance.get("Actual WT", "")
-                or attendance.get("Total WT", "")
-                or ""
-            ).strip()
-
-            if bool(clock_in) != bool(clock_out) and not total_work:
-              unresolved_single_punch.append(
-                  (employee_id, attendance_date)
-              )
-
-        if unresolved_single_punch:
+        # The Basic Report is required because it is now the only source used
+        # for monthly attendance values. There is no API work-time fallback.
+        basic_report_missing = not bool(basic_report_data)
+        if basic_report_missing:
           strlit.error(
-              "يوجد سجلات بصمة واحدة بدون ساعات محسوبة من Basic Report. "
-              "اختر ملف جدول الدوام وملف BioTime Basic Report معاً من نفس زر الرفع. "
-              f"عدد السجلات غير المحسوبة: {len(unresolved_single_punch)}"
+              "اختر ملف جدول الدوام وملف BioTime Basic Report معاً من نفس زر الرفع."
           )
 
         if strlit.button(
             "⚙️ تشغيل تعبئة جميع التواريخ",
             use_container_width=True,
             key="run_monthly_attendance",
-            disabled=bool(unresolved_single_punch),
+            disabled=basic_report_missing,
         ):
           filled_cells = 0
           cell_updates = []
@@ -1382,38 +1297,39 @@ try:
             excel_row = match["row"]
 
             for date_column, attendance_date in date_columns.items():
-              # Future dates stay unchanged/blank.
-              if attendance_date > now_syria.date():
-                continue
-
+              # Basic Report Actual WT is the source of truth for EVERY cell.
+              # If the report value is blank (or the report has no row for this
+              # employee/date), the monthly Excel cell is explicitly cleared.
+              # No Total WT fallback and no API fallback are used.
               attendance = all_attendance.get(
                   attendance_date,
                   {},
               ).get(employee_id)
 
               if attendance is None:
-                cell_value = "A"
-                status = "Absence(A)"
                 clock_in = ""
                 clock_out = ""
                 total_work = ""
+                status = "Basic Report: blank"
+                cell_value = None
               else:
-                status = str(attendance.get("Status", ""))
                 clock_in = str(attendance.get("Clock In", "") or "")
                 clock_out = str(attendance.get("Clock Out", "") or "")
-                total_work = str(
-                    attendance.get("Actual WT", "")
-                    or attendance.get("Total WT", "")
-                    or ""
-                ).strip()
+                total_work = str(attendance.get("Actual WT", "") or "").strip()
+                status = "Basic Report"
 
-                if "Leave" in status:
-                  cell_value = "L"
-                elif "Absence" in status:
-                  cell_value = "A"
-                else:
+                if total_work:
                   excel_time = time_to_excel_value(total_work)
-                  cell_value = excel_time if excel_time is not None else None
+                  if excel_time is None:
+                    raise RuntimeError(
+                        "قيمة Actual WT غير صالحة في Basic Report: "
+                        f"BioTime ID {employee_id}, "
+                        f"{attendance_date.strftime('%d/%m/%Y')}, "
+                        f"value={total_work}"
+                    )
+                  cell_value = excel_time
+                else:
+                  cell_value = None
 
               cell_updates.append(
                   {
@@ -1471,7 +1387,7 @@ try:
           }
 
           strlit.success(
-              f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
+              f"✅ تمت مزامنة جميع خلايا التواريخ مع Basic Report "
               f"({filled_cells} خانة). تم تصدير الملف مع الحفاظ على بنية Excel الأصلية."
           )
 
