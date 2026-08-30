@@ -2596,74 +2596,21 @@ try:
     def excel_col_letter(column_number):
       return get_column_letter(column_number)
 
-    def get_cell_style_id_xml(xml_text, row_number, column_number):
-      """Return the worksheet style id for a cell; 0 means default style."""
-      coordinate = f"{get_column_letter(column_number)}{row_number}"
-      pattern = re.compile(
-          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)', re.DOTALL
-      )
-      match = pattern.search(xml_text)
-      if not match:
-        raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
-      attrs = match.group(1) or ""
-      style_match = re.search(r'\s+s="(\d+)"', attrs)
-      return int(style_match.group(1)) if style_match else 0
-
-    def ensure_duration_styles(styles_xml_bytes, source_style_ids):
-      """Clone existing styles and change ONLY their number format to [h]:mm."""
-      main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-      ET.register_namespace("", main_ns)
-      root = ET.fromstring(styles_xml_bytes)
-      numfmts = root.find(f"{{{main_ns}}}numFmts")
-      cellxfs = root.find(f"{{{main_ns}}}cellXfs")
-      if cellxfs is None:
-        raise RuntimeError("Excel styles.xml does not contain cellXfs")
-
-      duration_numfmt_id = None
-      if numfmts is not None:
-        for item in numfmts.findall(f"{{{main_ns}}}numFmt"):
-          if item.get("formatCode") == "[h]:mm":
-            duration_numfmt_id = int(item.get("numFmtId"))
-            break
-
-      if duration_numfmt_id is None:
-        existing_ids = []
-        if numfmts is not None:
-          for item in numfmts.findall(f"{{{main_ns}}}numFmt"):
-            try:
-              existing_ids.append(int(item.get("numFmtId", "0")))
-            except ValueError:
-              pass
-        duration_numfmt_id = max([163] + existing_ids) + 1
-        if numfmts is None:
-          numfmts = ET.Element(f"{{{main_ns}}}numFmts", {"count": "0"})
-          root.insert(0, numfmts)
-        ET.SubElement(
-            numfmts,
-            f"{{{main_ns}}}numFmt",
-            {"numFmtId": str(duration_numfmt_id), "formatCode": "[h]:mm"},
-        )
-        numfmts.set("count", str(len(numfmts.findall(f"{{{main_ns}}}numFmt"))))
-
-      xfs = list(cellxfs.findall(f"{{{main_ns}}}xf"))
-      style_map = {}
-      for original_style_id in sorted(set(source_style_ids)):
-        source_style_id = original_style_id
-        if source_style_id < 0 or source_style_id >= len(xfs):
-          source_style_id = 0
-        source_xf = xfs[source_style_id]
-        if int(source_xf.get("numFmtId", "0")) == duration_numfmt_id:
-          style_map[original_style_id] = source_style_id
-          continue
-        cloned_xf = ET.fromstring(ET.tostring(source_xf, encoding="utf-8"))
-        cloned_xf.set("numFmtId", str(duration_numfmt_id))
-        cloned_xf.set("applyNumberFormat", "1")
-        cellxfs.append(cloned_xf)
-        new_style_id = len(list(cellxfs.findall(f"{{{main_ns}}}xf"))) - 1
-        style_map[original_style_id] = new_style_id
-
-      cellxfs.set("count", str(len(list(cellxfs.findall(f"{{{main_ns}}}xf")))))
-      return ET.tostring(root, encoding="utf-8", xml_declaration=True), style_map
+    def find_existing_duration_style_id(ws, date_columns):
+      """Reuse an existing raw OOXML [h]:mm style id from the template."""
+      # Never rebuild styles.xml. openpyxl may expose duplicate/generated style ids,
+      # so resolve the cell style back to the FIRST style already stored in the
+      # uploaded workbook. That index is the safe worksheet s= style id.
+      workbook_styles = list(getattr(ws.parent, "_cell_styles", []))
+      for row_number in range(2, ws.max_row + 1):
+        for column_number in date_columns:
+          cell = ws.cell(row=row_number, column=column_number)
+          if str(cell.number_format or "").strip().lower() != "[h]:mm":
+            continue
+          for style_index, existing_style in enumerate(workbook_styles):
+            if existing_style == cell._style:
+              return int(style_index)
+      return None
 
     def patch_cell_value_xml(xml_text, row_number, column_number, value, style_id=None):
       """Overwrite one attendance cell in the original worksheet XML."""
@@ -2793,9 +2740,14 @@ try:
       raise RuntimeError(f"Worksheet not found: {sheet_name}")
 
     def export_template_preserving_package(
-        original_bytes, sheet_name, cell_updates, formula_updates=None
+        original_bytes, sheet_name, cell_updates, formula_updates=None, duration_style_id=None
     ):
-      """Patch the original OOXML package without rebuilding the workbook."""
+      """Patch values/formulas into the original OOXML package without rebuilding it.
+
+      IMPORTANT: xl/styles.xml is copied byte-for-byte. Numeric attendance cells may
+      reuse an EXISTING [h]:mm style id from the uploaded template, but no style
+      definitions or workbook metadata are regenerated.
+      """
       input_buffer = io.BytesIO(original_bytes)
       output_buffer = io.BytesIO()
       formula_updates = formula_updates or []
@@ -2803,24 +2755,21 @@ try:
         sheet_xml_path = find_sheet_xml_path(zin, sheet_name)
         sheet_xml_text = zin.read(sheet_xml_path).decode("utf-8")
 
-        source_style_ids = []
         for update in cell_updates:
-          source_style_ids.append(
-              get_cell_style_id_xml(sheet_xml_text, update["row"], update["column"])
+          value = update["value"]
+          # Only real numeric attendance durations need the existing [h]:mm style.
+          # A/L/blank cells keep their original template style untouched.
+          use_duration_style = (
+              duration_style_id
+              if duration_style_id is not None
+              and value not in (None, "")
+              and not isinstance(value, str)
+              else None
           )
-        styles_xml_path = "xl/styles.xml"
-        patched_styles_xml = zin.read(styles_xml_path)
-        duration_style_map = {}
-        if source_style_ids:
-          patched_styles_xml, duration_style_map = ensure_duration_styles(
-              patched_styles_xml, source_style_ids
-          )
-
-        for update, source_style_id in zip(cell_updates, source_style_ids):
           sheet_xml_text = patch_cell_value_xml(
               sheet_xml_text,
-              update["row"], update["column"], update["value"],
-              style_id=duration_style_map.get(source_style_id, source_style_id),
+              update["row"], update["column"], value,
+              style_id=use_duration_style,
           )
 
         for formula_update in formula_updates:
@@ -2860,8 +2809,7 @@ try:
               data = patched_sheet_xml
             elif item.filename == "xl/workbook.xml":
               data = patched_workbook_xml
-            elif item.filename == styles_xml_path:
-              data = patched_styles_xml
+            # Everything else, especially xl/styles.xml, is copied exactly.
             zout.writestr(item, data)
       output_buffer.seek(0)
       return output_buffer.getvalue()
@@ -2898,6 +2846,10 @@ try:
         if not date_columns:
           strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
           raise RuntimeError("No monthly date columns detected")
+
+        # Use the template's own existing [h]:mm attendance style.
+        # This fixes General-formatted blank cells without modifying styles.xml.
+        duration_style_id = find_existing_duration_style_id(ws_target, date_columns)
 
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
@@ -3139,128 +3091,125 @@ try:
                 }
             )
 
-        if strlit.button(
-            "⚙️ تشغيل تعبئة جميع التواريخ",
-            use_container_width=True,
-            key="run_monthly_attendance",
-        ):
-          export_loading_overlay = show_loading_overlay(
-              "جاري تحديث القيم وتجهيز ملف Excel النهائي..."
-          )
-          filled_cells = 0
-          cell_updates = []
-          import_log = []
+        # Automatically generate the completed attendance file immediately after upload.
+        export_loading_overlay = show_loading_overlay(
+            "جاري تحديث القيم وتجهيز ملف Excel النهائي..."
+        )
+        filled_cells = 0
+        cell_updates = []
+        import_log = []
 
-          # Process every date column. Only exact BioTime ID matches are eligible.
-          for match in employee_matches:
-            employee_id = match["employee_id"]
-            excel_row = match["row"]
+        # Process every date column. Only exact BioTime ID matches are eligible.
+        for match in employee_matches:
+          employee_id = match["employee_id"]
+          excel_row = match["row"]
 
-            for date_column, attendance_date in date_columns.items():
-              # Future dates stay unchanged/blank.
-              if attendance_date > now_syria.date():
-                continue
+          for date_column, attendance_date in date_columns.items():
+            # Future dates stay unchanged/blank.
+            if attendance_date > now_syria.date():
+              continue
 
-              attendance = all_attendance.get(
-                  attendance_date,
-                  {},
-              ).get(employee_id)
+            attendance = all_attendance.get(
+                attendance_date,
+                {},
+            ).get(employee_id)
 
-              if attendance is None:
+            if attendance is None:
+              cell_value = "A"
+              status = "Absence(A)"
+              clock_in = ""
+              clock_out = ""
+              total_work = ""
+            else:
+              status = str(attendance.get("Status", ""))
+              clock_in = str(attendance.get("Clock In", "") or "")
+              clock_out = str(attendance.get("Clock Out", "") or "")
+              total_work = str(
+                  attendance.get("Calculated WT", "")
+                  or attendance.get("Actual WT", "")
+                  or ""
+              ).strip()
+
+              if "Leave" in status:
+                cell_value = "L"
+              elif "Absence" in status:
                 cell_value = "A"
-                status = "Absence(A)"
-                clock_in = ""
-                clock_out = ""
-                total_work = ""
               else:
-                status = str(attendance.get("Status", ""))
-                clock_in = str(attendance.get("Clock In", "") or "")
-                clock_out = str(attendance.get("Clock Out", "") or "")
-                total_work = str(
-                    attendance.get("Calculated WT", "")
-                    or attendance.get("Actual WT", "")
-                    or ""
-                ).strip()
+                excel_time = time_to_excel_value(total_work)
+                cell_value = excel_time if excel_time is not None else None
 
-                if "Leave" in status:
-                  cell_value = "L"
-                elif "Absence" in status:
-                  cell_value = "A"
-                else:
-                  excel_time = time_to_excel_value(total_work)
-                  cell_value = excel_time if excel_time is not None else None
-
-              cell_updates.append(
-                  {
-                      "row": excel_row,
-                      "column": date_column,
-                      "value": cell_value,
-                  }
-              )
-              filled_cells += 1
-
-              import_log.append(
-                  [
-                      employee_id,
-                      match["excel_name"],
-                      match["api_name"],
-                      "Exact ID",
-                      attendance_date,
-                      clock_in,
-                      clock_out,
-                      total_work,
-                      status,
-                  ]
-              )
-
-          total_formula_updates = build_total_formula_updates(
-              ws_target, employee_matches, date_columns, now_syria.date()
-          )
-
-          try:
-            export_bytes = export_template_preserving_package(
-                original_template_bytes,
-                ws_target.title,
-                cell_updates,
-                formula_updates=total_formula_updates,
+            cell_updates.append(
+                {
+                    "row": excel_row,
+                    "column": date_column,
+                    "value": cell_value,
+                }
             )
-          except Exception as export_error:
-            raise RuntimeError(
-                "تعذر إنشاء ملف Excel النهائي مع الحفاظ على بنية الملف الأصلية: "
-                + str(export_error)
-            ) from export_error
+            filled_cells += 1
 
-          strlit.session_state["monthly_attendance_export"] = export_bytes
-          output_extension = ".xlsm" if keep_vba else ".xlsx"
-          strlit.session_state["monthly_attendance_filename"] = (
-              "Attendance_Completed_"
-              f"{sorted_dates[0].strftime('%Y_%m_%d')}"
-              "_to_"
-              f"{sorted_dates[-1].strftime('%Y_%m_%d')}"
-              f"{output_extension}"
-          )
-          strlit.session_state["monthly_attendance_mime"] = (
-              "application/vnd.ms-excel.sheet.macroEnabled.12"
-              if keep_vba
-              else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          )
-          strlit.session_state["monthly_attendance_import_summary"] = {
-              "matched": len(employee_matches),
-              "unmatched": len(unmatched_employees),
-              "filled": filled_cells,
-              "dates": len(dates_list),
-              "single_punch": recovered_single_punch,
-              "biotime_report_rows": report_actual_count,
-              "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
-          }
+            import_log.append(
+                [
+                    employee_id,
+                    match["excel_name"],
+                    match["api_name"],
+                    "Exact ID",
+                    attendance_date,
+                    clock_in,
+                    clock_out,
+                    total_work,
+                    status,
+                ]
+            )
 
-          hide_loading_overlay(export_loading_overlay)
-          export_loading_overlay = None
+        total_formula_updates = build_total_formula_updates(
+            ws_target, employee_matches, date_columns, now_syria.date()
+        )
 
-          strlit.success(
-              f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
-              f"({filled_cells} خانة). تم تصدير الملف مع الحفاظ على بنية Excel الأصلية."
+        try:
+          export_bytes = export_template_preserving_package(
+              original_template_bytes,
+              ws_target.title,
+              cell_updates,
+              formula_updates=total_formula_updates,
+              duration_style_id=duration_style_id,
           )
+        except Exception as export_error:
+          raise RuntimeError(
+              "تعذر إنشاء ملف Excel النهائي مع الحفاظ على بنية الملف الأصلية: "
+              + str(export_error)
+          ) from export_error
+
+        strlit.session_state["monthly_attendance_export"] = export_bytes
+        output_extension = ".xlsm" if keep_vba else ".xlsx"
+        strlit.session_state["monthly_attendance_filename"] = (
+            "Attendance_Completed_"
+            f"{sorted_dates[0].strftime('%Y_%m_%d')}"
+            "_to_"
+            f"{sorted_dates[-1].strftime('%Y_%m_%d')}"
+            f"{output_extension}"
+        )
+        strlit.session_state["monthly_attendance_mime"] = (
+            "application/vnd.ms-excel.sheet.macroEnabled.12"
+            if keep_vba
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        strlit.session_state["monthly_attendance_import_summary"] = {
+            "matched": len(employee_matches),
+            "unmatched": len(unmatched_employees),
+            "filled": filled_cells,
+            "dates": len(dates_list),
+            "single_punch": recovered_single_punch,
+            "biotime_report_rows": report_actual_count,
+            "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
+        }
+
+        hide_loading_overlay(export_loading_overlay)
+        export_loading_overlay = None
+
+        strlit.success(
+            f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
+            f"({filled_cells} خانة). تم تصدير الملف مع الحفاظ على بنية Excel الأصلية."
+        )
 
         if "monthly_attendance_export" in strlit.session_state:
           summary = strlit.session_state.get("monthly_attendance_import_summary", {})
