@@ -16,7 +16,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-ACTUAL-WT-ALL-DAYS-FAST-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-UI-BIOTIME-EXACT-MATCH-2026-08-30"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -163,6 +163,102 @@ strlit.markdown(
     .badge-late { background-color: #fef3c7; color: #9a3412; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
     .badge-leave { background-color: #e0f2fe; color: #0369a1; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
     .badge-absent { background-color: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
+
+    /* ===== Interface polish: cards, upload, progress, download, mobile ===== */
+    .gp-section-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #0f172a;
+        margin: 8px 2px 10px 2px;
+    }
+
+    .gp-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        gap: 9px;
+        margin: 0 0 14px 0;
+    }
+
+    .gp-kpi-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 11px 8px;
+        text-align: center;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.05);
+        min-height: 68px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .gp-kpi-icon { font-size: 16px; line-height: 1; margin-bottom: 5px; }
+    .gp-kpi-value { font-size: 22px; line-height: 1.1; font-weight: 900; color: #0f172a; }
+    .gp-kpi-label { margin-top: 4px; font-size: 11px; font-weight: 700; color: #64748b; }
+
+    .gp-file-note {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 9px 12px;
+        margin-bottom: 7px;
+        color: #475569;
+        font-size: 12px;
+        font-weight: 650;
+        text-align: center;
+    }
+
+    div[data-testid="stFileUploader"] {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 6px;
+    }
+    div[data-testid="stFileUploaderDropzone"] {
+        border-radius: 11px !important;
+        border-color: #cbd5e1 !important;
+        background: #ffffff !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+    }
+    div[data-testid="stFileUploader"] small { display: none !important; }
+
+    div[data-testid="stProgress"] { margin-top: 8px; margin-bottom: 8px; }
+
+    .gp-download-ready {
+        background: #ecfdf5;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        text-align: center;
+        font-weight: 800;
+        font-size: 13px;
+    }
+
+    .gp-tech-note {
+        color: #64748b;
+        font-size: 11px;
+        text-align: center;
+        margin-top: 4px;
+    }
+
+    @media (max-width: 900px) {
+        .gp-kpi-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
+        .block-container { padding-left: 7px !important; padding-right: 7px !important; }
+        .status-badge { padding: 7px 14px; margin-bottom: 10px; }
+        .responsive-grid-table { font-size: 11px; display: block; overflow-x: auto; white-space: nowrap; }
+    }
+
+    @media (max-width: 560px) {
+        .gp-kpi-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 7px; }
+        .gp-kpi-card { min-height: 62px; padding: 9px 6px; }
+        .gp-kpi-value { font-size: 19px; }
+        .gp-kpi-label { font-size: 10px; }
+        div[data-testid="stColumn"] { min-width: 100% !important; }
+        div[data-testid="stColumn"] button { padding: 10px 8px !important; }
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -203,6 +299,35 @@ def clean_txt(raw_text):
   )
 
 
+def render_kpi_cards(items):
+  """Render compact responsive summary cards without changing app logic."""
+  cards = []
+  for icon, label, value in items:
+    cards.append(
+        '<div class="gp-kpi-card">'
+        f'<div class="gp-kpi-icon">{icon}</div>'
+        f'<div class="gp-kpi-value">{value}</div>'
+        f'<div class="gp-kpi-label">{label}</div>'
+        '</div>'
+    )
+  strlit.markdown(
+      '<div class="gp-kpi-grid">' + ''.join(cards) + '</div>',
+      unsafe_allow_html=True,
+  )
+
+
+def normalize_punch_to_minute(value):
+  """Use the same minute precision displayed by BioTime reports.
+
+  BioTime's Clock In / Clock Out report columns are minute-precision values.
+  Using raw transaction seconds and flooring the final duration makes many
+  locally calculated totals one minute shorter than BioTime.
+  """
+  if value is None:
+    return None
+  return value.replace(second=0, microsecond=0)
+
+
 def calculate_single_punch_actual_wt(punch_time, is_out_punch):
   """Return BioTime-equivalent Actual WT for one missing punch.
 
@@ -211,6 +336,7 @@ def calculate_single_punch_actual_wt(punch_time, is_out_punch):
   09:00 up to the recorded OUT. Early/late excess outside the timetable is
   capped exactly as BioTime's Basic Report does.
   """
+  punch_time = normalize_punch_to_minute(punch_time)
   shift_start = punch_time.replace(
       hour=SINGLE_PUNCH_SHIFT_START_HOUR,
       minute=0,
@@ -248,6 +374,9 @@ def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
   if clock_in is None and clock_out is None:
     return ""
 
+  clock_in = normalize_punch_to_minute(clock_in)
+  clock_out = normalize_punch_to_minute(clock_out)
+
   shift_start = datetime.combine(
       work_date,
       datetime.min.time(),
@@ -278,21 +407,25 @@ def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
 
 
 def calculate_total_wt_for_workday(clock_in, clock_out):
-  """Calculate uncapped Total WT from a valid IN/OUT pair.
+  """Calculate BioTime-style uncapped Total WT from IN/OUT.
 
-  Unlike Actual WT, Total WT is not limited to the 09:00-19:00 timetable, so
-  early arrival, late departure, and overtime remain visible. Single-punch days
-  do not use this value; they continue to use Actual WT.
+  BioTime defines Total Hrs as the interval between check-in and check-out.
+  Its report displays those punches to the minute and calculates the displayed
+  duration at that same minute precision. Normal days use this Total WT; a true
+  single-punch day continues to use Actual WT as agreed.
   """
   if clock_in is None or clock_out is None:
     return ""
+
+  clock_in = normalize_punch_to_minute(clock_in)
+  clock_out = normalize_punch_to_minute(clock_out)
 
   worked_seconds = int((clock_out - clock_in).total_seconds())
   if worked_seconds < 0:
     return ""
 
-  hours, remainder = divmod(worked_seconds, 3600)
-  minutes = remainder // 60
+  total_minutes = worked_seconds // 60
+  hours, minutes = divmod(total_minutes, 60)
   return f"{hours:02d}:{minutes:02d}"
 
 
@@ -667,12 +800,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     elif not is_today and len(day_punches) > 1:
       last_p, last_dev = day_punches[-1]
 
-    total_wt_str = ""
-    if last_p and first_p:
-      diff = last_p - first_p
-      hours, remainder = divmod(int(diff.total_seconds()), 3600)
-      minutes = remainder // 60
-      total_wt_str = f"{hours:02d}:{minutes:02d}"
+    total_wt_str = calculate_total_wt_for_workday(first_p, last_p)
 
     status_str = "Late(LT)" if is_late else "Present(P)"
 
@@ -823,6 +951,15 @@ try:
       selected_date_str, selected_date_obj_input, is_today
   )
 
+  render_kpi_cards([
+      ("👥", "الموظفون النشطون", len(act)),
+      ("🟢", "الحضور الآن", len(pre)),
+      ("⏰", "المتأخرون", len(lat)),
+      ("🏁", "المنصرفون", len(chk)),
+      ("🏖️", "الإجازات", len(lev)),
+      ("❌", "الغيابات", len(abs_s)),
+  ])
+
   # 📥 UPLOAD TEMPLATE & FILL ATTENDANCE VALUES OR GENERATE DEFAULT REPORT
   col_gen, col_up = strlit.columns(2)
 
@@ -942,6 +1079,11 @@ try:
     )
 
   with col_up:
+    strlit.markdown(
+        '<div class="gp-section-title">📊 جدول الدوام الشهري</div>'
+        '<div class="gp-file-note">ارفع ملف Excel فقط — بيانات BioTime تُجلب تلقائياً.</div>',
+        unsafe_allow_html=True,
+    )
     # ONE upload box only: the monthly attendance Excel template.
     # BioTime calculated work hours are fetched automatically from BioTime.
     uploaded_template = strlit.file_uploader(
@@ -949,6 +1091,10 @@ try:
         type=["xlsx", "xlsm"],
         label_visibility="collapsed",
         key="monthly_attendance_template",
+    )
+    strlit.markdown(
+        '<div class="gp-tech-note">Single Punch → Actual WT &nbsp;|&nbsp; Normal IN/OUT → Total WT</div>',
+        unsafe_allow_html=True,
     )
 
     def normalize_id(value):
@@ -1344,13 +1490,15 @@ try:
           ),
       )
 
-      # Prefer BioTime's actual worked duration. This is the value that recovers
-      # a missing IN/OUT according to the employee's timetable. Total duration is
-      # used only when the report does not expose an actual-worked field.
+      # Keep Actual WT and Total WT separate. Generic "working/worked hours"
+      # fields belong to Total WT (the uncapped interval shown by BioTime's
+      # Monthly Attendance Summary), not Actual WT. This distinction is critical:
+      # single-punch days use Actual WT; normal IN/OUT days use Total WT.
       actual_value, actual_key = first_report_value(
           flat,
           (
               "actual_wt",
+              "actualwt",
               "actual_work_time",
               "actual_working_time",
               "actual_worked_time",
@@ -1360,21 +1508,8 @@ try:
               "actual_time",
               "actual_duration",
               "actual_work_duration",
-              "worked_time",
-              "worked_hours",
-              "worked_hrs",
-              "working_hours",
-              "working_hrs",
-              "work_time",
-              "work_hours",
-              "work_hrs",
-              "worked",
-              "work_duration",
-              "worked_duration",
               "actual_worked_minutes",
               "actual_worked_seconds",
-              "worked_minutes",
-              "worked_seconds",
           ),
       )
       actual_work_time = duration_to_hhmm(actual_value, actual_key)
@@ -1383,6 +1518,7 @@ try:
           flat,
           (
               "total_wt",
+              "totalwt",
               "total_worked",
               "total_work_time",
               "total_worked_time",
@@ -1391,6 +1527,18 @@ try:
               "total_hours",
               "total_hrs",
               "total_time",
+              "working_hrs",
+              "working_hours",
+              "working_time",
+              "work_hrs",
+              "work_hours",
+              "work_time",
+              "worked_hrs",
+              "worked_hours",
+              "worked_time",
+              "worked_duration",
+              "work_duration",
+              "worked",
               "duration",
           ),
       )
@@ -1496,26 +1644,33 @@ try:
         end_date,
         employee_internal_id_map=None,
         expected_single_punch_keys=None,
+        expected_attendance_keys=None,
     ):
-      """Fetch BioTime Actual WT for the whole range in bulk.
+      """Fetch BioTime's own calculated daily values for the whole range.
 
-      Daily Activity is the first choice because it corresponds to BioTime's
-      daily attendance details (Clock In, Clock Out, Actual WT, Total WT). The
-      fallback reports are tried only when the preferred report does not expose
-      usable Actual WT rows. No per-day API loop is used.
+      The app does not require any BioTime report upload. It calls BioTime's
+      /att/api/*Report/ endpoints directly and merges the best server-calculated
+      value per employee/date. Single-punch records require Actual WT; normal
+      IN/OUT records require Total WT. Missing server values fall back to the
+      local minute-precision calculation already built from raw transactions.
       """
       start_text = start_date.strftime("%Y-%m-%d")
       end_text = end_date.strftime("%Y-%m-%d")
       employee_internal_id_map = employee_internal_id_map or {}
+      expected_single_punch_keys = set(expected_single_punch_keys or ())
+      expected_attendance_keys = set(expected_attendance_keys or ())
       token = get_auth_token()
 
-      # Keep the number of network calls small. Usually dailyActivityReport is
-      # enough; the others are compatibility fallbacks for different BioTime builds.
+      # dailyActivityReport normally exposes both Actual WT and Total WT. The
+      # time-card reports are compatibility fallbacks and also preserve unusual
+      # BioTime server calculations that cannot be reconstructed from raw punches.
       report_names = (
           "dailyActivityReport",
-          "totalTimeCardReportV2",
           "timeCardReport",
+          "totalTimeCardReportV2",
+          "monthlyPunchReport",
           "monthlyWorkHoursReport",
+          "firstInLastOutReport",
       )
       query_variants = (
           {
@@ -1528,8 +1683,15 @@ try:
               "end_time": f"{end_text} 23:59:59",
               "page_size": 10000,
           },
+          {
+              "from_date": start_text,
+              "to_date": end_text,
+              "page_size": 10000,
+          },
       )
 
+      # Reports work with HTTP Basic auth on BioTime even when other API routes
+      # are license-gated. Token auth remains a compatibility fallback.
       auth_attempts = [
           {
               "auth": (EMAIL, PASSWORD),
@@ -1547,13 +1709,42 @@ try:
         )
 
       session = requests.Session()
+      best_records = {}
+      best_scores = {}
 
-      for report_name in report_names:
+      def required_value_present(key, record):
+        if key in expected_single_punch_keys:
+          return bool(str(record.get("Actual WT", "") or "").strip())
+        return bool(str(record.get("Report Total WT", "") or "").strip())
+
+      def score_record(key, record, report_index):
+        actual = str(record.get("Actual WT", "") or "").strip()
+        total = str(record.get("Report Total WT", "") or "").strip()
+        clock_in = str(record.get("Clock In", "") or "").strip()
+        clock_out = str(record.get("Clock Out", "") or "").strip()
+        is_single = key in expected_single_punch_keys
+
+        # The value required by our agreed rule dominates the score. Prefer the
+        # earlier/more specific report only when coverage is otherwise equal.
+        score = 0
+        if is_single:
+          score += 1000 if actual else 0
+          score += 100 if bool(clock_in) != bool(clock_out) else 0
+          score += 20 if total else 0
+        else:
+          score += 1000 if total else 0
+          score += 100 if clock_in and clock_out else 0
+          score += 20 if actual else 0
+        score += max(0, 20 - report_index)
+        return score
+
+      for report_index, report_name in enumerate(report_names):
         endpoint = f"{BASE_URL}/att/api/{report_name}/"
         endpoint_missing = False
+        report_had_rows = False
 
         for query in query_variants:
-          if endpoint_missing:
+          if endpoint_missing or report_had_rows:
             break
 
           for authorization in auth_attempts:
@@ -1566,8 +1757,7 @@ try:
             if not payloads:
               continue
 
-            result = {}
-            actual_count = 0
+            parsed_any = False
             for payload in payloads:
               for report_row in extract_report_rows(payload):
                 normalized_record = normalize_calculated_report_row(
@@ -1579,8 +1769,6 @@ try:
                 if not normalized_record:
                   continue
 
-                # Keep rows that expose either BioTime Actual WT or Total WT.
-                # Single-punch days use Actual WT; normal days use Total WT.
                 actual_wt = str(
                     normalized_record.get("Actual WT", "") or ""
                 ).strip()
@@ -1592,17 +1780,30 @@ try:
 
                 attendance_date = normalized_record["Attendance Date"]
                 employee_id = normalized_record["Employee ID"]
-                result.setdefault(attendance_date, {})[employee_id] = (
-                    normalized_record
-                )
-                actual_count += 1
+                key = (attendance_date, employee_id)
+                score = score_record(key, normalized_record, report_index)
+                if score > best_scores.get(key, -1):
+                  best_scores[key] = score
+                  best_records[key] = normalized_record
+                parsed_any = True
 
-            # One successful daily report is enough. This keeps processing fast
-            # and avoids probing every report endpoint after good data is found.
-            if actual_count:
-              return result
+            if parsed_any:
+              report_had_rows = True
+              break
 
-      return {}
+        # Stop as soon as every known attendance day has the exact type of
+        # server-calculated value required by the business rule. This keeps the
+        # common path fast while still filling gaps from fallback reports.
+        if expected_attendance_keys and all(
+            key in best_records and required_value_present(key, best_records[key])
+            for key in expected_attendance_keys
+        ):
+          break
+
+      result = {}
+      for (attendance_date, employee_id), record in best_records.items():
+        result.setdefault(attendance_date, {})[employee_id] = record
+      return result
 
     def fetch_paginated_api(session, path, params, headers, timeout=20):
       """Fetch a normal BioTime list endpoint, following pagination."""
@@ -2337,10 +2538,10 @@ try:
 
         # FAST MONTHLY LOAD:
         # Employees, devices, leave and transactions are fetched once for the
-        # entire Excel date range. BioTime Actual WT is then requested once in
-        # bulk and overlaid for EVERY attendance day (not only single punches).
-        # If a BioTime build does not expose the report endpoint, the local
-        # punch-state calculation follows the same 09:00-19:00 Actual-WT rule.
+        # entire Excel date range. BioTime calculated report values are requested
+        # once in bulk. Single-punch days use Actual WT; normal days use Total WT.
+        # If the report endpoint is unavailable, local values use the exact
+        # minute precision shown by BioTime Clock In / Clock Out.
         sorted_dates = sorted(set(date_columns.values()))
         dates_list = [
             (column, attendance_date)
@@ -2357,16 +2558,33 @@ try:
 
         progress = strlit.progress(
             0,
-            text="جاري تحميل بيانات الدوام الشهرية...",
+            text="المرحلة 1/4 — تحميل بيانات BioTime الشهرية...",
         )
 
         all_attendance, employee_catalog, employee_internal_id_map = (
             load_monthly_attendance_bulk(range_start, range_end)
         )
         progress.progress(
-            0.65,
-            text="تم تحميل البصمات. جاري تحميل Actual WT من BioTime...",
+            0.62,
+            text="المرحلة 2/4 — تحميل قيم Actual WT / Total WT من BioTime...",
         )
+
+        # Tell the report fetcher exactly which type of value each employee/day
+        # needs. This lets it stop early when BioTime coverage is complete while
+        # still trying fallback report endpoints only for missing values.
+        expected_attendance_keys = set()
+        expected_single_punch_keys = set()
+        for attendance_date, date_map in all_attendance.items():
+          for employee_id, attendance in date_map.items():
+            status = str(attendance.get("Status", "") or "")
+            if "Leave" in status or "Absence" in status:
+              continue
+            key = (attendance_date, employee_id)
+            expected_attendance_keys.add(key)
+            clock_in = str(attendance.get("Clock In", "") or "").strip()
+            clock_out = str(attendance.get("Clock Out", "") or "").strip()
+            if bool(clock_in) != bool(clock_out):
+              expected_single_punch_keys.add(key)
 
         # Authoritative overlay: single-punch days use BioTime Actual WT; normal
         # attendance days use BioTime Total WT so uncapped/overtime hours remain visible.
@@ -2374,6 +2592,8 @@ try:
             range_start,
             range_end,
             employee_internal_id_map,
+            expected_single_punch_keys,
+            expected_attendance_keys,
         )
         report_actual_count = 0
         for attendance_date, report_date_map in report_actual.items():
@@ -2435,8 +2655,8 @@ try:
             report_actual_count += 1
 
         progress.progress(
-            0.95,
-            text="تم تحميل Actual WT. جاري تجهيز الملف...",
+            0.88,
+            text="المرحلة 3/4 — مطابقة الموظفين وتجهيز القيم...",
         )
 
         recovered_single_punch = 0
@@ -2457,7 +2677,7 @@ try:
 
         progress.progress(
             1.0,
-            text="تم تجهيز بيانات الدوام.",
+            text="المرحلة 4/4 — البيانات جاهزة للتصدير.",
         )
         progress.empty()
 
@@ -2647,8 +2867,9 @@ try:
               "matched": len(employee_matches),
               "unmatched": len(unmatched_employees),
               "filled": filled_cells,
+              "dates": len(dates_list),
               "single_punch": recovered_single_punch,
-              "actual_wt_api": report_actual_count,
+              "biotime_report_rows": report_actual_count,
           }
 
           strlit.success(
@@ -2659,14 +2880,25 @@ try:
         if "monthly_attendance_export" in strlit.session_state:
           summary = strlit.session_state.get("monthly_attendance_import_summary", {})
           if summary:
-            strlit.info(
-                f"مطابق: {summary.get('matched', 0)} | "
-                f"غير مطابق: {summary.get('unmatched', 0)} | "
-                f"خانات الدوام المعبأة: {summary.get('filled', 0)}"
+            strlit.markdown(
+                '<div class="gp-section-title">✅ ملخص معالجة الشهر</div>',
+                unsafe_allow_html=True,
             )
+            render_kpi_cards([
+                ("✅", "موظفون مطابقون", summary.get("matched", 0)),
+                ("📅", "تواريخ معالجة", summary.get("dates", 0)),
+                ("☝️", "بصمة واحدة", summary.get("single_punch", 0)),
+                ("🧮", "خانات تم تجهيزها", summary.get("filled", 0)),
+                ("📡", "قيم تقرير BioTime", summary.get("biotime_report_rows", 0)),
+                ("⚠️", "غير مطابقين", summary.get("unmatched", 0)),
+            ])
 
+          strlit.markdown(
+              '<div class="gp-download-ready">📥 ملف الدوام النهائي جاهز للتحميل</div>',
+              unsafe_allow_html=True,
+          )
           strlit.download_button(
-              label="📥 تحميل ملف الدوام الجاهز",
+              label="📥 تحميل ملف الدوام النهائي",
               data=strlit.session_state["monthly_attendance_export"],
               file_name=strlit.session_state["monthly_attendance_filename"],
               mime=strlit.session_state.get(
@@ -2678,9 +2910,9 @@ try:
           )
 
       except Exception as template_error:
-        strlit.error(
-            f"تعذر معالجة ملف الدوام: {template_error}"
-        )
+        strlit.error("تعذر معالجة ملف الدوام. افتح التفاصيل الفنية عند الحاجة.")
+        with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
+          strlit.code(str(template_error))
   if is_today:
     if strlit.button(
         f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True
@@ -2858,4 +3090,6 @@ try:
       )
 
 except Exception as e:
-  strlit.error(TEXT_CONFIG["err_api"].format(str(e)))
+  strlit.error("تعذر تحميل بيانات BioTime حالياً. حاول التحديث مرة أخرى.")
+  with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
+    strlit.code(TEXT_CONFIG["err_api"].format(str(e)))
