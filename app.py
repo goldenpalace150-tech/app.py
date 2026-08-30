@@ -564,6 +564,40 @@ def calculate_monthly_working_hours(work_date, clock_in, clock_out):
   return ""
 
 
+def calculate_odd_even_punch_total(punch_times):
+  """Sum BioTime punches as sequential odd/even IN->OUT pairs.
+
+  Punch 1 -> Punch 2, Punch 3 -> Punch 4, and so on. This is required
+  when an employee has multiple attendance sessions in one work day; using only
+  the first pair or a simple first-to-last interval gives the wrong duty time.
+
+  Only complete pairs are summed here. A true one-punch day continues to use
+  the existing single-punch Actual WT rule.
+  """
+  ordered = sorted(
+      [value for value in punch_times if value is not None],
+  )
+  if len(ordered) < 2:
+    return ""
+
+  total_seconds = 0
+  complete_pairs = 0
+  for index in range(0, len(ordered) - 1, 2):
+    pair_in = normalize_punch_to_minute(ordered[index])
+    pair_out = normalize_punch_to_minute(ordered[index + 1])
+    if pair_in is None or pair_out is None or pair_out < pair_in:
+      continue
+    total_seconds += int((pair_out - pair_in).total_seconds())
+    complete_pairs += 1
+
+  if complete_pairs == 0:
+    return ""
+
+  total_minutes = total_seconds // 60
+  hours, minutes = divmod(total_minutes, 60)
+  return f"{hours:02d}:{minutes:02d}"
+
+
 def classify_transaction_punch(log, punch_time):
   """Return 'in', 'out', or 'unknown' from BioTime transaction punch state.
 
@@ -936,7 +970,13 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     elif not is_today and len(day_punches) > 1:
       last_p, last_dev = day_punches[-1]
 
-    total_wt_str = calculate_total_wt_for_workday(first_p, last_p)
+    ordered_workday_punches = [p for p, _d in day_punches] + [
+        p for p, _d in next_morning
+    ]
+    if len(ordered_workday_punches) > 2 and len(ordered_workday_punches) % 2 == 0:
+      total_wt_str = calculate_odd_even_punch_total(ordered_workday_punches)
+    else:
+      total_wt_str = calculate_total_wt_for_workday(first_p, last_p)
 
     status_str = "Late(LT)" if is_late else "Present(P)"
 
@@ -2293,7 +2333,22 @@ try:
               }
             continue
 
-          all_candidates = day_punches + next_morning
+          all_candidates = sorted(
+              day_punches + next_morning,
+              key=lambda punch: punch["time"],
+          )
+          punch_count_for_day = len(all_candidates)
+          odd_even_multi_punch = (
+              punch_count_for_day > 2 and punch_count_for_day % 2 == 0
+          )
+          odd_even_total_wt = (
+              calculate_odd_even_punch_total(
+                  [punch["time"] for punch in all_candidates]
+              )
+              if odd_even_multi_punch
+              else ""
+          )
+
           explicit_in = [p for p in day_punches if p["kind"] == "in"]
           explicit_out = [p for p in all_candidates if p["kind"] == "out"]
           # BioTime's day-change rule associates punches before 05:00 with the
@@ -2334,16 +2389,23 @@ try:
                 if p["time"].hour >= SINGLE_PUNCH_OUT_HOUR
             ] + list(next_morning)
 
-          clock_in_punch = (
-              min(in_candidates, key=lambda p: p["time"])
-              if in_candidates
-              else None
-          )
-          clock_out_punch = (
-              max(out_candidates, key=lambda p: p["time"])
-              if out_candidates
-              else None
-          )
+          if odd_even_multi_punch and odd_even_total_wt:
+            # User-adjusted BioTime punches follow sequential odd/even pairing:
+            # 1->2, 3->4, ... . Keep first/last only for display; the duty value
+            # is the SUM of every completed pair, not first-to-last.
+            clock_in_punch = all_candidates[0]
+            clock_out_punch = all_candidates[-1]
+          else:
+            clock_in_punch = (
+                min(in_candidates, key=lambda p: p["time"])
+                if in_candidates
+                else None
+            )
+            clock_out_punch = (
+                max(out_candidates, key=lambda p: p["time"])
+                if out_candidates
+                else None
+            )
 
           clock_in_dt = clock_in_punch["time"] if clock_in_punch else None
           clock_out_dt = clock_out_punch["time"] if clock_out_punch else None
@@ -2366,11 +2428,14 @@ try:
               clock_in_punch = None
 
           is_single_punch = bool(clock_in_dt) != bool(clock_out_dt)
-          selected_work_time = calculate_monthly_working_hours(
-              cursor,
-              clock_in_dt,
-              clock_out_dt,
-          )
+          if odd_even_multi_punch and odd_even_total_wt:
+            selected_work_time = odd_even_total_wt
+          else:
+            selected_work_time = calculate_monthly_working_hours(
+                cursor,
+                clock_in_dt,
+                clock_out_dt,
+            )
           actual_wt = selected_work_time if is_single_punch else ""
           total_wt = selected_work_time if not is_single_punch else ""
 
@@ -2401,6 +2466,8 @@ try:
               "Actual WT": actual_wt,
               "Calculated WT": selected_work_time,
               "Total WT": total_wt,
+              "Punch Count": punch_count_for_day,
+              "Odd Even Paired": odd_even_multi_punch,
               "Status": status,
           }
 
@@ -2780,12 +2847,13 @@ try:
             else:
               report_work_time = report_total_wt or actual_wt
 
-            # The Monthly Worked Hrs endpoint corresponds most closely to the
-            # user's BioTime report and may contain server-side attendance rules
-            # that raw transactions alone cannot reproduce. Other report APIs
-            # are fallback only, preventing a different report definition from
-            # replacing a correct first/last-punch calculation by one minute.
-            if report_name == "monthlyWorkHoursReport" and report_work_time:
+            # For 4/6/8... punches, the user's BioTime setup is explicitly
+            # adjusted as odd/even pairs (1->2, 3->4, ...). Keep the locally
+            # calculated SUM of those pairs. Some report endpoints expose only
+            # the first pair (for example 00:08) and must not overwrite it.
+            if attendance.get("Odd Even Paired") and local_work_time:
+              selected_work_time = local_work_time
+            elif report_name == "monthlyWorkHoursReport" and report_work_time:
               selected_work_time = report_work_time
             else:
               selected_work_time = local_work_time or report_work_time
