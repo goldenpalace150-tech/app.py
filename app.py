@@ -16,7 +16,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-UI-BIOTIME-EXACT-MATCH-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-CLEAN-UI-WORKING-HRS-2026-08-30"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -196,6 +196,18 @@ strlit.markdown(
     .gp-kpi-value { font-size: 22px; line-height: 1.1; font-weight: 900; color: #0f172a; }
     .gp-kpi-label { margin-top: 4px; font-size: 11px; font-weight: 700; color: #64748b; }
 
+    /* Clickable attendance summary cards (Streamlit buttons). */
+    div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] > button {
+        min-height: 86px;
+        border-radius: 14px !important;
+        border: 1px solid #e2e8f0 !important;
+        background: #ffffff !important;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.05) !important;
+        font-weight: 800 !important;
+        line-height: 1.45 !important;
+        white-space: pre-line !important;
+    }
+
     .gp-file-note {
         background: #ffffff;
         border: 1px solid #e2e8f0;
@@ -267,9 +279,9 @@ strlit.markdown(
 EXCLUDED_MANAGEMENT_CODES = ("40",)
 # A lone punch at or after this hour is treated as an OUT punch.
 SINGLE_PUNCH_OUT_HOUR = 14
-# BioTime timetable used by the current attendance setup. The Basic Report
-# confirms that Actual WT for a single punch is the worked overlap with
-# 09:00-19:00, capped at 10 hours.
+# General Time Table boundaries visible in BioTime's Monthly Attendance Summary.
+# When one side of a punch pair is missing, BioTime fills the missing side with
+# the timetable boundary: 09:00 for missing IN, 19:00 for missing OUT.
 SINGLE_PUNCH_SHIFT_START_HOUR = 9
 SINGLE_PUNCH_SHIFT_END_HOUR = 19
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
@@ -316,6 +328,120 @@ def render_kpi_cards(items):
   )
 
 
+
+def _popup_dataframe(title, rows, search_key):
+  """Open employee details only when a top summary card is clicked."""
+  def render_content():
+    if not rows:
+      strlit.info("لا توجد سجلات في هذه الفئة.")
+      return
+
+    df = pd.DataFrame(rows)
+    search_value = strlit.text_input(
+        "",
+        placeholder="🔍 ابحث باسم الموظف أو رقم الكود...",
+        label_visibility="collapsed",
+        key=f"popup_search_{search_key}",
+    ).strip().casefold()
+
+    if search_value:
+      mask = df.astype(str).apply(
+          lambda column: column.str.casefold().str.contains(
+              search_value,
+              regex=False,
+              na=False,
+          )
+      ).any(axis=1)
+      df = df[mask]
+
+    strlit.dataframe(df, use_container_width=True, hide_index=True)
+
+  if hasattr(strlit, "dialog"):
+    dialog_renderer = strlit.dialog(title)(render_content)
+    dialog_renderer()
+  else:
+    # Compatibility fallback for an older Streamlit runtime.
+    with strlit.expander(title, expanded=True):
+      render_content()
+
+
+def render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s):
+  """Render the six clean summary cards; details appear only in a dialog."""
+  specs = [
+      (
+          "all",
+          "👥",
+          "الموظفون النشطون",
+          len(act),
+          [
+              {"الكود": c, "الاسم": d["name"], "القسم": d["dept"], "الحالة": "نشط"}
+              for c, d in act.items()
+          ],
+      ),
+      (
+          "present",
+          "🟢",
+          "الحضور الآن",
+          len(pre),
+          [
+              {"الكود": c, "الاسم": n, "القسم": dpt, "الدخول": t, "الجهاز": d}
+              for c, n, dpt, t, d in pre
+          ],
+      ),
+      (
+          "late",
+          "⏰",
+          "المتأخرون",
+          len(lat),
+          [
+              {"الكود": c, "الاسم": n, "القسم": dpt, "الدخول": t, "الجهاز": d}
+              for c, n, dpt, t, d in lat
+          ],
+      ),
+      (
+          "checkout",
+          "🏁",
+          "المنصرفون",
+          len(chk),
+          [
+              {"الكود": c, "الاسم": n, "القسم": dpt, "الانصراف": t, "الجهاز": d}
+              for c, n, dpt, t, d in chk
+          ],
+      ),
+      (
+          "leave",
+          "🏖️",
+          "الإجازات",
+          len(lev),
+          [
+              {"الكود": c, "الاسم": n, "القسم": dpt, "نوع الإجازة": reason}
+              for c, n, dpt, reason in lev
+          ],
+      ),
+      (
+          "absent",
+          "❌",
+          "الغيابات",
+          len(abs_s),
+          [
+              {"الكود": c, "الاسم": n, "القسم": dpt, "الحالة": "غياب"}
+              for c, n, dpt in abs_s
+          ],
+      ),
+  ]
+
+  cols = strlit.columns(6)
+  for column, (key, icon, label, value, rows) in zip(cols, specs):
+    with column:
+      clicked = strlit.button(
+          f"{icon}\n{value}\n{label}",
+          key=f"summary_card_{key}",
+          use_container_width=True,
+      )
+      if clicked:
+        _popup_dataframe(f"{icon} {label} ({value})", rows, key)
+
+
 def normalize_punch_to_minute(value):
   """Use the same minute precision displayed by BioTime reports.
 
@@ -328,91 +454,81 @@ def normalize_punch_to_minute(value):
   return value.replace(second=0, microsecond=0)
 
 
-def calculate_single_punch_actual_wt(punch_time, is_out_punch):
-  """Return BioTime-equivalent Actual WT for one missing punch.
+def calculate_single_punch_actual_wt(punch_time, is_out_punch, work_date=None):
+  """Reproduce BioTime Monthly Attendance Summary for one missing punch.
 
-  Current company timetable is 09:00-19:00 (10 hours). For a missing OUT,
-  Actual WT is from the recorded IN up to 19:00. For a missing IN, it is from
-  09:00 up to the recorded OUT. Early/late excess outside the timetable is
-  capped exactly as BioTime's Basic Report does.
+  Missing IN  -> assume 09:00 and keep the real OUT, even when OUT is after
+                 19:00 or shortly after midnight on the next calendar day.
+  Missing OUT -> keep the real IN and assume 19:00 on the work date.
+
+  This is intentionally NOT capped at ten hours. The user's BioTime report shows,
+  for example, a missing IN with 21:32 OUT as 12:32 and a midnight OUT as 15:00.
   """
   punch_time = normalize_punch_to_minute(punch_time)
-  shift_start = punch_time.replace(
-      hour=SINGLE_PUNCH_SHIFT_START_HOUR,
-      minute=0,
-      second=0,
-      microsecond=0,
+  if punch_time is None:
+    return ""
+
+  if work_date is None:
+    # A punch shortly after midnight is normally the previous work day's OUT.
+    if is_out_punch and punch_time.hour < 5:
+      work_date = punch_time.date() - timedelta(days=1)
+    else:
+      work_date = punch_time.date()
+
+  shift_start = datetime.combine(work_date, datetime.min.time()).replace(
+      hour=SINGLE_PUNCH_SHIFT_START_HOUR
   )
-  shift_end = punch_time.replace(
-      hour=SINGLE_PUNCH_SHIFT_END_HOUR,
-      minute=0,
-      second=0,
-      microsecond=0,
+  shift_end = datetime.combine(work_date, datetime.min.time()).replace(
+      hour=SINGLE_PUNCH_SHIFT_END_HOUR
   )
-  max_seconds = int((shift_end - shift_start).total_seconds())
 
   if is_out_punch:
-    effective_out = min(max(punch_time, shift_start), shift_end)
-    worked_seconds = int((effective_out - shift_start).total_seconds())
+    effective_in = shift_start
+    effective_out = punch_time
   else:
-    effective_in = max(min(punch_time, shift_end), shift_start)
-    worked_seconds = int((shift_end - effective_in).total_seconds())
+    effective_in = punch_time
+    effective_out = shift_end
 
-  worked_seconds = max(0, min(max_seconds, worked_seconds))
-  hours, remainder = divmod(worked_seconds, 3600)
-  minutes = remainder // 60
+  worked_seconds = int((effective_out - effective_in).total_seconds())
+  if worked_seconds < 0:
+    return ""
+
+  total_minutes = worked_seconds // 60
+  hours, minutes = divmod(total_minutes, 60)
   return f"{hours:02d}:{minutes:02d}"
 
 
 def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
-  """Calculate BioTime Actual WT against the 09:00-19:00 timetable.
+  """Return the single-punch value used by BioTime's monthly summary.
 
-  The Daily Attendance Basic Report clips worked time to the assigned timetable:
-  time before 09:00 and after 19:00 does not increase Actual WT. If either IN or
-  OUT is missing, the missing side is the timetable boundary.
+  For normal two-punch attendance the app uses Total WT instead. This function
+  mainly exists for a missing IN or OUT and follows the General Time Table
+  boundaries without the previous ten-hour cap.
   """
   if clock_in is None and clock_out is None:
     return ""
 
-  clock_in = normalize_punch_to_minute(clock_in)
-  clock_out = normalize_punch_to_minute(clock_out)
+  if clock_in is None:
+    return calculate_single_punch_actual_wt(
+        clock_out,
+        is_out_punch=True,
+        work_date=work_date,
+    )
+  if clock_out is None:
+    return calculate_single_punch_actual_wt(
+        clock_in,
+        is_out_punch=False,
+        work_date=work_date,
+    )
 
-  shift_start = datetime.combine(
-      work_date,
-      datetime.min.time(),
-  ).replace(hour=SINGLE_PUNCH_SHIFT_START_HOUR)
-  shift_end = datetime.combine(
-      work_date,
-      datetime.min.time(),
-  ).replace(hour=SINGLE_PUNCH_SHIFT_END_HOUR)
-
-  effective_in = clock_in if clock_in is not None else shift_start
-  effective_out = clock_out if clock_out is not None else shift_end
-
-  # A clock-out shortly after midnight belongs to the previous work date. It is
-  # still capped at the 19:00 timetable boundary for Actual WT.
-  if effective_out < shift_start and effective_out.date() > work_date:
-    effective_out = shift_end
-
-  effective_in = min(max(effective_in, shift_start), shift_end)
-  effective_out = min(max(effective_out, shift_start), shift_end)
-
-  worked_seconds = max(0, int((effective_out - effective_in).total_seconds()))
-  max_seconds = int((shift_end - shift_start).total_seconds())
-  worked_seconds = min(worked_seconds, max_seconds)
-
-  hours, remainder = divmod(worked_seconds, 3600)
-  minutes = remainder // 60
-  return f"{hours:02d}:{minutes:02d}"
+  # Kept for completeness; normal attendance exports Total WT below.
+  return calculate_total_wt_for_workday(clock_in, clock_out)
 
 
 def calculate_total_wt_for_workday(clock_in, clock_out):
-  """Calculate BioTime-style uncapped Total WT from IN/OUT.
+  """BioTime Total Hrs: minute-precision interval between IN and OUT.
 
-  BioTime defines Total Hrs as the interval between check-in and check-out.
-  Its report displays those punches to the minute and calculates the displayed
-  duration at that same minute precision. Normal days use this Total WT; a true
-  single-punch day continues to use Actual WT as agreed.
+  Cross-midnight shifts are preserved. Example: 10:37 -> 00:29 next day = 13:52.
   """
   if clock_in is None or clock_out is None:
     return ""
@@ -427,6 +543,25 @@ def calculate_total_wt_for_workday(clock_in, clock_out):
   total_minutes = worked_seconds // 60
   hours, minutes = divmod(total_minutes, 60)
   return f"{hours:02d}:{minutes:02d}"
+
+
+def calculate_monthly_working_hours(work_date, clock_in, clock_out):
+  """Final value written to Excel, matching BioTime Monthly Attendance Summary."""
+  if clock_in is not None and clock_out is not None:
+    return calculate_total_wt_for_workday(clock_in, clock_out)
+  if clock_in is not None:
+    return calculate_single_punch_actual_wt(
+        clock_in,
+        is_out_punch=False,
+        work_date=work_date,
+    )
+  if clock_out is not None:
+    return calculate_single_punch_actual_wt(
+        clock_out,
+        is_out_punch=True,
+        work_date=work_date,
+    )
+  return ""
 
 
 def classify_transaction_punch(log, punch_time):
@@ -751,6 +886,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
       single_punch_actual_wt = calculate_single_punch_actual_wt(
           first_p,
           single_punch_is_out,
+          selected_date_obj,
       )
 
       if single_punch_is_out:
@@ -951,14 +1087,7 @@ try:
       selected_date_str, selected_date_obj_input, is_today
   )
 
-  render_kpi_cards([
-      ("👥", "الموظفون النشطون", len(act)),
-      ("🟢", "الحضور الآن", len(pre)),
-      ("⏰", "المتأخرون", len(lat)),
-      ("🏁", "المنصرفون", len(chk)),
-      ("🏖️", "الإجازات", len(lev)),
-      ("❌", "الغيابات", len(abs_s)),
-  ])
+  render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
 
   # 📥 UPLOAD TEMPLATE & FILL ATTENDANCE VALUES OR GENERATE DEFAULT REPORT
   col_gen, col_up = strlit.columns(2)
@@ -1665,11 +1794,11 @@ try:
       # time-card reports are compatibility fallbacks and also preserve unusual
       # BioTime server calculations that cannot be reconstructed from raw punches.
       report_names = (
-          "dailyActivityReport",
+          "monthlyWorkHoursReport",
           "timeCardReport",
           "totalTimeCardReportV2",
+          "dailyActivityReport",
           "monthlyPunchReport",
-          "monthlyWorkHoursReport",
           "firstInLastOutReport",
       )
       query_variants = (
@@ -1768,6 +1897,8 @@ try:
                 )
                 if not normalized_record:
                   continue
+
+                normalized_record["Report Name"] = report_name
 
                 actual_wt = str(
                     normalized_record.get("Actual WT", "") or ""
@@ -2133,7 +2264,7 @@ try:
               if punch["time"].hour < 5
           ]
 
-          if not day_punches:
+          if not day_punches and not next_morning:
             if code in leave_map:
               date_map[code] = {
                   "Employee ID": code,
@@ -2165,6 +2296,12 @@ try:
           all_candidates = day_punches + next_morning
           explicit_in = [p for p in day_punches if p["kind"] == "in"]
           explicit_out = [p for p in all_candidates if p["kind"] == "out"]
+          # BioTime's day-change rule associates punches before 05:00 with the
+          # previous work day. Treat those as OUT candidates even if a terminal
+          # labelled the punch ambiguously.
+          for next_punch in next_morning:
+            if next_punch not in explicit_out:
+              explicit_out.append(next_punch)
           unknown_day = [p for p in day_punches if p["kind"] == "unknown"]
           unknown_next = [p for p in next_morning if p["kind"] == "unknown"]
 
@@ -2228,12 +2365,14 @@ try:
               clock_in_dt = None
               clock_in_punch = None
 
-          actual_wt = calculate_actual_wt_for_workday(
-              cursor, clock_in_dt, clock_out_dt
-          )
-          total_wt = calculate_total_wt_for_workday(clock_in_dt, clock_out_dt)
           is_single_punch = bool(clock_in_dt) != bool(clock_out_dt)
-          selected_work_time = actual_wt if is_single_punch else total_wt
+          selected_work_time = calculate_monthly_working_hours(
+              cursor,
+              clock_in_dt,
+              clock_out_dt,
+          )
+          actual_wt = selected_work_time if is_single_punch else ""
+          total_wt = selected_work_time if not is_single_punch else ""
 
           # A transaction exists, so this is attendance even if only one side is
           # present. Actual WT is schedule-aware and never raw first-last duration.
@@ -2614,7 +2753,21 @@ try:
             report_clock_out = str(
                 report_record.get("Clock Out", "") or ""
             ).strip()
-            if report_clock_in or report_clock_out:
+
+            report_name = str(report_record.get("Report Name", "") or "")
+            local_work_time = str(
+                attendance.get("Calculated WT", "") or ""
+            ).strip()
+
+            # Keep the raw-transaction punch shape when local data is complete.
+            # A report endpoint may expose a different punch presentation even
+            # though its hours are valid. Trust report clocks only for the exact
+            # Monthly Worked Hrs source or when local transactions had no value.
+            if (
+                report_clock_in or report_clock_out
+            ) and (
+                report_name == "monthlyWorkHoursReport" or not local_work_time
+            ):
               attendance["Clock In"] = report_clock_in
               attendance["Clock Out"] = report_clock_out
 
@@ -2622,24 +2775,29 @@ try:
             final_clock_out = str(attendance.get("Clock Out", "") or "").strip()
             is_single_punch = bool(final_clock_in) != bool(final_clock_out)
 
-            if actual_wt:
-              attendance["Actual WT"] = actual_wt
-            if report_total_wt:
-              attendance["Total WT"] = report_total_wt
+            if is_single_punch:
+              report_work_time = actual_wt or report_total_wt
+            else:
+              report_work_time = report_total_wt or actual_wt
+
+            # The Monthly Worked Hrs endpoint corresponds most closely to the
+            # user's BioTime report and may contain server-side attendance rules
+            # that raw transactions alone cannot reproduce. Other report APIs
+            # are fallback only, preventing a different report definition from
+            # replacing a correct first/last-punch calculation by one minute.
+            if report_name == "monthlyWorkHoursReport" and report_work_time:
+              selected_work_time = report_work_time
+            else:
+              selected_work_time = local_work_time or report_work_time
+
+            if not selected_work_time:
+              continue
 
             if is_single_punch:
-              selected_work_time = actual_wt or str(
-                  attendance.get("Actual WT", "") or ""
-              ).strip()
+              attendance["Actual WT"] = selected_work_time
             else:
-              selected_work_time = report_total_wt or str(
-                  attendance.get("Total WT", "") or ""
-              ).strip()
-
-            if selected_work_time:
-              attendance["Calculated WT"] = selected_work_time
-            else:
-              continue
+              attendance["Total WT"] = selected_work_time
+            attendance["Calculated WT"] = selected_work_time
 
             # A valid BioTime work-time row is attendance even if one punch is missing.
             if "Leave" not in str(attendance.get("Status", "")):
@@ -2726,44 +2884,6 @@ try:
                     "excel_name": excel_employee["name"],
                     "reason": "BioTime ID not found in app/BioTime ID list",
                 }
-            )
-
-        preview_rows = [
-            {
-                "اسم الملف": match["excel_name"],
-                "BioTime ID (Excel B)": match["employee_id"],
-                "ID (App/BioTime)": match["employee_id"],
-                "المطابقة": "Exact ID",
-            }
-            for match in employee_matches
-        ]
-
-        strlit.success(
-            f"تم العثور على {len(sorted_dates)} تاريخ و{len(employee_matches)} موظف مطابق بالـ ID فقط."
-        )
-        if duplicate_excel_ids:
-          strlit.warning(
-              "يوجد BioTime ID مكرر في ملف Excel: "
-              + ", ".join(sorted(duplicate_excel_ids))
-          )
-        if unmatched_employees:
-          strlit.warning(
-              f"يوجد {len(unmatched_employees)} موظف غير مطابق. لن يتم استيراد أي حضور لهم."
-          )
-
-        if preview_rows:
-          strlit.dataframe(
-              pd.DataFrame(preview_rows),
-              use_container_width=True,
-              hide_index=True,
-          )
-
-        if unmatched_employees:
-          with strlit.expander("⚠️ الموظفون غير المطابقين", expanded=False):
-            strlit.dataframe(
-                pd.DataFrame(unmatched_employees),
-                use_container_width=True,
-                hide_index=True,
             )
 
         if strlit.button(
@@ -2885,12 +3005,10 @@ try:
                 unsafe_allow_html=True,
             )
             render_kpi_cards([
-                ("✅", "موظفون مطابقون", summary.get("matched", 0)),
                 ("📅", "تواريخ معالجة", summary.get("dates", 0)),
                 ("☝️", "بصمة واحدة", summary.get("single_punch", 0)),
                 ("🧮", "خانات تم تجهيزها", summary.get("filled", 0)),
                 ("📡", "قيم تقرير BioTime", summary.get("biotime_report_rows", 0)),
-                ("⚠️", "غير مطابقين", summary.get("unmatched", 0)),
             ])
 
           strlit.markdown(
@@ -2913,181 +3031,9 @@ try:
         strlit.error("تعذر معالجة ملف الدوام. افتح التفاصيل الفنية عند الحاجة.")
         with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
           strlit.code(str(template_error))
-  if is_today:
-    if strlit.button(
-        f"👥 كافة موظفي الشركة النشطين ({len(act)})", use_container_width=True
-    ):
-      strlit.session_state["selected_view"] = "all"
+  # Attendance details are intentionally not rendered inline below the monthly
+  # section. Click one of the six summary cards above to open a clean popup.
 
-    col_p, col_l = strlit.columns(2)
-    with col_p:
-      if strlit.button(
-          f"🟢 المتواجدون ({len(pre)})", use_container_width=True
-      ):
-        strlit.session_state["selected_view"] = "present"
-    with col_l:
-      if strlit.button(f"⏰ المتأخرون ({len(lat)})", use_container_width=True):
-        strlit.session_state["selected_view"] = "late"
-
-    col_c, col_a = strlit.columns(2)
-    with col_c:
-      if strlit.button(
-          f"🏁 المنصرفون ({len(chk)})", use_container_width=True
-      ):
-        strlit.session_state["selected_view"] = "checkout"
-    with col_a:
-      if strlit.button(
-          f"❌ الغيابات ({len(abs_s)})", use_container_width=True
-      ):
-        strlit.session_state["selected_view"] = "absent"
-
-    col_lv, col_dummy = strlit.columns(2)
-    with col_lv:
-      if strlit.button(
-          f"🏖️ الإجازات ({len(lev)})", use_container_width=True
-      ):
-        strlit.session_state["selected_view"] = "leave"
-
-  # 🖨️ DEVICES EXPANDER (Checks 30-min offline limit)
-  with strlit.expander("🖨️ أجهزة الحضور والانصراف المرتبطة", expanded=False):
-    if devices:
-      dev_rows = []
-      for d in devices:
-        d_name = (
-            d.get("alias")
-            or d.get("terminal_name")
-            or d.get("sn", "جهاز غير محدد")
-        )
-        d_sn = d.get("sn", "N/A")
-        d_ip = d.get("ip_address", "غير متوفر")
-
-        last_activity = d.get("last_activity")
-        status_badge = "<span class='badge-absent'>غير متصل 🔴</span>"
-        if last_activity:
-          try:
-            last_act_dt = datetime.strptime(
-                last_activity[:19], "%Y-%m-%d %H:%M:%S"
-            )
-            if (
-                datetime.now().replace(tzinfo=None) - last_act_dt
-            ).total_seconds() < 1800:
-              status_badge = "<span class='badge-present'>متصل 🟢</span>"
-          except Exception:
-            pass
-
-        dev_rows.append(
-            f"<tr><td>{d_name}</td><td>{d_sn}</td><td>{d_ip}</td><td>{status_badge}</td></tr>"
-        )
-      strlit.markdown(
-          f'<table class="responsive-grid-table"><tr><th>اسم'
-          " الجهاز</th><th>الرقم التسلسلي (SN)</th><th>عنوان"
-          f' IP</th><th>الحالة</th></tr>{"".join(dev_rows)}</table>',
-          unsafe_allow_html=True,
-      )
-
-  search_query = (
-      strlit.text_input(
-          "",
-          placeholder=TEXT_CONFIG["search_placeholder"],
-          label_visibility="collapsed",
-      )
-      .strip()
-      .lower()
-  )
-  match = (
-      lambda c, n: (
-          search_query in str(c).lower() or search_query in str(n).lower()
-      )
-      if search_query
-      else True
-  )
-
-  view = strlit.session_state["selected_view"]
-
-  if view == "all":
-    rows = [
-        f"<tr><td>{c}</td><td>{d_data['name']}</td><td>{d_data['dept']}</td><td><span"
-        " class='badge-present'>نشط</span></td></tr>"
-        for c, d_data in act.items()
-        if match(c, d_data["name"])
-    ]
-    strlit.markdown(
-        '<table class="responsive-grid-table"><tr><th colspan="4"'
-        f' class="table-main-title-header">{TEXT_CONFIG["header_all"].format(len(act))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>',
-        unsafe_allow_html=True,
-    )
-
-  elif view == "present":
-    if pre:
-      rows = [
-          f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>"
-          for c, n, dpt, t, d in pre
-          if match(c, n)
-      ]
-      strlit.markdown(
-          '<table class="responsive-grid-table"><tr><th colspan="5"'
-          f' class="table-main-title-header">{TEXT_CONFIG["header_present"].format(len(pre))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>جهاز'
-          f' البصمة</th></tr>{"".join(rows)}</table>',
-          unsafe_allow_html=True,
-      )
-
-  elif view == "late":
-    if lat:
-      rows = [
-          f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td><span"
-          f" class='badge-late'>متأخر</span></td><td>{d}</td></tr>"
-          for c, n, dpt, t, d in lat
-          if match(c, n)
-      ]
-      strlit.markdown(
-          '<table class="responsive-grid-table"><tr><th colspan="6"'
-          f' class="table-main-title-header">{TEXT_CONFIG["header_late"].format(len(lat))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الدخول</th><th>الحالة</th><th>جهاز'
-          f' البصمة</th></tr>{"".join(rows)}</table>',
-          unsafe_allow_html=True,
-      )
-
-  elif view == "checkout":
-    if chk:
-      rows = [
-          f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td>{t}</td><td>{d}</td></tr>"
-          for c, n, dpt, t, d in chk
-          if match(c, n)
-      ]
-      strlit.markdown(
-          '<table class="responsive-grid-table"><tr><th colspan="5"'
-          f' class="table-main-title-header">{TEXT_CONFIG["header_checkout"].format(len(chk))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الانصراف</th><th>جهاز'
-          f' البصمة</th></tr>{"".join(rows)}</table>',
-          unsafe_allow_html=True,
-      )
-
-  elif view == "leave":
-    if lev:
-      rows = [
-          f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span"
-          f" class='badge-leave'>{r}</span></td></tr>"
-          for c, n, dpt, r in lev
-          if match(c, n)
-      ]
-      strlit.markdown(
-          '<table class="responsive-grid-table"><tr><th colspan="4"'
-          f' class="table-main-title-header">{TEXT_CONFIG["header_leave"].format(len(lev))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>نوع'
-          f' الإجازة</th></tr>{"".join(rows)}</table>',
-          unsafe_allow_html=True,
-      )
-
-  elif view == "absent":
-    if abs_s:
-      rows = [
-          f"<tr><td>{c}</td><td>{n}</td><td>{dpt}</td><td><span"
-          " class='badge-absent'>غياب</span></td></tr>"
-          for c, n, dpt in abs_s
-          if match(c, n)
-      ]
-      strlit.markdown(
-          '<table class="responsive-grid-table"><tr><th colspan="4"'
-          f' class="table-main-title-header">{TEXT_CONFIG["header_absent"].format(len(abs_s))}</th></tr><tr><th>الكود</th><th>الاسم</th><th>القسم</th><th>الحالة</th></tr>{"".join(rows)}</table>',
-          unsafe_allow_html=True,
-      )
 
 except Exception as e:
   strlit.error("تعذر تحميل بيانات BioTime حالياً. حاول التحديث مرة أخرى.")
