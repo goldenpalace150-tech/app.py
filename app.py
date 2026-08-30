@@ -271,6 +271,26 @@ strlit.markdown(
         div[data-testid="stColumn"] { min-width: 100% !important; }
         div[data-testid="stColumn"] button { padding: 10px 8px !important; }
     }
+
+    /* Full-screen loading veil used only while the app is waiting/processing. */
+    .gp-loading-overlay {
+        position: fixed; inset: 0; z-index: 999999;
+        background: rgba(241, 245, 249, 0.78);
+        backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px);
+        display: flex; align-items: center; justify-content: center; direction: rtl;
+    }
+    .gp-loading-box {
+        min-width: 220px; background: rgba(255,255,255,0.96);
+        border: 1px solid #cbd5e1; border-radius: 18px;
+        box-shadow: 0 18px 55px rgba(15,23,42,0.16);
+        padding: 22px 26px; text-align: center; color: #0f172a; font-weight: 800;
+    }
+    .gp-loading-spinner {
+        width: 38px; height: 38px; margin: 0 auto 12px auto;
+        border: 4px solid #dbeafe; border-top-color: #2563eb;
+        border-radius: 50%; animation: gp-spin 0.8s linear infinite;
+    }
+    @keyframes gp-spin { to { transform: rotate(360deg); } }
     </style>
 """,
     unsafe_allow_html=True,
@@ -625,6 +645,29 @@ def classify_transaction_punch(log, punch_time):
     return "out"
 
   return "unknown"
+
+
+def show_loading_overlay(message="جاري معالجة البيانات..."):
+  """Fade the full app while a blocking operation is running."""
+  placeholder = strlit.empty()
+  safe_message = clean_txt(message)
+  placeholder.markdown(
+      f"""
+      <div class="gp-loading-overlay">
+        <div class="gp-loading-box">
+          <div class="gp-loading-spinner"></div>
+          <div>{safe_message}</div>
+        </div>
+      </div>
+      """,
+      unsafe_allow_html=True,
+  )
+  return placeholder
+
+
+def hide_loading_overlay(placeholder):
+  if placeholder is not None:
+    placeholder.empty()
 
 
 @strlit.cache_data(ttl=300)
@@ -1122,10 +1165,13 @@ else:
       unsafe_allow_html=True,
   )
 
+main_loading_overlay = show_loading_overlay("جاري تحديث بيانات BioTime...")
 try:
   act, pre, lat, abs_s, chk, lev, devices, exc = load_attendance_data_from_api(
       selected_date_str, selected_date_obj_input, is_today
   )
+  hide_loading_overlay(main_loading_overlay)
+  main_loading_overlay = None
 
   render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
 
@@ -2550,45 +2596,172 @@ try:
     def excel_col_letter(column_number):
       return get_column_letter(column_number)
 
-    def patch_cell_value_xml(xml_text, row_number, column_number, value):
-      """Change one cell in worksheet XML with a minimal text patch.
-
-      This preserves the original XML structure, namespaces, metadata, tables,
-      printer settings, cloud extensions, and any unsupported Excel features.
-      """
+    def get_cell_style_id_xml(xml_text, row_number, column_number):
+      """Return the worksheet style id for a cell; 0 means default style."""
       coordinate = f"{get_column_letter(column_number)}{row_number}"
+      pattern = re.compile(
+          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)', re.DOTALL
+      )
+      match = pattern.search(xml_text)
+      if not match:
+        raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
+      attrs = match.group(1) or ""
+      style_match = re.search(r'\s+s="(\d+)"', attrs)
+      return int(style_match.group(1)) if style_match else 0
 
-      # Match either a self-closing cell or a normal cell element while preserving
-      # every attribute except the value/type attributes we intentionally change.
+    def ensure_duration_styles(styles_xml_bytes, source_style_ids):
+      """Clone existing styles and change ONLY their number format to [h]:mm."""
+      main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+      ET.register_namespace("", main_ns)
+      root = ET.fromstring(styles_xml_bytes)
+      numfmts = root.find(f"{{{main_ns}}}numFmts")
+      cellxfs = root.find(f"{{{main_ns}}}cellXfs")
+      if cellxfs is None:
+        raise RuntimeError("Excel styles.xml does not contain cellXfs")
+
+      duration_numfmt_id = None
+      if numfmts is not None:
+        for item in numfmts.findall(f"{{{main_ns}}}numFmt"):
+          if item.get("formatCode") == "[h]:mm":
+            duration_numfmt_id = int(item.get("numFmtId"))
+            break
+
+      if duration_numfmt_id is None:
+        existing_ids = []
+        if numfmts is not None:
+          for item in numfmts.findall(f"{{{main_ns}}}numFmt"):
+            try:
+              existing_ids.append(int(item.get("numFmtId", "0")))
+            except ValueError:
+              pass
+        duration_numfmt_id = max([163] + existing_ids) + 1
+        if numfmts is None:
+          numfmts = ET.Element(f"{{{main_ns}}}numFmts", {"count": "0"})
+          root.insert(0, numfmts)
+        ET.SubElement(
+            numfmts,
+            f"{{{main_ns}}}numFmt",
+            {"numFmtId": str(duration_numfmt_id), "formatCode": "[h]:mm"},
+        )
+        numfmts.set("count", str(len(numfmts.findall(f"{{{main_ns}}}numFmt"))))
+
+      xfs = list(cellxfs.findall(f"{{{main_ns}}}xf"))
+      style_map = {}
+      for original_style_id in sorted(set(source_style_ids)):
+        source_style_id = original_style_id
+        if source_style_id < 0 or source_style_id >= len(xfs):
+          source_style_id = 0
+        source_xf = xfs[source_style_id]
+        if int(source_xf.get("numFmtId", "0")) == duration_numfmt_id:
+          style_map[original_style_id] = source_style_id
+          continue
+        cloned_xf = ET.fromstring(ET.tostring(source_xf, encoding="utf-8"))
+        cloned_xf.set("numFmtId", str(duration_numfmt_id))
+        cloned_xf.set("applyNumberFormat", "1")
+        cellxfs.append(cloned_xf)
+        new_style_id = len(list(cellxfs.findall(f"{{{main_ns}}}xf"))) - 1
+        style_map[original_style_id] = new_style_id
+
+      cellxfs.set("count", str(len(list(cellxfs.findall(f"{{{main_ns}}}xf")))))
+      return ET.tostring(root, encoding="utf-8", xml_declaration=True), style_map
+
+    def patch_cell_value_xml(xml_text, row_number, column_number, value, style_id=None):
+      """Overwrite one attendance cell in the original worksheet XML."""
+      coordinate = f"{get_column_letter(column_number)}{row_number}"
       pattern = re.compile(
           rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)/>'
           rf'|<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>.*?</c>',
           re.DOTALL,
       )
-
       match = pattern.search(xml_text)
       if not match:
         raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
-
       attrs = match.group(1) if match.group(1) is not None else match.group(2)
-
-      # Remove an existing type attribute. We put back only the type we need.
       attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
+      if style_id is not None:
+        attrs = re.sub(r'\s+s="\d+"', '', attrs)
+        attrs += f' s="{int(style_id)}"'
 
+      # Always overwrite an existing attendance value with the newest result.
       if value is None or value == "":
         replacement = f"<c{attrs}/>"
       elif isinstance(value, str):
         safe_text = (
-            value.replace("&", "&amp;")
-                 .replace("<", "&lt;")
-                 .replace(">", "&gt;")
-                 .replace('"', "&quot;")
+            value.replace("&", "&amp;").replace("<", "&lt;")
+                 .replace(">", "&gt;").replace('"', "&quot;")
         )
         replacement = f'<c{attrs} t="inlineStr"><is><t>{safe_text}</t></is></c>'
       else:
         replacement = f"<c{attrs}><v>{value}</v></c>"
-
       return xml_text[:match.start()] + replacement + xml_text[match.end():]
+
+    def patch_cell_formula_xml(xml_text, row_number, column_number, formula):
+      """Replace a formula and remove its stale cached result."""
+      coordinate = f"{get_column_letter(column_number)}{row_number}"
+      pattern = re.compile(
+          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>(.*?)</c>',
+          re.DOTALL,
+      )
+      match = pattern.search(xml_text)
+      if not match:
+        raise RuntimeError(f"Excel formula cell {coordinate} was not found")
+      attrs = match.group(1)
+      body = match.group(2)
+      formula_text = str(formula or "")
+      if formula_text.startswith("="):
+        formula_text = formula_text[1:]
+      safe_formula = formula_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+      if re.search(r'<f(?:\s[^>]*)?>.*?</f>', body, re.DOTALL):
+        body = re.sub(
+            r'<f(?:\s[^>]*)?>.*?</f>', f'<f>{safe_formula}</f>',
+            body, count=1, flags=re.DOTALL,
+        )
+      else:
+        body = f'<f>{safe_formula}</f>' + body
+      body = re.sub(r'<v>.*?</v>', '', body, flags=re.DOTALL)
+      replacement = f"<c{attrs}>{body}</c>"
+      return xml_text[:match.start()] + replacement + xml_text[match.end():]
+
+    def build_total_formula_updates(ws, employee_matches, date_columns, today_date):
+      """Keep today's attendance visible, but exclude today/future dates from totals."""
+      prior_dates = [
+          (column, attendance_date)
+          for column, attendance_date in date_columns.items()
+          if attendance_date < today_date
+      ]
+      if not prior_dates:
+        return []
+      cutoff_column, cutoff_date = max(prior_dates, key=lambda item: item[1])
+      cutoff_raw = ws.cell(row=1, column=cutoff_column).value
+      if isinstance(cutoff_raw, datetime) or hasattr(cutoff_raw, "strftime"):
+        cutoff_header = cutoff_raw.strftime("%d/%m/%Y")
+      else:
+        cutoff_header = str(cutoff_raw).strip() or cutoff_date.strftime("%d/%m/%Y")
+
+      end_pattern = re.compile(r':\[([0-3]?\d/[01]?\d/\d{4})\]')
+      updates = []
+      for match in employee_matches:
+        row_number = match["row"]
+        for column in range(1, ws.max_column + 1):
+          raw_formula = ws.cell(row=row_number, column=column).value
+          if not (isinstance(raw_formula, str) and raw_formula.startswith("=")):
+            continue
+          changed = False
+          def replace_end_date(regex_match):
+            nonlocal changed
+            raw_date = regex_match.group(1)
+            try:
+              parsed_date = datetime.strptime(raw_date, "%d/%m/%Y").date()
+            except ValueError:
+              return regex_match.group(0)
+            if parsed_date >= today_date:
+              changed = True
+              return f":[{cutoff_header}]"
+            return regex_match.group(0)
+          new_formula = end_pattern.sub(replace_end_date, raw_formula)
+          if changed and new_formula != raw_formula:
+            updates.append({"row": row_number, "column": column, "formula": new_formula})
+      return updates
 
     def find_sheet_xml_path(zip_file, sheet_name):
       """Resolve a workbook sheet name to its worksheet XML path."""
@@ -2619,59 +2792,64 @@ try:
 
       raise RuntimeError(f"Worksheet not found: {sheet_name}")
 
-    def export_template_preserving_package(original_bytes, sheet_name, cell_updates):
-      """Patch attendance values into the original OOXML package.
-
-      Unlike openpyxl.save(), this does not rebuild the workbook. It copies the
-      original ZIP package byte-for-byte except for the specific attendance cells
-      that need changing. This is designed to avoid damaging modern Excel metadata
-      and workbook features that can be lost during a full openpyxl rewrite.
-      """
+    def export_template_preserving_package(
+        original_bytes, sheet_name, cell_updates, formula_updates=None
+    ):
+      """Patch the original OOXML package without rebuilding the workbook."""
       input_buffer = io.BytesIO(original_bytes)
       output_buffer = io.BytesIO()
-
+      formula_updates = formula_updates or []
       with zipfile.ZipFile(input_buffer, "r") as zin:
         sheet_xml_path = find_sheet_xml_path(zin, sheet_name)
         sheet_xml_text = zin.read(sheet_xml_path).decode("utf-8")
 
+        source_style_ids = []
         for update in cell_updates:
-          sheet_xml_text = patch_cell_value_xml(
-              sheet_xml_text,
-              update["row"],
-              update["column"],
-              update["value"],
+          source_style_ids.append(
+              get_cell_style_id_xml(sheet_xml_text, update["row"], update["column"])
+          )
+        styles_xml_path = "xl/styles.xml"
+        patched_styles_xml = zin.read(styles_xml_path)
+        duration_style_map = {}
+        if source_style_ids:
+          patched_styles_xml, duration_style_map = ensure_duration_styles(
+              patched_styles_xml, source_style_ids
           )
 
+        for update, source_style_id in zip(cell_updates, source_style_ids):
+          sheet_xml_text = patch_cell_value_xml(
+              sheet_xml_text,
+              update["row"], update["column"], update["value"],
+              style_id=duration_style_map.get(source_style_id, source_style_id),
+          )
+
+        for formula_update in formula_updates:
+          sheet_xml_text = patch_cell_formula_xml(
+              sheet_xml_text,
+              formula_update["row"], formula_update["column"], formula_update["formula"],
+          )
         patched_sheet_xml = sheet_xml_text.encode("utf-8")
 
-        # Attendance values feed formulas on this sheet and the payroll sheet.
-        # The original package contains cached formula results (often zero).
-        # Force Excel to recalculate ALL formulas on open so total hours, total
-        # attendance days, overtime/payroll links and subtotals refresh correctly.
         workbook_xml_text = zin.read("xl/workbook.xml").decode("utf-8")
         calc_pattern = re.compile(r"<calcPr\b([^>]*)/>")
         calc_match = calc_pattern.search(workbook_xml_text)
         if calc_match:
-          calc_attrs = calc_match.group(1)
           calc_attrs = re.sub(
               r'\s+(?:calcMode|calcOnSave|fullCalcOnLoad|forceFullCalc)="[^"]*"',
-              "",
-              calc_attrs,
+              "", calc_match.group(1),
           )
           calc_replacement = (
               f'<calcPr{calc_attrs} calcMode="auto" calcOnSave="1" '
               'fullCalcOnLoad="1" forceFullCalc="1"/>'
           )
           workbook_xml_text = (
-              workbook_xml_text[:calc_match.start()]
-              + calc_replacement
+              workbook_xml_text[:calc_match.start()] + calc_replacement
               + workbook_xml_text[calc_match.end():]
           )
         else:
           workbook_xml_text = workbook_xml_text.replace(
               "</workbook>",
-              '<calcPr calcMode="auto" calcOnSave="1" fullCalcOnLoad="1" '
-              'forceFullCalc="1"/></workbook>',
+              '<calcPr calcMode="auto" calcOnSave="1" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>',
           )
         patched_workbook_xml = workbook_xml_text.encode("utf-8")
 
@@ -2682,8 +2860,9 @@ try:
               data = patched_sheet_xml
             elif item.filename == "xl/workbook.xml":
               data = patched_workbook_xml
+            elif item.filename == styles_xml_path:
+              data = patched_styles_xml
             zout.writestr(item, data)
-
       output_buffer.seek(0)
       return output_buffer.getvalue()
 
@@ -2698,6 +2877,10 @@ try:
       )
 
     if uploaded_template is not None:
+      monthly_loading_overlay = show_loading_overlay(
+          "جاري تحميل ومعالجة بيانات الدوام..."
+      )
+      export_loading_overlay = None
       try:
         # Keep the exact original XLSX/XLSM bytes. The final export will patch
         # only the attendance cells into this original package.
@@ -2906,6 +3089,8 @@ try:
             text="المرحلة 4/4 — البيانات جاهزة للتصدير.",
         )
         progress.empty()
+        hide_loading_overlay(monthly_loading_overlay)
+        monthly_loading_overlay = None
 
         # EXACT MATCH ONLY:
         # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
@@ -2959,6 +3144,9 @@ try:
             use_container_width=True,
             key="run_monthly_attendance",
         ):
+          export_loading_overlay = show_loading_overlay(
+              "جاري تحديث القيم وتجهيز ملف Excel النهائي..."
+          )
           filled_cells = 0
           cell_updates = []
           import_log = []
@@ -3025,11 +3213,16 @@ try:
                   ]
               )
 
+          total_formula_updates = build_total_formula_updates(
+              ws_target, employee_matches, date_columns, now_syria.date()
+          )
+
           try:
             export_bytes = export_template_preserving_package(
                 original_template_bytes,
                 ws_target.title,
                 cell_updates,
+                formula_updates=total_formula_updates,
             )
           except Exception as export_error:
             raise RuntimeError(
@@ -3058,7 +3251,11 @@ try:
               "dates": len(dates_list),
               "single_punch": recovered_single_punch,
               "biotime_report_rows": report_actual_count,
+              "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
           }
+
+          hide_loading_overlay(export_loading_overlay)
+          export_loading_overlay = None
 
           strlit.success(
               f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
@@ -3096,6 +3293,8 @@ try:
           )
 
       except Exception as template_error:
+        hide_loading_overlay(monthly_loading_overlay)
+        hide_loading_overlay(export_loading_overlay)
         strlit.error("تعذر معالجة ملف الدوام. افتح التفاصيل الفنية عند الحاجة.")
         with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
           strlit.code(str(template_error))
@@ -3104,6 +3303,7 @@ try:
 
 
 except Exception as e:
+  hide_loading_overlay(main_loading_overlay)
   strlit.error("تعذر تحميل بيانات BioTime حالياً. حاول التحديث مرة أخرى.")
   with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
     strlit.code(TEXT_CONFIG["err_api"].format(str(e)))
