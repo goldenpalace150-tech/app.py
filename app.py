@@ -277,6 +277,25 @@ def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
   return f"{hours:02d}:{minutes:02d}"
 
 
+def calculate_total_wt_for_workday(clock_in, clock_out):
+  """Calculate uncapped Total WT from a valid IN/OUT pair.
+
+  Unlike Actual WT, Total WT is not limited to the 09:00-19:00 timetable, so
+  early arrival, late departure, and overtime remain visible. Single-punch days
+  do not use this value; they continue to use Actual WT.
+  """
+  if clock_in is None or clock_out is None:
+    return ""
+
+  worked_seconds = int((clock_out - clock_in).total_seconds())
+  if worked_seconds < 0:
+    return ""
+
+  hours, remainder = divmod(worked_seconds, 3600)
+  minutes = remainder // 60
+  return f"{hours:02d}:{minutes:02d}"
+
+
 def classify_transaction_punch(log, punch_time):
   """Return 'in', 'out', or 'unknown' from BioTime transaction punch state.
 
@@ -1376,7 +1395,7 @@ try:
           ),
       )
       total_work_time = duration_to_hhmm(total_value, total_key)
-      calculated_work_time = actual_work_time or total_work_time
+      calculated_work_time = total_work_time or actual_work_time
 
       clock_in = normalize_clock_value(clock_in)
       clock_out = normalize_clock_value(clock_out)
@@ -1403,7 +1422,7 @@ try:
           "Actual WT": actual_work_time,
           "Report Total WT": total_work_time,
           "Calculated WT": calculated_work_time,
-          "Total WT": calculated_work_time,
+          "Total WT": total_work_time,
           "Status": status,
       }
 
@@ -1560,11 +1579,15 @@ try:
                 if not normalized_record:
                   continue
 
-                # Actual WT is authoritative. Do not substitute report Total WT.
+                # Keep rows that expose either BioTime Actual WT or Total WT.
+                # Single-punch days use Actual WT; normal days use Total WT.
                 actual_wt = str(
                     normalized_record.get("Actual WT", "") or ""
                 ).strip()
-                if not actual_wt:
+                total_wt = str(
+                    normalized_record.get("Report Total WT", "") or ""
+                ).strip()
+                if not actual_wt and not total_wt:
                   continue
 
                 attendance_date = normalized_record["Attendance Date"]
@@ -2007,6 +2030,9 @@ try:
           actual_wt = calculate_actual_wt_for_workday(
               cursor, clock_in_dt, clock_out_dt
           )
+          total_wt = calculate_total_wt_for_workday(clock_in_dt, clock_out_dt)
+          is_single_punch = bool(clock_in_dt) != bool(clock_out_dt)
+          selected_work_time = actual_wt if is_single_punch else total_wt
 
           # A transaction exists, so this is attendance even if only one side is
           # present. Actual WT is schedule-aware and never raw first-last duration.
@@ -2033,8 +2059,8 @@ try:
               "Clock In": clock_in_dt.strftime("%H:%M") if clock_in_dt else "",
               "Clock Out": clock_out_dt.strftime("%H:%M") if clock_out_dt else "",
               "Actual WT": actual_wt,
-              "Calculated WT": actual_wt,
-              "Total WT": actual_wt,
+              "Calculated WT": selected_work_time,
+              "Total WT": total_wt,
               "Status": status,
           }
 
@@ -2342,9 +2368,8 @@ try:
             text="تم تحميل البصمات. جاري تحميل Actual WT من BioTime...",
         )
 
-        # Authoritative overlay: use BioTime's own Actual WT for every daily
-        # attendance record whenever the report API provides it. This fixes both
-        # single-punch days and normal/multiple-punch days.
+        # Authoritative overlay: single-punch days use BioTime Actual WT; normal
+        # attendance days use BioTime Total WT so uncapped/overtime hours remain visible.
         report_actual = fetch_biotime_calculated_range(
             range_start,
             range_end,
@@ -2359,12 +2384,9 @@ try:
               continue
 
             actual_wt = str(report_record.get("Actual WT", "") or "").strip()
-            if not actual_wt:
-              continue
-
-            attendance["Actual WT"] = actual_wt
-            attendance["Calculated WT"] = actual_wt
-            attendance["Total WT"] = actual_wt
+            report_total_wt = str(
+                report_record.get("Report Total WT", "") or ""
+            ).strip()
 
             report_clock_in = str(
                 report_record.get("Clock In", "") or ""
@@ -2376,7 +2398,30 @@ try:
               attendance["Clock In"] = report_clock_in
               attendance["Clock Out"] = report_clock_out
 
-            # A valid Actual WT row is attendance even if one punch is missing.
+            final_clock_in = str(attendance.get("Clock In", "") or "").strip()
+            final_clock_out = str(attendance.get("Clock Out", "") or "").strip()
+            is_single_punch = bool(final_clock_in) != bool(final_clock_out)
+
+            if actual_wt:
+              attendance["Actual WT"] = actual_wt
+            if report_total_wt:
+              attendance["Total WT"] = report_total_wt
+
+            if is_single_punch:
+              selected_work_time = actual_wt or str(
+                  attendance.get("Actual WT", "") or ""
+              ).strip()
+            else:
+              selected_work_time = report_total_wt or str(
+                  attendance.get("Total WT", "") or ""
+              ).strip()
+
+            if selected_work_time:
+              attendance["Calculated WT"] = selected_work_time
+            else:
+              continue
+
+            # A valid BioTime work-time row is attendance even if one punch is missing.
             if "Leave" not in str(attendance.get("Status", "")):
               clock_in = str(attendance.get("Clock In", "") or "").strip()
               clock_out = str(attendance.get("Clock Out", "") or "").strip()
