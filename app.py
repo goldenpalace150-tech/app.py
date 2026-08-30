@@ -16,7 +16,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-FAST-SINGLE-PUNCH-TOTALS-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-ACTUAL-WT-ALL-DAYS-FAST-2026-08-30"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -236,6 +236,74 @@ def calculate_single_punch_actual_wt(punch_time, is_out_punch):
   hours, remainder = divmod(worked_seconds, 3600)
   minutes = remainder // 60
   return f"{hours:02d}:{minutes:02d}"
+
+
+def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
+  """Calculate BioTime Actual WT against the 09:00-19:00 timetable.
+
+  The Daily Attendance Basic Report clips worked time to the assigned timetable:
+  time before 09:00 and after 19:00 does not increase Actual WT. If either IN or
+  OUT is missing, the missing side is the timetable boundary.
+  """
+  if clock_in is None and clock_out is None:
+    return ""
+
+  shift_start = datetime.combine(
+      work_date,
+      datetime.min.time(),
+  ).replace(hour=SINGLE_PUNCH_SHIFT_START_HOUR)
+  shift_end = datetime.combine(
+      work_date,
+      datetime.min.time(),
+  ).replace(hour=SINGLE_PUNCH_SHIFT_END_HOUR)
+
+  effective_in = clock_in if clock_in is not None else shift_start
+  effective_out = clock_out if clock_out is not None else shift_end
+
+  # A clock-out shortly after midnight belongs to the previous work date. It is
+  # still capped at the 19:00 timetable boundary for Actual WT.
+  if effective_out < shift_start and effective_out.date() > work_date:
+    effective_out = shift_end
+
+  effective_in = min(max(effective_in, shift_start), shift_end)
+  effective_out = min(max(effective_out, shift_start), shift_end)
+
+  worked_seconds = max(0, int((effective_out - effective_in).total_seconds()))
+  max_seconds = int((shift_end - shift_start).total_seconds())
+  worked_seconds = min(worked_seconds, max_seconds)
+
+  hours, remainder = divmod(worked_seconds, 3600)
+  minutes = remainder // 60
+  return f"{hours:02d}:{minutes:02d}"
+
+
+def classify_transaction_punch(log, punch_time):
+  """Return 'in', 'out', or 'unknown' from BioTime transaction punch state.
+
+  BioTime transactions expose punch_state/punch_state_display. Respect those
+  values first; only use the time of day when a device did not supply a usable
+  state. This prevents multiple IN-only or OUT-only punches from being paired
+  together into false 00:01/00:05/00:41 work durations.
+  """
+  display = clean_txt(log.get("punch_state_display", "")).casefold()
+  raw_state = str(log.get("punch_state", "") or "").strip().casefold()
+
+  display_compact = re.sub(r"[^a-z0-9]+", " ", display).strip()
+  if display_compact in {
+      "check in", "clock in", "in", "normal in", "overtime in", "ot in"
+  }:
+    return "in"
+  if display_compact in {
+      "check out", "clock out", "out", "normal out", "overtime out", "ot out"
+  }:
+    return "out"
+
+  if raw_state in {"0", "in", "check in", "check-in", "clock in", "4"}:
+    return "in"
+  if raw_state in {"1", "out", "check out", "check-out", "clock out", "5"}:
+    return "out"
+
+  return "unknown"
 
 
 @strlit.cache_data(ttl=300)
@@ -1410,44 +1478,39 @@ try:
         employee_internal_id_map=None,
         expected_single_punch_keys=None,
     ):
-      """Fetch BioTime-calculated hours for a date range in a few bulk calls.
+      """Fetch BioTime Actual WT for the whole range in bulk.
 
-      Only BioTime report endpoints are used here. The Basic Report file does not
-      need to be uploaded by the user.
+      Daily Activity is the first choice because it corresponds to BioTime's
+      daily attendance details (Clock In, Clock Out, Actual WT, Total WT). The
+      fallback reports are tried only when the preferred report does not expose
+      usable Actual WT rows. No per-day API loop is used.
       """
       start_text = start_date.strftime("%Y-%m-%d")
       end_text = end_date.strftime("%Y-%m-%d")
       employee_internal_id_map = employee_internal_id_map or {}
-      expected_single_punch_keys = set(expected_single_punch_keys or [])
       token = get_auth_token()
 
-      # Reports most likely to expose BioTime's schedule-aware worked duration.
+      # Keep the number of network calls small. Usually dailyActivityReport is
+      # enough; the others are compatibility fallbacks for different BioTime builds.
       report_names = (
-          "totalTimeCardReportV2",
           "dailyActivityReport",
+          "totalTimeCardReportV2",
           "timeCardReport",
-          "firstInLastOutReport",
           "monthlyWorkHoursReport",
       )
       query_variants = (
           {
               "start_date": start_text,
               "end_date": end_text,
-              "page_size": 5000,
+              "page_size": 10000,
           },
           {
               "start_time": f"{start_text} 00:00:00",
               "end_time": f"{end_text} 23:59:59",
-              "page_size": 5000,
-          },
-          {
-              "from_date": start_text,
-              "to_date": end_text,
-              "page_size": 5000,
+              "page_size": 10000,
           },
       )
 
-      # /att report endpoints work with HTTP Basic auth across BioTime editions.
       auth_attempts = [
           {
               "auth": (EMAIL, PASSWORD),
@@ -1464,41 +1527,6 @@ try:
             }
         )
 
-      best_records = {}
-      best_scores = {}
-      resolved_expected = set()
-
-      def merge_payload(payload):
-        nonlocal resolved_expected
-        found = 0
-        for report_row in extract_report_rows(payload):
-          normalized_record = normalize_calculated_report_row(
-              report_row,
-              start_date,
-              end_date,
-              employee_internal_id_map,
-          )
-          if not normalized_record:
-            continue
-
-          key = (
-              normalized_record["Attendance Date"],
-              normalized_record["Employee ID"],
-          )
-          expected = key in expected_single_punch_keys
-
-          # If single-punch keys are known from raw transactions, report rows for
-          # those exact employee/date pairs are given the strongest priority.
-          score = report_record_score(normalized_record, expected)
-          if score > best_scores.get(key, -1):
-            best_scores[key] = score
-            best_records[key] = normalized_record
-
-          if expected and normalized_record.get("Calculated WT"):
-            resolved_expected.add(key)
-          found += 1
-        return found
-
       session = requests.Session()
 
       for report_name in report_names:
@@ -1509,13 +1537,9 @@ try:
           if endpoint_missing:
             break
 
-          query_returned_rows = False
           for authorization in auth_attempts:
             payloads, status_code = fetch_report_pages(
-                session,
-                endpoint,
-                query,
-                authorization,
+                session, endpoint, query, authorization
             )
             if status_code == 404:
               endpoint_missing = True
@@ -1523,25 +1547,39 @@ try:
             if not payloads:
               continue
 
-            rows_found = 0
+            result = {}
+            actual_count = 0
             for payload in payloads:
-              rows_found += merge_payload(payload)
-            if rows_found:
-              query_returned_rows = True
-              break
+              for report_row in extract_report_rows(payload):
+                normalized_record = normalize_calculated_report_row(
+                    report_row,
+                    start_date,
+                    end_date,
+                    employee_internal_id_map,
+                )
+                if not normalized_record:
+                  continue
 
-          # Once a report responds with usable rows, do not repeat the same
-          # endpoint with alternate date-parameter spellings.
-          if query_returned_rows:
-            break
+                # Actual WT is authoritative. Do not substitute report Total WT.
+                actual_wt = str(
+                    normalized_record.get("Actual WT", "") or ""
+                ).strip()
+                if not actual_wt:
+                  continue
 
-        if expected_single_punch_keys and resolved_expected >= expected_single_punch_keys:
-          break
+                attendance_date = normalized_record["Attendance Date"]
+                employee_id = normalized_record["Employee ID"]
+                result.setdefault(attendance_date, {})[employee_id] = (
+                    normalized_record
+                )
+                actual_count += 1
 
-      result = {}
-      for (attendance_date, employee_id), record in best_records.items():
-        result.setdefault(attendance_date, {})[employee_id] = record
-      return result
+            # One successful daily report is enough. This keeps processing fast
+            # and avoids probing every report endpoint after good data is found.
+            if actual_count:
+              return result
+
+      return {}
 
     def fetch_paginated_api(session, path, params, headers, timeout=20):
       """Fetch a normal BioTime list endpoint, following pagination."""
@@ -1818,20 +1856,32 @@ try:
             or log.get("terminal_name")
             or terminal_map.get(device_sn, device_sn or "جهاز رئيسي")
         )
+        punch_kind = classify_transaction_punch(log, punch_time)
         punches_by_emp_date.setdefault(
             (cleaned_code, punch_time.date()), []
-        ).append((punch_time, device_name))
+        ).append(
+            {
+                "time": punch_time,
+                "device": device_name,
+                "kind": punch_kind,
+            }
+        )
 
-      # Remove duplicate punches (within 60 seconds) once for the whole month.
+      # Remove duplicate punches within 60 seconds once for the whole month.
+      # Keep the punch-state classification because it is essential for avoiding
+      # false pairings of two IN punches or two OUT punches.
       for key, punches in list(punches_by_emp_date.items()):
-        punches = sorted(punches, key=lambda item: item[0])
+        punches = sorted(punches, key=lambda item: item["time"])
         filtered = []
-        for punch_time, device_name in punches:
+        for punch in punches:
           if (
               not filtered
-              or abs((punch_time - filtered[-1][0]).total_seconds()) > 60
+              or abs(
+                  (punch["time"] - filtered[-1]["time"]).total_seconds()
+              ) > 60
+              or punch["kind"] != filtered[-1]["kind"]
           ):
-            filtered.append((punch_time, device_name))
+            filtered.append(punch)
         punches_by_emp_date[key] = filtered
 
       all_attendance = {}
@@ -1840,7 +1890,6 @@ try:
 
       while cursor <= end_date:
         date_map = {}
-        is_date_today = cursor == today
         leave_map = leave_by_date.get(cursor, {})
 
         for code, emp_data in active_employees.items():
@@ -1848,18 +1897,16 @@ try:
           dept = emp_data["dept"]
 
           day_punches = [
-              (punch_time, device_name)
-              for punch_time, device_name in punches_by_emp_date.get(
-                  (code, cursor), []
-              )
-              if punch_time.hour >= 5
+              punch
+              for punch in punches_by_emp_date.get((code, cursor), [])
+              if punch["time"].hour >= 5
           ]
           next_morning = [
-              (punch_time, device_name)
-              for punch_time, device_name in punches_by_emp_date.get(
+              punch
+              for punch in punches_by_emp_date.get(
                   (code, cursor + timedelta(days=1)), []
               )
-              if punch_time.hour < 5
+              if punch["time"].hour < 5
           ]
 
           if not day_punches:
@@ -1871,6 +1918,8 @@ try:
                   "Date": cursor.strftime("%Y-%m-%d"),
                   "Clock In": "",
                   "Clock Out": "",
+                  "Actual WT": "",
+                  "Calculated WT": "",
                   "Total WT": "",
                   "Status": f"Leave - {leave_map[code]}",
               }
@@ -1882,78 +1931,111 @@ try:
                   "Date": cursor.strftime("%Y-%m-%d"),
                   "Clock In": "",
                   "Clock Out": "",
+                  "Actual WT": "",
+                  "Calculated WT": "",
                   "Total WT": "",
                   "Status": "Absence(A)",
               }
             continue
 
-          first_p, first_dev = day_punches[0]
-          single_punch_only = len(day_punches) == 1 and not next_morning
-          single_punch_is_out = (
-              single_punch_only and first_p.hour >= SINGLE_PUNCH_OUT_HOUR
+          all_candidates = day_punches + next_morning
+          explicit_in = [p for p in day_punches if p["kind"] == "in"]
+          explicit_out = [p for p in all_candidates if p["kind"] == "out"]
+          unknown_day = [p for p in day_punches if p["kind"] == "unknown"]
+          unknown_next = [p for p in next_morning if p["kind"] == "unknown"]
+
+          # When a transaction carries a real punch state, trust it. Unknown
+          # punches are used only to fill a side that BioTime did not label.
+          in_candidates = list(explicit_in)
+          out_candidates = list(explicit_out)
+
+          for punch in unknown_day:
+            if punch["time"].hour < SINGLE_PUNCH_OUT_HOUR:
+              if not explicit_in:
+                in_candidates.append(punch)
+            else:
+              if not explicit_out:
+                out_candidates.append(punch)
+
+          if unknown_next and not explicit_out:
+            out_candidates.extend(unknown_next)
+
+          # Final fallback for devices that send no punch state at all: classify
+          # all morning punches as IN candidates and all afternoon/evening punches
+          # as OUT candidates. Never pair two morning-only punches together.
+          if not in_candidates and not out_candidates:
+            in_candidates = [
+                p for p in day_punches
+                if p["time"].hour < SINGLE_PUNCH_OUT_HOUR
+            ]
+            out_candidates = [
+                p for p in day_punches
+                if p["time"].hour >= SINGLE_PUNCH_OUT_HOUR
+            ] + list(next_morning)
+
+          clock_in_punch = (
+              min(in_candidates, key=lambda p: p["time"])
+              if in_candidates
+              else None
           )
-          is_late = (
-              not single_punch_is_out
-              and (first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15))
+          clock_out_punch = (
+              max(out_candidates, key=lambda p: p["time"])
+              if out_candidates
+              else None
           )
 
-          if single_punch_only:
-            single_punch_actual_wt = calculate_single_punch_actual_wt(
-                first_p,
-                single_punch_is_out,
-            )
-            date_map[code] = {
-                "Employee ID": code,
-                "First Name": name,
-                "Department": dept,
-                "Date": cursor.strftime("%Y-%m-%d"),
-                "Clock In": "" if single_punch_is_out else first_p.strftime("%H:%M"),
-                "Clock Out": first_p.strftime("%H:%M") if single_punch_is_out else "",
-                "Actual WT": single_punch_actual_wt,
-                "Calculated WT": single_punch_actual_wt,
-                "Total WT": single_punch_actual_wt,
-                "Status": (
-                    "Present(P) / Missing IN"
-                    if single_punch_is_out
-                    else (
-                        "Late(LT) / Missing OUT"
-                        if is_late
-                        else "Present(P) / Missing OUT"
-                    )
-                ),
-            }
-            continue
+          clock_in_dt = clock_in_punch["time"] if clock_in_punch else None
+          clock_out_dt = clock_out_punch["time"] if clock_out_punch else None
 
-          punch_count = (
-              2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
+          # If both sides somehow resolve in reverse order on the same work date,
+          # keep the side that is credible instead of manufacturing a tiny shift.
+          if (
+              clock_in_dt is not None
+              and clock_out_dt is not None
+              and clock_out_dt <= clock_in_dt
+              and clock_out_dt.date() == clock_in_dt.date()
+          ):
+            if clock_in_dt.hour < SINGLE_PUNCH_OUT_HOUR <= clock_out_dt.hour:
+              pass
+            elif clock_in_dt.hour < SINGLE_PUNCH_OUT_HOUR:
+              clock_out_dt = None
+              clock_out_punch = None
+            else:
+              clock_in_dt = None
+              clock_in_punch = None
+
+          actual_wt = calculate_actual_wt_for_workday(
+              cursor, clock_in_dt, clock_out_dt
           )
-          last_p = None
-          if punch_count % 2 == 0:
-            last_p = (
-                next_morning[-1][0]
-                if (len(day_punches) % 2 != 0 and next_morning)
-                else day_punches[-1][0]
-            )
-          elif not is_date_today and len(day_punches) > 1:
-            last_p = day_punches[-1][0]
 
-          total_work = ""
-          if last_p:
-            diff = last_p - first_p
-            total_seconds = max(0, int(diff.total_seconds()))
-            hours, remainder = divmod(total_seconds, 3600)
-            minutes = remainder // 60
-            total_work = f"{hours:02d}:{minutes:02d}"
+          # A transaction exists, so this is attendance even if only one side is
+          # present. Actual WT is schedule-aware and never raw first-last duration.
+          is_late = bool(
+              clock_in_dt
+              and (
+                  clock_in_dt.hour > 9
+                  or (clock_in_dt.hour == 9 and clock_in_dt.minute > 15)
+              )
+          )
+
+          if clock_in_dt and not clock_out_dt:
+            status = "Late(LT) / Missing OUT" if is_late else "Present(P) / Missing OUT"
+          elif clock_out_dt and not clock_in_dt:
+            status = "Present(P) / Missing IN"
+          else:
+            status = "Late(LT)" if is_late else "Present(P)"
 
           date_map[code] = {
               "Employee ID": code,
               "First Name": name,
               "Department": dept,
               "Date": cursor.strftime("%Y-%m-%d"),
-              "Clock In": first_p.strftime("%H:%M"),
-              "Clock Out": last_p.strftime("%H:%M") if last_p else "",
-              "Total WT": total_work,
-              "Status": "Late(LT)" if is_late else "Present(P)",
+              "Clock In": clock_in_dt.strftime("%H:%M") if clock_in_dt else "",
+              "Clock Out": clock_out_dt.strftime("%H:%M") if clock_out_dt else "",
+              "Actual WT": actual_wt,
+              "Calculated WT": actual_wt,
+              "Total WT": actual_wt,
+              "Status": status,
           }
 
         all_attendance[cursor] = date_map
@@ -2229,9 +2311,10 @@ try:
 
         # FAST MONTHLY LOAD:
         # Employees, devices, leave and transactions are fetched once for the
-        # entire Excel date range. Single-punch Actual WT is calculated locally
-        # with the same 09:00-19:00 timetable rule verified against BioTime's
-        # Basic Report, so there is no slow report-API probing and no second file.
+        # entire Excel date range. BioTime Actual WT is then requested once in
+        # bulk and overlaid for EVERY attendance day (not only single punches).
+        # If a BioTime build does not expose the report endpoint, the local
+        # punch-state calculation follows the same 09:00-19:00 Actual-WT rule.
         sorted_dates = sorted(set(date_columns.values()))
         dates_list = [
             (column, attendance_date)
@@ -2251,12 +2334,64 @@ try:
             text="جاري تحميل بيانات الدوام الشهرية...",
         )
 
-        all_attendance, employee_catalog, _employee_internal_id_map = (
+        all_attendance, employee_catalog, employee_internal_id_map = (
             load_monthly_attendance_bulk(range_start, range_end)
         )
         progress.progress(
+            0.65,
+            text="تم تحميل البصمات. جاري تحميل Actual WT من BioTime...",
+        )
+
+        # Authoritative overlay: use BioTime's own Actual WT for every daily
+        # attendance record whenever the report API provides it. This fixes both
+        # single-punch days and normal/multiple-punch days.
+        report_actual = fetch_biotime_calculated_range(
+            range_start,
+            range_end,
+            employee_internal_id_map,
+        )
+        report_actual_count = 0
+        for attendance_date, report_date_map in report_actual.items():
+          date_map = all_attendance.get(attendance_date, {})
+          for employee_id, report_record in report_date_map.items():
+            attendance = date_map.get(employee_id)
+            if attendance is None:
+              continue
+
+            actual_wt = str(report_record.get("Actual WT", "") or "").strip()
+            if not actual_wt:
+              continue
+
+            attendance["Actual WT"] = actual_wt
+            attendance["Calculated WT"] = actual_wt
+            attendance["Total WT"] = actual_wt
+
+            report_clock_in = str(
+                report_record.get("Clock In", "") or ""
+            ).strip()
+            report_clock_out = str(
+                report_record.get("Clock Out", "") or ""
+            ).strip()
+            if report_clock_in or report_clock_out:
+              attendance["Clock In"] = report_clock_in
+              attendance["Clock Out"] = report_clock_out
+
+            # A valid Actual WT row is attendance even if one punch is missing.
+            if "Leave" not in str(attendance.get("Status", "")):
+              clock_in = str(attendance.get("Clock In", "") or "").strip()
+              clock_out = str(attendance.get("Clock Out", "") or "").strip()
+              if clock_in and not clock_out:
+                attendance["Status"] = "Present(P) / Missing OUT"
+              elif clock_out and not clock_in:
+                attendance["Status"] = "Present(P) / Missing IN"
+              elif "Absence" in str(attendance.get("Status", "")):
+                attendance["Status"] = "Present(P)"
+
+            report_actual_count += 1
+
+        progress.progress(
             0.95,
-            text="تم تحميل البصمات. جاري تجهيز الملف...",
+            text="تم تحميل Actual WT. جاري تجهيز الملف...",
         )
 
         recovered_single_punch = 0
@@ -2270,7 +2405,6 @@ try:
             total_work = str(
                 attendance.get("Calculated WT", "")
                 or attendance.get("Actual WT", "")
-                or attendance.get("Total WT", "")
                 or ""
             ).strip()
             if bool(clock_in) != bool(clock_out) and total_work:
@@ -2404,7 +2538,6 @@ try:
                 total_work = str(
                     attendance.get("Calculated WT", "")
                     or attendance.get("Actual WT", "")
-                    or attendance.get("Total WT", "")
                     or ""
                 ).strip()
 
@@ -2470,6 +2603,7 @@ try:
               "unmatched": len(unmatched_employees),
               "filled": filled_cells,
               "single_punch": recovered_single_punch,
+              "actual_wt_api": report_actual_count,
           }
 
           strlit.success(
