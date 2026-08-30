@@ -16,7 +16,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-FAST-SINGLE-PUNCH-2026-08-30-03"
+APP_VERSION = "BIO-ATTENDANCE-FAST-SINGLE-PUNCH-TOTALS-2026-08-30"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -171,6 +171,11 @@ strlit.markdown(
 EXCLUDED_MANAGEMENT_CODES = ("40",)
 # A lone punch at or after this hour is treated as an OUT punch.
 SINGLE_PUNCH_OUT_HOUR = 14
+# BioTime timetable used by the current attendance setup. The Basic Report
+# confirms that Actual WT for a single punch is the worked overlap with
+# 09:00-19:00, capped at 10 hours.
+SINGLE_PUNCH_SHIFT_START_HOUR = 9
+SINGLE_PUNCH_SHIFT_END_HOUR = 19
 SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
 
 BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip("/")
@@ -196,6 +201,41 @@ def clean_txt(raw_text):
       if raw_text
       else ""
   )
+
+
+def calculate_single_punch_actual_wt(punch_time, is_out_punch):
+  """Return BioTime-equivalent Actual WT for one missing punch.
+
+  Current company timetable is 09:00-19:00 (10 hours). For a missing OUT,
+  Actual WT is from the recorded IN up to 19:00. For a missing IN, it is from
+  09:00 up to the recorded OUT. Early/late excess outside the timetable is
+  capped exactly as BioTime's Basic Report does.
+  """
+  shift_start = punch_time.replace(
+      hour=SINGLE_PUNCH_SHIFT_START_HOUR,
+      minute=0,
+      second=0,
+      microsecond=0,
+  )
+  shift_end = punch_time.replace(
+      hour=SINGLE_PUNCH_SHIFT_END_HOUR,
+      minute=0,
+      second=0,
+      microsecond=0,
+  )
+  max_seconds = int((shift_end - shift_start).total_seconds())
+
+  if is_out_punch:
+    effective_out = min(max(punch_time, shift_start), shift_end)
+    worked_seconds = int((effective_out - shift_start).total_seconds())
+  else:
+    effective_in = max(min(punch_time, shift_end), shift_start)
+    worked_seconds = int((shift_end - effective_in).total_seconds())
+
+  worked_seconds = max(0, min(max_seconds, worked_seconds))
+  hours, remainder = divmod(worked_seconds, 3600)
+  minutes = remainder // 60
+  return f"{hours:02d}:{minutes:02d}"
 
 
 @strlit.cache_data(ttl=300)
@@ -473,8 +513,8 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     ]
 
     # For exactly one punch, classify an early punch as IN and an afternoon/
-    # evening punch as OUT. BioTime's calculated report is merged later to
-    # supply the working duration without inventing the missing punch.
+    # evening punch as OUT. Calculate the same schedule-aware Actual WT shown
+    # by BioTime's Basic Report, without requiring a second upload or report API.
     single_punch_only = len(day_punches) == 1 and not next_morning
     single_punch_is_out = (
         single_punch_only and first_p.hour >= SINGLE_PUNCH_OUT_HOUR
@@ -488,6 +528,10 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
     if single_punch_only:
       clock_in_value = "" if single_punch_is_out else first_p.strftime("%H:%M")
       clock_out_value = first_p.strftime("%H:%M") if single_punch_is_out else ""
+      single_punch_actual_wt = calculate_single_punch_actual_wt(
+          first_p,
+          single_punch_is_out,
+      )
 
       if single_punch_is_out:
         checkout_staff.append(
@@ -513,7 +557,9 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
           "Date": selected_date_str,
           "Clock In": clock_in_value,
           "Clock Out": clock_out_value,
-          "Total WT": "",
+          "Actual WT": single_punch_actual_wt,
+          "Calculated WT": single_punch_actual_wt,
+          "Total WT": single_punch_actual_wt,
           "Status": status_str,
       })
       continue
@@ -1852,6 +1898,10 @@ try:
           )
 
           if single_punch_only:
+            single_punch_actual_wt = calculate_single_punch_actual_wt(
+                first_p,
+                single_punch_is_out,
+            )
             date_map[code] = {
                 "Employee ID": code,
                 "First Name": name,
@@ -1859,7 +1909,9 @@ try:
                 "Date": cursor.strftime("%Y-%m-%d"),
                 "Clock In": "" if single_punch_is_out else first_p.strftime("%H:%M"),
                 "Clock Out": first_p.strftime("%H:%M") if single_punch_is_out else "",
-                "Total WT": "",
+                "Actual WT": single_punch_actual_wt,
+                "Calculated WT": single_punch_actual_wt,
+                "Total WT": single_punch_actual_wt,
                 "Status": (
                     "Present(P) / Missing IN"
                     if single_punch_is_out
@@ -2077,11 +2129,44 @@ try:
 
         patched_sheet_xml = sheet_xml_text.encode("utf-8")
 
+        # Attendance values feed formulas on this sheet and the payroll sheet.
+        # The original package contains cached formula results (often zero).
+        # Force Excel to recalculate ALL formulas on open so total hours, total
+        # attendance days, overtime/payroll links and subtotals refresh correctly.
+        workbook_xml_text = zin.read("xl/workbook.xml").decode("utf-8")
+        calc_pattern = re.compile(r"<calcPr\b([^>]*)/>")
+        calc_match = calc_pattern.search(workbook_xml_text)
+        if calc_match:
+          calc_attrs = calc_match.group(1)
+          calc_attrs = re.sub(
+              r'\s+(?:calcMode|calcOnSave|fullCalcOnLoad|forceFullCalc)="[^"]*"',
+              "",
+              calc_attrs,
+          )
+          calc_replacement = (
+              f'<calcPr{calc_attrs} calcMode="auto" calcOnSave="1" '
+              'fullCalcOnLoad="1" forceFullCalc="1"/>'
+          )
+          workbook_xml_text = (
+              workbook_xml_text[:calc_match.start()]
+              + calc_replacement
+              + workbook_xml_text[calc_match.end():]
+          )
+        else:
+          workbook_xml_text = workbook_xml_text.replace(
+              "</workbook>",
+              '<calcPr calcMode="auto" calcOnSave="1" fullCalcOnLoad="1" '
+              'forceFullCalc="1"/></workbook>',
+          )
+        patched_workbook_xml = workbook_xml_text.encode("utf-8")
+
         with zipfile.ZipFile(output_buffer, "w") as zout:
           for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename == sheet_xml_path:
               data = patched_sheet_xml
+            elif item.filename == "xl/workbook.xml":
+              data = patched_workbook_xml
             zout.writestr(item, data)
 
       output_buffer.seek(0)
@@ -2144,8 +2229,9 @@ try:
 
         # FAST MONTHLY LOAD:
         # Employees, devices, leave and transactions are fetched once for the
-        # entire Excel date range. BioTime's calculated report is then fetched
-        # once in bulk only to recover schedule-aware single-punch work time.
+        # entire Excel date range. Single-punch Actual WT is calculated locally
+        # with the same 09:00-19:00 timetable rule verified against BioTime's
+        # Basic Report, so there is no slow report-API probing and no second file.
         sorted_dates = sorted(set(date_columns.values()))
         dates_list = [
             (column, attendance_date)
@@ -2165,18 +2251,15 @@ try:
             text="جاري تحميل بيانات الدوام الشهرية...",
         )
 
-        all_attendance, employee_catalog, employee_internal_id_map = (
+        all_attendance, employee_catalog, _employee_internal_id_map = (
             load_monthly_attendance_bulk(range_start, range_end)
         )
         progress.progress(
-            0.65,
-            text="تم تحميل البصمات. جاري استرجاع ساعات BioTime المحسوبة...",
+            0.95,
+            text="تم تحميل البصمات. جاري تجهيز الملف...",
         )
 
-        # Identify single punches from the raw transaction data first. This keeps
-        # normal two-punch days exactly as before and limits calculated-report
-        # merging to the employee/date pairs that actually need it.
-        expected_single_punch_keys = set()
+        recovered_single_punch = 0
         for attendance_date, date_map in all_attendance.items():
           for employee_id, attendance in date_map.items():
             status = str(attendance.get("Status", "") or "")
@@ -2184,73 +2267,14 @@ try:
               continue
             clock_in = str(attendance.get("Clock In", "") or "").strip()
             clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            if bool(clock_in) != bool(clock_out):
-              expected_single_punch_keys.add((attendance_date, employee_id))
-
-        calculated_attendance = fetch_biotime_calculated_range(
-            range_start,
-            range_end,
-            employee_internal_id_map,
-            expected_single_punch_keys,
-        )
-
-        recovered_single_punch = 0
-        for attendance_date, calculated_date_map in calculated_attendance.items():
-          for employee_id, calculated_record in calculated_date_map.items():
-            attendance = all_attendance.get(attendance_date, {}).get(employee_id)
-            if not attendance:
-              continue
-
-            status = str(attendance.get("Status", "") or "")
-            if "Leave" in status or "Absence" in status:
-              continue
-
-            raw_clock_in = str(attendance.get("Clock In", "") or "").strip()
-            raw_clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            report_clock_in = str(
-                calculated_record.get("Clock In", "") or ""
-            ).strip()
-            report_clock_out = str(
-                calculated_record.get("Clock Out", "") or ""
-            ).strip()
-
-            raw_is_single = bool(raw_clock_in) != bool(raw_clock_out)
-            report_is_single = bool(report_clock_in) != bool(report_clock_out)
-
-            # BioTime's report is authoritative for deciding that a day is a
-            # single-punch day. This also fixes cases where extra raw terminal
-            # logs exist but BioTime's schedule calculation accepts only one side.
-            if not (raw_is_single or report_is_single):
-              continue
-
-            # Required priority: Actual WT first, then the report's Total WT.
-            calculated_work_time = str(
-                calculated_record.get("Actual WT", "")
-                or calculated_record.get("Report Total WT", "")
-                or calculated_record.get("Calculated WT", "")
+            total_work = str(
+                attendance.get("Calculated WT", "")
+                or attendance.get("Actual WT", "")
+                or attendance.get("Total WT", "")
                 or ""
             ).strip()
-            if not calculated_work_time:
-              continue
-
-            attendance["Actual WT"] = str(
-                calculated_record.get("Actual WT", "") or ""
-            ).strip()
-            attendance["Calculated WT"] = calculated_work_time
-            attendance["Total WT"] = calculated_work_time
-
-            # If the BioTime report identifies which side is missing, use that
-            # classification instead of any extra raw transaction outside the
-            # employee's valid timetable window.
-            if report_is_single:
-              attendance["Clock In"] = report_clock_in
-              attendance["Clock Out"] = report_clock_out
-              if report_clock_in and not report_clock_out:
-                attendance["Status"] = "Present(P) / Missing OUT"
-              elif report_clock_out and not report_clock_in:
-                attendance["Status"] = "Present(P) / Missing IN"
-
-            recovered_single_punch += 1
+            if bool(clock_in) != bool(clock_out) and total_work:
+              recovered_single_punch += 1
 
         progress.progress(
             1.0,
@@ -2445,6 +2469,7 @@ try:
               "matched": len(employee_matches),
               "unmatched": len(unmatched_employees),
               "filled": filled_cells,
+              "single_punch": recovered_single_punch,
           }
 
           strlit.success(
