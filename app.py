@@ -16,7 +16,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-AUTO-SINGLE-PUNCH-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-FAST-SINGLE-PUNCH-2026-08-30-03"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -864,43 +864,118 @@ try:
       return flat
 
     def extract_report_rows(payload):
-      """Extract row dictionaries from common DRF/report response envelopes."""
+      """Extract attendance rows from BioTime report JSON.
+
+      BioTime releases return report data in several shapes. Some are flat DRF
+      lists, while others group daily rows beneath an employee object. Preserve
+      scalar parent fields while walking nested lists so employee/date context is
+      not lost before normalization.
+      """
+      rows = []
+      seen = set()
+
+      row_hint_keys = {
+          "attdate",
+          "attendancedate",
+          "workdate",
+          "date",
+          "clockin",
+          "clockout",
+          "checkin",
+          "checkout",
+          "actualwt",
+          "actualworked",
+          "actualworktime",
+          "totalwt",
+          "totalworked",
+          "totalworktime",
+      }
+
+      def walk(value, inherited=None):
+        inherited = dict(inherited or {})
+
+        if isinstance(value, list):
+          for item in value:
+            walk(item, inherited)
+          return
+
+        if not isinstance(value, dict):
+          return
+
+        scalar_context = dict(inherited)
+        nested_items = []
+
+        for key, child in value.items():
+          if isinstance(child, (dict, list)):
+            nested_items.append((key, child))
+            # Employee/report group metadata is often a nested object sitting
+            # beside the actual daily rows. Carry its scalar fields into sibling
+            # row context using prefixed names such as employee_emp_code.
+            if isinstance(child, dict):
+              for child_key, child_value in child.items():
+                if not isinstance(child_value, (dict, list)):
+                  scalar_context.setdefault(
+                      f"{key}_{child_key}",
+                      child_value,
+                  )
+          else:
+            scalar_context.setdefault(key, child)
+
+        normalized_keys = {normalize_report_key(key) for key in value.keys()}
+        has_row_hint = bool(normalized_keys & row_hint_keys)
+
+        if has_row_hint:
+          merged = dict(inherited)
+          merged.update(value)
+          # Avoid adding the same object twice when several envelope paths point
+          # to the identical dictionary.
+          signature = id(value)
+          if signature not in seen:
+            seen.add(signature)
+            rows.append(merged)
+
+        for _key, child in nested_items:
+          walk(child, scalar_context)
+
+      walk(payload)
+
+      # Flat report lists occasionally contain fields whose names are unknown to
+      # row_hint_keys. Fall back to the conventional envelopes if needed.
+      if rows:
+        return rows
+
       if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
-
-      if not isinstance(payload, dict):
-        return []
-
-      for key in ("data", "results", "rows", "items"):
-        candidate = payload.get(key)
-        if isinstance(candidate, list):
-          return [item for item in candidate if isinstance(item, dict)]
-        if isinstance(candidate, dict):
-          nested_rows = extract_report_rows(candidate)
-          if nested_rows:
-            return nested_rows
-
-      # Some BioTime report responses place the list under another dynamic key.
-      for candidate in payload.values():
-        if isinstance(candidate, list) and candidate and all(
-            isinstance(item, dict) for item in candidate
-        ):
-          return candidate
-        if isinstance(candidate, dict):
-          nested_rows = extract_report_rows(candidate)
-          if nested_rows:
-            return nested_rows
-
+      if isinstance(payload, dict):
+        for key in ("data", "results", "rows", "items"):
+          candidate = payload.get(key)
+          if isinstance(candidate, list):
+            return [item for item in candidate if isinstance(item, dict)]
       return []
 
     def first_report_value(flat_row, candidate_keys):
-      """Return the first non-empty field from a flattened report row."""
-      for candidate_key in candidate_keys:
-        normalized_candidate = normalize_report_key(candidate_key)
+      """Return the first non-empty report field, preferring exact keys."""
+      normalized_candidates = [
+          normalize_report_key(candidate_key) for candidate_key in candidate_keys
+      ]
+
+      # Exact keys first. flatten_report_row keeps short child keys, so this
+      # avoids mistaking e.g. total_work_time for the more specific work_time.
+      for normalized_candidate in normalized_candidates:
+        if not normalized_candidate:
+          continue
+        value = flat_row.get(normalized_candidate)
+        if value not in (None, ""):
+          return value, normalized_candidate
+
+      # Fallback for unusual nested serializers that expose only prefixed keys.
+      for normalized_candidate in normalized_candidates:
+        if not normalized_candidate:
+          continue
         for key, value in flat_row.items():
           if value in (None, ""):
             continue
-          if key == normalized_candidate or key.endswith(normalized_candidate):
+          if key.endswith(normalized_candidate):
             return value, key
       return "", ""
 
@@ -911,16 +986,24 @@ try:
         return value
       if value not in (None, ""):
         raw = str(value).strip()
-        for fmt in (
-            "%Y-%m-%d",
-            "%Y-%m-%d %H:%M:%S",
-            "%d/%m/%Y",
-            "%d-%m-%Y",
-            "%d/%m/%y",
-            "%d-%m-%y",
+
+        # BioTime versions may serialize dates as YYYY-MM-DD, full timestamps,
+        # or ISO-8601 strings with a T/Z timezone marker.
+        try:
+          return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+        except ValueError:
+          pass
+
+        for candidate, fmt in (
+            (raw[:10], "%Y-%m-%d"),
+            (raw[:19], "%Y-%m-%d %H:%M:%S"),
+            (raw[:10], "%d/%m/%Y"),
+            (raw[:10], "%d-%m-%Y"),
+            (raw[:8], "%d/%m/%y"),
+            (raw[:8], "%d-%m-%y"),
         ):
           try:
-            return datetime.strptime(raw[:19], fmt).date()
+            return datetime.strptime(candidate, fmt).date()
           except ValueError:
             continue
       return fallback_date
@@ -988,9 +1071,62 @@ try:
       minutes = remainder // 60
       return f"{hours:02d}:{minutes:02d}"
 
-    def normalize_calculated_report_row(report_row, start_date, end_date):
-      """Convert one untyped BioTime report row to the app attendance shape."""
+    def normalize_clock_value(value):
+      """Normalize a report clock value to HH:MM without inventing a punch."""
+      if value in (None, ""):
+        return ""
+      if isinstance(value, datetime):
+        return value.strftime("%H:%M")
+      if hasattr(value, "hour") and hasattr(value, "minute"):
+        try:
+          return f"{int(value.hour):02d}:{int(value.minute):02d}"
+        except Exception:
+          pass
+
+      raw = str(value).strip()
+      if not raw:
+        return ""
+
+      for fmt in (
+          "%Y-%m-%d %H:%M:%S",
+          "%Y-%m-%d %H:%M",
+          "%d-%m-%Y %H:%M:%S",
+          "%d/%m/%Y %H:%M:%S",
+          "%H:%M:%S",
+          "%H:%M",
+          "%I:%M %p",
+      ):
+        try:
+          return datetime.strptime(raw[:19], fmt).strftime("%H:%M")
+        except ValueError:
+          continue
+
+      # Keep an already-recognisable HH:MM prefix.
+      match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?::\d{2})?", raw)
+      if match:
+        try:
+          hour = int(match.group(1))
+          minute = int(match.group(2))
+          if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+        except ValueError:
+          pass
+      return raw
+
+    def normalize_calculated_report_row(
+        report_row,
+        start_date,
+        end_date,
+        employee_internal_id_map=None,
+    ):
+      """Convert one BioTime attendance-report row to the app attendance shape.
+
+      The BioTime report APIs are not fully consistent between releases. Some
+      versions return emp_code directly; others return an internal employee id or
+      a nested employee object. The same is true for worked-time field names.
+      """
       flat = flatten_report_row(report_row)
+      employee_internal_id_map = employee_internal_id_map or {}
 
       employee_value, _employee_key = first_report_value(
           flat,
@@ -998,13 +1134,32 @@ try:
               "emp_code",
               "employee_emp_code",
               "employee_code",
+              "employee_code_code",
               "employeecode",
               "empcode",
               "staff_code",
               "staffcode",
+              "employee_number",
+              "employee_no",
           ),
       )
       employee_id = normalize_id(employee_value)
+
+      if not employee_id:
+        internal_value, _internal_key = first_report_value(
+            flat,
+            (
+                "employee_id",
+                "employeeid",
+                "emp_id",
+                "empid",
+                "employee",
+                "emp",
+            ),
+        )
+        internal_id = normalize_id(internal_value)
+        employee_id = employee_internal_id_map.get(internal_id, "")
+
       if not employee_id:
         return None
 
@@ -1013,8 +1168,11 @@ try:
           (
               "att_date",
               "attendance_date",
+              "attendance_day",
               "work_date",
+              "workday",
               "attdate",
+              "transaction_date",
               "date",
           ),
       )
@@ -1027,12 +1185,14 @@ try:
           (
               "clock_in",
               "check_in",
+              "checkin",
               "first_in",
               "first_punch",
               "first_punch_time",
               "checkin_time",
               "in_time",
               "punch_in",
+              "first_clock_in",
           ),
       )
       clock_out, _clock_out_key = first_report_value(
@@ -1040,16 +1200,21 @@ try:
           (
               "clock_out",
               "check_out",
+              "checkout",
               "last_out",
               "last_punch",
               "last_punch_time",
               "checkout_time",
               "out_time",
               "punch_out",
+              "last_clock_out",
           ),
       )
 
-      duration_value, duration_key = first_report_value(
+      # Prefer BioTime's actual worked duration. This is the value that recovers
+      # a missing IN/OUT according to the employee's timetable. Total duration is
+      # used only when the report does not expose an actual-worked field.
+      actual_value, actual_key = first_report_value(
           flat,
           (
               "actual_wt",
@@ -1057,37 +1222,54 @@ try:
               "actual_working_time",
               "actual_worked_time",
               "actual_worked_hours",
+              "actual_worked",
+              "actual_work",
               "actual_time",
-              "work_time",
+              "actual_duration",
+              "actual_work_duration",
               "worked_time",
               "worked_hours",
-              "working_hours",
-              "work_hours",
               "worked_hrs",
+              "working_hours",
               "working_hrs",
+              "work_time",
+              "work_hours",
               "work_hrs",
+              "worked",
+              "work_duration",
+              "worked_duration",
+              "actual_worked_minutes",
+              "actual_worked_seconds",
+              "worked_minutes",
+              "worked_seconds",
+          ),
+      )
+      actual_work_time = duration_to_hhmm(actual_value, actual_key)
+
+      total_value, total_key = first_report_value(
+          flat,
+          (
+              "total_wt",
+              "total_worked",
               "total_work_time",
               "total_worked_time",
               "total_worked_hours",
-              "work_duration",
-              "worked_duration",
-              "actual_work_duration",
               "total_duration",
-              "worked",
-              "duration",
               "total_hours",
               "total_hrs",
               "total_time",
+              "duration",
           ),
       )
-      calculated_work_time = duration_to_hhmm(duration_value, duration_key)
+      total_work_time = duration_to_hhmm(total_value, total_key)
+      calculated_work_time = actual_work_time or total_work_time
+
+      clock_in = normalize_clock_value(clock_in)
+      clock_out = normalize_clock_value(clock_out)
 
       # Ignore report metadata rows that do not describe attendance.
-      if not calculated_work_time and clock_in in (None, "") and clock_out in (None, ""):
+      if not calculated_work_time and not clock_in and not clock_out:
         return None
-
-      clock_in = str(clock_in or "").strip()
-      clock_out = str(clock_out or "").strip()
 
       if clock_in and not clock_out:
         status = "Present(P) / Missing OUT"
@@ -1104,25 +1286,102 @@ try:
           "Date": attendance_date.strftime("%Y-%m-%d"),
           "Clock In": clock_in,
           "Clock Out": clock_out,
+          "Actual WT": actual_work_time,
+          "Report Total WT": total_work_time,
           "Calculated WT": calculated_work_time,
           "Total WT": calculated_work_time,
           "Status": status,
       }
 
+    def report_record_score(record, expected_single_punch=False):
+      """Prefer the report row most useful for single-punch recovery."""
+      score = 0
+      if expected_single_punch:
+        score += 100
+      if record.get("Actual WT"):
+        score += 50
+      if record.get("Report Total WT"):
+        score += 30
+      if record.get("Calculated WT"):
+        score += 20
+      if bool(record.get("Clock In")) != bool(record.get("Clock Out")):
+        score += 10
+      return score
+
+    def fetch_report_pages(session, endpoint, query, request_kwargs):
+      """Fetch one BioTime report query and follow DRF pagination."""
+      payloads = []
+      next_url = endpoint
+      next_params = dict(query)
+      seen_urls = set()
+
+      for _page in range(20):
+        request_key = (next_url, tuple(sorted((next_params or {}).items())))
+        if request_key in seen_urls:
+          break
+        seen_urls.add(request_key)
+
+        try:
+          response = session.get(
+              next_url,
+              params=next_params,
+              timeout=20,
+              **request_kwargs,
+          )
+        except requests.RequestException:
+          return [], None
+
+        if response.status_code != 200:
+          return [], response.status_code
+
+        try:
+          payload = response.json()
+        except ValueError:
+          return [], response.status_code
+
+        payloads.append(payload)
+
+        if not isinstance(payload, dict):
+          break
+        next_link = payload.get("next")
+        if not next_link:
+          break
+        next_link = str(next_link)
+        if next_link.startswith("http://") or next_link.startswith("https://"):
+          next_url = next_link
+        elif next_link.startswith("/"):
+          next_url = BASE_URL + next_link
+        else:
+          next_url = BASE_URL + "/" + next_link.lstrip("/")
+        next_params = None
+
+      return payloads, 200
+
     @strlit.cache_data(ttl=300, show_spinner=False)
-    def fetch_biotime_calculated_range(start_date, end_date):
-      """Fetch BioTime's calculated work time for the monthly date range."""
+    def fetch_biotime_calculated_range(
+        start_date,
+        end_date,
+        employee_internal_id_map=None,
+        expected_single_punch_keys=None,
+    ):
+      """Fetch BioTime-calculated hours for a date range in a few bulk calls.
+
+      Only BioTime report endpoints are used here. The Basic Report file does not
+      need to be uploaded by the user.
+      """
       start_text = start_date.strftime("%Y-%m-%d")
       end_text = end_date.strftime("%Y-%m-%d")
+      employee_internal_id_map = employee_internal_id_map or {}
+      expected_single_punch_keys = set(expected_single_punch_keys or [])
       token = get_auth_token()
 
+      # Reports most likely to expose BioTime's schedule-aware worked duration.
       report_names = (
           "totalTimeCardReportV2",
-          "timeCardReport",
           "dailyActivityReport",
-          "monthlyWorkHoursReport",
-          "monthlyPunchReport",
+          "timeCardReport",
           "firstInLastOutReport",
+          "monthlyWorkHoursReport",
       )
       query_variants = (
           {
@@ -1140,37 +1399,61 @@ try:
               "to_date": end_text,
               "page_size": 5000,
           },
-          {
-              "startDate": start_text,
-              "endDate": end_text,
-              "page_size": 5000,
-          },
-          {
-              "begin_date": start_text,
-              "end_date": end_text,
-              "page_size": 5000,
-          },
       )
 
-      authorization_attempts = []
-      if token:
-        authorization_attempts.append(
-            {
-                "headers": {
-                    "Authorization": f"Token {token}",
-                    "Content-Type": "application/json",
-                }
-            }
-        )
-      authorization_attempts.append(
+      # /att report endpoints work with HTTP Basic auth across BioTime editions.
+      auth_attempts = [
           {
               "auth": (EMAIL, PASSWORD),
               "headers": {"Accept": "application/json"},
           }
-      )
+      ]
+      if token:
+        auth_attempts.append(
+            {
+                "headers": {
+                    "Authorization": f"Token {token}",
+                    "Accept": "application/json",
+                }
+            }
+        )
 
-      best_result = {}
-      best_score = -1
+      best_records = {}
+      best_scores = {}
+      resolved_expected = set()
+
+      def merge_payload(payload):
+        nonlocal resolved_expected
+        found = 0
+        for report_row in extract_report_rows(payload):
+          normalized_record = normalize_calculated_report_row(
+              report_row,
+              start_date,
+              end_date,
+              employee_internal_id_map,
+          )
+          if not normalized_record:
+            continue
+
+          key = (
+              normalized_record["Attendance Date"],
+              normalized_record["Employee ID"],
+          )
+          expected = key in expected_single_punch_keys
+
+          # If single-punch keys are known from raw transactions, report rows for
+          # those exact employee/date pairs are given the strongest priority.
+          score = report_record_score(normalized_record, expected)
+          if score > best_scores.get(key, -1):
+            best_scores[key] = score
+            best_records[key] = normalized_record
+
+          if expected and normalized_record.get("Calculated WT"):
+            resolved_expected.add(key)
+          found += 1
+        return found
+
+      session = requests.Session()
 
       for report_name in report_names:
         endpoint = f"{BASE_URL}/att/api/{report_name}/"
@@ -1180,65 +1463,451 @@ try:
           if endpoint_missing:
             break
 
-          for authorization in authorization_attempts:
-            try:
-              response = requests.get(
-                  endpoint,
-                  params=query,
-                  timeout=15,
-                  **authorization,
-              )
-            except requests.RequestException:
-              continue
-
-            if response.status_code == 404:
+          query_returned_rows = False
+          for authorization in auth_attempts:
+            payloads, status_code = fetch_report_pages(
+                session,
+                endpoint,
+                query,
+                authorization,
+            )
+            if status_code == 404:
               endpoint_missing = True
               break
-            if response.status_code != 200:
+            if not payloads:
               continue
 
-            try:
-              payload = response.json()
-            except ValueError:
-              continue
+            rows_found = 0
+            for payload in payloads:
+              rows_found += merge_payload(payload)
+            if rows_found:
+              query_returned_rows = True
+              break
 
-            parsed_result = {}
-            for report_row in extract_report_rows(payload):
-              normalized_record = normalize_calculated_report_row(
-                  report_row,
-                  start_date,
-                  end_date,
+          # Once a report responds with usable rows, do not repeat the same
+          # endpoint with alternate date-parameter spellings.
+          if query_returned_rows:
+            break
+
+        if expected_single_punch_keys and resolved_expected >= expected_single_punch_keys:
+          break
+
+      result = {}
+      for (attendance_date, employee_id), record in best_records.items():
+        result.setdefault(attendance_date, {})[employee_id] = record
+      return result
+
+    def fetch_paginated_api(session, path, params, headers, timeout=20):
+      """Fetch a normal BioTime list endpoint, following pagination."""
+      rows = []
+      next_url = f"{BASE_URL}{path}"
+      next_params = dict(params or {})
+      seen_urls = set()
+
+      for page_number in range(1, 50):
+        request_key = (next_url, tuple(sorted((next_params or {}).items())))
+        if request_key in seen_urls:
+          break
+        seen_urls.add(request_key)
+
+        try:
+          response = session.get(
+              next_url,
+              params=next_params,
+              headers=headers,
+              timeout=timeout,
+          )
+        except requests.RequestException:
+          break
+
+        if response.status_code != 200:
+          break
+        try:
+          payload = response.json()
+        except ValueError:
+          break
+
+        if isinstance(payload, list):
+          rows.extend(item for item in payload if isinstance(item, dict))
+          break
+        if not isinstance(payload, dict):
+          break
+
+        page_rows = payload.get("data")
+        if not isinstance(page_rows, list):
+          page_rows = payload.get("results")
+        if not isinstance(page_rows, list):
+          page_rows = []
+        rows.extend(item for item in page_rows if isinstance(item, dict))
+
+        next_link = payload.get("next")
+        if next_link:
+          next_link = str(next_link)
+          if next_link.startswith("http://") or next_link.startswith("https://"):
+            next_url = next_link
+          elif next_link.startswith("/"):
+            next_url = BASE_URL + next_link
+          else:
+            next_url = BASE_URL + "/" + next_link.lstrip("/")
+          next_params = None
+          continue
+
+        count = payload.get("count")
+        try:
+          count = int(count)
+        except (TypeError, ValueError):
+          count = len(rows)
+
+        if len(rows) >= count or not page_rows:
+          break
+
+        # Some BioTime builds omit `next`; fall back to explicit page numbers.
+        next_url = f"{BASE_URL}{path}"
+        next_params = dict(params or {})
+        next_params["page"] = page_number + 1
+
+      return rows
+
+    @strlit.cache_data(ttl=300, show_spinner=False)
+    def load_monthly_attendance_bulk(start_date, end_date):
+      """Load the whole attendance range with one request per data source.
+
+      This replaces the old one-date-at-a-time loop, which repeatedly downloaded
+      employees, devices, leave and transactions for every Excel date.
+      """
+      token = get_auth_token()
+      if not token:
+        raise RuntimeError("تعذر المصادقة مع BioTime")
+
+      headers = {
+          "Authorization": f"Token {token}",
+          "Content-Type": "application/json",
+      }
+      session = requests.Session()
+
+      devices = []
+      for endpoint in ("/iclock/api/terminals/", "/iclock/api/devices/"):
+        devices = fetch_paginated_api(
+            session,
+            endpoint,
+            {"page_size": 1000},
+            headers,
+            timeout=15,
+        )
+        if devices:
+          break
+
+      terminal_map = {
+          str(device.get("sn", "")): (
+              device.get("alias")
+              or device.get("terminal_name")
+              or str(device.get("sn", ""))
+          )
+          for device in devices
+          if device.get("sn")
+      }
+
+      all_employees = fetch_paginated_api(
+          session,
+          "/personnel/api/employees/",
+          {"page_size": 1000},
+          headers,
+          timeout=20,
+      )
+
+      active_employees = {}
+      employee_internal_id_map = {}
+
+      for emp in all_employees:
+        raw_code = str(emp.get("emp_code", "")).strip()
+        cleaned_code = normalize_id(raw_code)
+
+        is_active = (
+            str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
+        )
+        emp_status = str(emp.get("status", "0")).upper()
+        enable_att = (
+            str(emp.get("enable_attendance", True)).lower()
+            in ("true", "1", "yes")
+        )
+        if not is_active or emp_status in ("1", "2", "D") or not enable_att:
+          continue
+        if not cleaned_code or cleaned_code in EXCLUDED_MANAGEMENT_CODES:
+          continue
+
+        first_name = str(emp.get("first_name", "") or "").strip()
+        last_name = str(emp.get("last_name", "") or "").strip()
+        if first_name.lower() == "none":
+          first_name = ""
+        if last_name.lower() == "none":
+          last_name = ""
+        full_name = f"{first_name} {last_name}".strip()
+
+        dept_data = emp.get("department", {})
+        dept_name = (
+            dept_data.get("dept_name")
+            if isinstance(dept_data, dict)
+            else str(emp.get("department", "") or "")
+        )
+        if not dept_name or str(dept_name).lower() == "none":
+          dept_name = "غير محدد"
+
+        active_employees[cleaned_code] = {
+            "name": clean_txt(full_name or f"موظف {cleaned_code}"),
+            "dept": clean_txt(dept_name),
+        }
+
+        internal_id = normalize_id(emp.get("id"))
+        if internal_id:
+          employee_internal_id_map[internal_id] = cleaned_code
+
+      employee_catalog = {
+          employee_id: employee_data["name"]
+          for employee_id, employee_data in active_employees.items()
+      }
+
+      leave_records = fetch_paginated_api(
+          session,
+          "/att/api/leave/",
+          {"page_size": 5000},
+          headers,
+          timeout=15,
+      )
+      if not leave_records:
+        leave_records = fetch_paginated_api(
+            session,
+            "/iclock/api/leave/",
+            {"page_size": 5000},
+            headers,
+            timeout=15,
+        )
+
+      leave_by_date = {}
+      for leave in leave_records:
+        raw_code = (
+            leave.get("emp_code")
+            or leave.get("employee_code")
+            or leave.get("employee_emp_code")
+            or ""
+        )
+        cleaned_code = normalize_id(raw_code)
+        if not cleaned_code:
+          internal_employee = normalize_id(
+              leave.get("employee_id") or leave.get("employee") or leave.get("emp")
+          )
+          cleaned_code = employee_internal_id_map.get(internal_employee, "")
+        if cleaned_code not in active_employees:
+          continue
+
+        start_value = (
+            leave.get("start_time")
+            or leave.get("start_date")
+            or leave.get("start_datetime")
+        )
+        end_value = (
+            leave.get("end_time")
+            or leave.get("end_date")
+            or leave.get("end_datetime")
+        )
+        if not start_value or not end_value:
+          continue
+
+        try:
+          leave_start = datetime.strptime(str(start_value)[:10], "%Y-%m-%d").date()
+          leave_end = datetime.strptime(str(end_value)[:10], "%Y-%m-%d").date()
+        except ValueError:
+          continue
+
+        leave_name = "إجازة"
+        leave_type = leave.get("leave_type")
+        if isinstance(leave_type, dict):
+          leave_name = leave_type.get("leave_name") or leave_name
+        elif leave_type not in (None, ""):
+          leave_name = str(leave_type)
+        elif leave.get("leave_name"):
+          leave_name = str(leave.get("leave_name"))
+
+        cursor = max(start_date, leave_start)
+        last_date = min(end_date, leave_end)
+        while cursor <= last_date:
+          leave_by_date.setdefault(cursor, {})[cleaned_code] = clean_txt(leave_name)
+          cursor += timedelta(days=1)
+
+      raw_logs = fetch_paginated_api(
+          session,
+          "/iclock/api/transactions/",
+          {
+              "start_time": start_date.strftime("%Y-%m-%d") + " 00:00:00",
+              "end_time": (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
+              + " 05:00:00",
+              "page_size": 5000,
+          },
+          headers,
+          timeout=30,
+      )
+
+      punches_by_emp_date = {}
+      for log in raw_logs:
+        cleaned_code = normalize_id(log.get("emp_code"))
+        if not cleaned_code:
+          internal_emp = normalize_id(log.get("emp"))
+          cleaned_code = employee_internal_id_map.get(internal_emp, "")
+        if cleaned_code not in active_employees:
+          continue
+
+        punch_value = log.get("punch_time")
+        if not punch_value:
+          continue
+        try:
+          punch_time = datetime.strptime(
+              str(punch_value)[:19],
+              "%Y-%m-%d %H:%M:%S",
+          )
+        except ValueError:
+          continue
+
+        device_sn = str(log.get("terminal_sn", "") or "")
+        device_name = (
+            log.get("terminal_alias")
+            or log.get("terminal_name")
+            or terminal_map.get(device_sn, device_sn or "جهاز رئيسي")
+        )
+        punches_by_emp_date.setdefault(
+            (cleaned_code, punch_time.date()), []
+        ).append((punch_time, device_name))
+
+      # Remove duplicate punches (within 60 seconds) once for the whole month.
+      for key, punches in list(punches_by_emp_date.items()):
+        punches = sorted(punches, key=lambda item: item[0])
+        filtered = []
+        for punch_time, device_name in punches:
+          if (
+              not filtered
+              or abs((punch_time - filtered[-1][0]).total_seconds()) > 60
+          ):
+            filtered.append((punch_time, device_name))
+        punches_by_emp_date[key] = filtered
+
+      all_attendance = {}
+      today = datetime.now(SYRIA_TZ).date()
+      cursor = start_date
+
+      while cursor <= end_date:
+        date_map = {}
+        is_date_today = cursor == today
+        leave_map = leave_by_date.get(cursor, {})
+
+        for code, emp_data in active_employees.items():
+          name = emp_data["name"]
+          dept = emp_data["dept"]
+
+          day_punches = [
+              (punch_time, device_name)
+              for punch_time, device_name in punches_by_emp_date.get(
+                  (code, cursor), []
               )
-              if not normalized_record:
-                continue
-
-              attendance_date = normalized_record["Attendance Date"]
-              employee_id = normalized_record["Employee ID"]
-              parsed_result.setdefault(attendance_date, {})[employee_id] = (
-                  normalized_record
+              if punch_time.hour >= 5
+          ]
+          next_morning = [
+              (punch_time, device_name)
+              for punch_time, device_name in punches_by_emp_date.get(
+                  (code, cursor + timedelta(days=1)), []
               )
+              if punch_time.hour < 5
+          ]
 
-            if not parsed_result:
-              continue
+          if not day_punches:
+            if code in leave_map:
+              date_map[code] = {
+                  "Employee ID": code,
+                  "First Name": name,
+                  "Department": dept,
+                  "Date": cursor.strftime("%Y-%m-%d"),
+                  "Clock In": "",
+                  "Clock Out": "",
+                  "Total WT": "",
+                  "Status": f"Leave - {leave_map[code]}",
+              }
+            else:
+              date_map[code] = {
+                  "Employee ID": code,
+                  "First Name": name,
+                  "Department": dept,
+                  "Date": cursor.strftime("%Y-%m-%d"),
+                  "Clock In": "",
+                  "Clock Out": "",
+                  "Total WT": "",
+                  "Status": "Absence(A)",
+              }
+            continue
 
-            score = sum(
-                3 if record.get("Calculated WT") else 1
-                for date_records in parsed_result.values()
-                for record in date_records.values()
+          first_p, first_dev = day_punches[0]
+          single_punch_only = len(day_punches) == 1 and not next_morning
+          single_punch_is_out = (
+              single_punch_only and first_p.hour >= SINGLE_PUNCH_OUT_HOUR
+          )
+          is_late = (
+              not single_punch_is_out
+              and (first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15))
+          )
+
+          if single_punch_only:
+            date_map[code] = {
+                "Employee ID": code,
+                "First Name": name,
+                "Department": dept,
+                "Date": cursor.strftime("%Y-%m-%d"),
+                "Clock In": "" if single_punch_is_out else first_p.strftime("%H:%M"),
+                "Clock Out": first_p.strftime("%H:%M") if single_punch_is_out else "",
+                "Total WT": "",
+                "Status": (
+                    "Present(P) / Missing IN"
+                    if single_punch_is_out
+                    else (
+                        "Late(LT) / Missing OUT"
+                        if is_late
+                        else "Present(P) / Missing OUT"
+                    )
+                ),
+            }
+            continue
+
+          punch_count = (
+              2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
+          )
+          last_p = None
+          if punch_count % 2 == 0:
+            last_p = (
+                next_morning[-1][0]
+                if (len(day_punches) % 2 != 0 and next_morning)
+                else day_punches[-1][0]
             )
-            if score > best_score:
-              best_result = parsed_result
-              best_score = score
+          elif not is_date_today and len(day_punches) > 1:
+            last_p = day_punches[-1][0]
 
-            # Time-card reports are preferred once calculated durations are found.
-            if report_name in ("totalTimeCardReportV2", "timeCardReport") and any(
-                record.get("Calculated WT")
-                for date_records in parsed_result.values()
-                for record in date_records.values()
-            ):
-              return parsed_result
+          total_work = ""
+          if last_p:
+            diff = last_p - first_p
+            total_seconds = max(0, int(diff.total_seconds()))
+            hours, remainder = divmod(total_seconds, 3600)
+            minutes = remainder // 60
+            total_work = f"{hours:02d}:{minutes:02d}"
 
-      return best_result
+          date_map[code] = {
+              "Employee ID": code,
+              "First Name": name,
+              "Department": dept,
+              "Date": cursor.strftime("%Y-%m-%d"),
+              "Clock In": first_p.strftime("%H:%M"),
+              "Clock Out": last_p.strftime("%H:%M") if last_p else "",
+              "Total WT": total_work,
+              "Status": "Late(LT)" if is_late else "Present(P)",
+          }
+
+        all_attendance[cursor] = date_map
+        cursor += timedelta(days=1)
+
+      return all_attendance, employee_catalog, employee_internal_id_map
 
     def detect_month_sheet(workbook):
       preferred = [
@@ -1473,8 +2142,10 @@ try:
           )
           raise RuntimeError("No employee rows detected")
 
-        # Fetch BioTime raw attendance and overlay BioTime's own calculated
-        # report values. This automatically recovers single-punch work time.
+        # FAST MONTHLY LOAD:
+        # Employees, devices, leave and transactions are fetched once for the
+        # entire Excel date range. BioTime's calculated report is then fetched
+        # once in bulk only to recover schedule-aware single-punch work time.
         sorted_dates = sorted(set(date_columns.values()))
         dates_list = [
             (column, attendance_date)
@@ -1482,58 +2153,60 @@ try:
             if attendance_date <= now_syria.date()
         ]
 
-        calculated_attendance = fetch_biotime_calculated_range(
-            sorted_dates[0],
-            min(sorted_dates[-1], now_syria.date()),
-        )
+        if not dates_list:
+          strlit.error("لا توجد تواريخ حالية قابلة للمعالجة في ملف الدوام.")
+          raise RuntimeError("No current attendance dates to process")
 
-        all_attendance = {}
-        employee_catalog = {}
+        range_start = min(attendance_date for _column, attendance_date in dates_list)
+        range_end = max(attendance_date for _column, attendance_date in dates_list)
+
         progress = strlit.progress(
             0,
-            text="جاري تحميل بيانات الدوام لجميع التواريخ...",
+            text="جاري تحميل بيانات الدوام الشهرية...",
         )
 
-        total_dates = len(dates_list)
-        for index, (_date_column, attendance_date) in enumerate(
-            dates_list,
-            start=1,
-        ):
-          (
-              active_employees,
-              _present,
-              _late,
-              _absent,
-              _checkout,
-              _leave,
-              _devices,
-              excel_rows_for_date,
-          ) = fetch_month_date(attendance_date)
+        all_attendance, employee_catalog, employee_internal_id_map = (
+            load_monthly_attendance_bulk(range_start, range_end)
+        )
+        progress.progress(
+            0.65,
+            text="تم تحميل البصمات. جاري استرجاع ساعات BioTime المحسوبة...",
+        )
 
-          for employee_id, employee_data in active_employees.items():
-            normalized_employee_id = normalize_id(employee_id)
-            employee_catalog[normalized_employee_id] = clean_txt(
-                employee_data.get("name", "")
-            )
+        # Identify single punches from the raw transaction data first. This keeps
+        # normal two-punch days exactly as before and limits calculated-report
+        # merging to the employee/date pairs that actually need it.
+        expected_single_punch_keys = set()
+        for attendance_date, date_map in all_attendance.items():
+          for employee_id, attendance in date_map.items():
+            status = str(attendance.get("Status", "") or "")
+            if "Leave" in status or "Absence" in status:
+              continue
+            clock_in = str(attendance.get("Clock In", "") or "").strip()
+            clock_out = str(attendance.get("Clock Out", "") or "").strip()
+            if bool(clock_in) != bool(clock_out):
+              expected_single_punch_keys.add((attendance_date, employee_id))
 
-          date_map = {}
-          for item in excel_rows_for_date:
-            employee_id = normalize_id(item.get("Employee ID", ""))
-            if employee_id:
-              date_map[employee_id] = item
+        calculated_attendance = fetch_biotime_calculated_range(
+            range_start,
+            range_end,
+            employee_internal_id_map,
+            expected_single_punch_keys,
+        )
 
-          calculated_date_map = calculated_attendance.get(attendance_date, {})
-
+        recovered_single_punch = 0
+        for attendance_date, calculated_date_map in calculated_attendance.items():
           for employee_id, calculated_record in calculated_date_map.items():
-            api_record = date_map.get(employee_id, {})
-            calculated_work_time = str(
-                calculated_record.get("Calculated WT", "") or ""
-            ).strip()
-            if not calculated_work_time:
+            attendance = all_attendance.get(attendance_date, {}).get(employee_id)
+            if not attendance:
               continue
 
-            api_clock_in = str(api_record.get("Clock In", "") or "").strip()
-            api_clock_out = str(api_record.get("Clock Out", "") or "").strip()
+            status = str(attendance.get("Status", "") or "")
+            if "Leave" in status or "Absence" in status:
+              continue
+
+            raw_clock_in = str(attendance.get("Clock In", "") or "").strip()
+            raw_clock_out = str(attendance.get("Clock Out", "") or "").strip()
             report_clock_in = str(
                 calculated_record.get("Clock In", "") or ""
             ).strip()
@@ -1541,58 +2214,48 @@ try:
                 calculated_record.get("Clock Out", "") or ""
             ).strip()
 
-            api_is_single_punch = bool(api_clock_in) != bool(api_clock_out)
-            report_is_single_punch = bool(report_clock_in) != bool(report_clock_out)
+            raw_is_single = bool(raw_clock_in) != bool(raw_clock_out)
+            report_is_single = bool(report_clock_in) != bool(report_clock_out)
 
-            # Preserve the existing raw/API duration for normal two-punch days.
-            # Use BioTime's calculated report only to recover a true single-punch
-            # day, whether the single punch is visible in the raw API or the report.
-            if not (api_is_single_punch or report_is_single_punch):
+            # BioTime's report is authoritative for deciding that a day is a
+            # single-punch day. This also fixes cases where extra raw terminal
+            # logs exist but BioTime's schedule calculation accepts only one side.
+            if not (raw_is_single or report_is_single):
               continue
 
-            merged_record = dict(api_record)
-            merged_record["Employee ID"] = employee_id
-            merged_record["Date"] = attendance_date.strftime("%Y-%m-%d")
-            merged_record["Calculated WT"] = calculated_work_time
-            merged_record["Total WT"] = calculated_work_time
-
-            # When the calculated report identifies the existing side, trust it.
-            # Otherwise retain the early/late classification from the raw punch.
-            if report_clock_in or report_clock_out:
-              merged_record["Clock In"] = report_clock_in
-              merged_record["Clock Out"] = report_clock_out
-            else:
-              merged_record["Clock In"] = api_clock_in
-              merged_record["Clock Out"] = api_clock_out
-
-            final_clock_in = str(
-                merged_record.get("Clock In", "") or ""
+            # Required priority: Actual WT first, then the report's Total WT.
+            calculated_work_time = str(
+                calculated_record.get("Actual WT", "")
+                or calculated_record.get("Report Total WT", "")
+                or calculated_record.get("Calculated WT", "")
+                or ""
             ).strip()
-            final_clock_out = str(
-                merged_record.get("Clock Out", "") or ""
+            if not calculated_work_time:
+              continue
+
+            attendance["Actual WT"] = str(
+                calculated_record.get("Actual WT", "") or ""
             ).strip()
+            attendance["Calculated WT"] = calculated_work_time
+            attendance["Total WT"] = calculated_work_time
 
-            if final_clock_in and not final_clock_out:
-              merged_record["Status"] = "Present(P) / Missing OUT"
-            elif final_clock_out and not final_clock_in:
-              merged_record["Status"] = "Present(P) / Missing IN"
-            else:
-              merged_record["Status"] = "Present(P)"
+            # If the BioTime report identifies which side is missing, use that
+            # classification instead of any extra raw transaction outside the
+            # employee's valid timetable window.
+            if report_is_single:
+              attendance["Clock In"] = report_clock_in
+              attendance["Clock Out"] = report_clock_out
+              if report_clock_in and not report_clock_out:
+                attendance["Status"] = "Present(P) / Missing OUT"
+              elif report_clock_out and not report_clock_in:
+                attendance["Status"] = "Present(P) / Missing IN"
 
-            merged_record["First Name"] = api_record.get("First Name", "")
-            merged_record["Department"] = api_record.get("Department", "")
-            date_map[employee_id] = merged_record
+            recovered_single_punch += 1
 
-          all_attendance[attendance_date] = date_map
-
-          progress.progress(
-              index / max(total_dates, 1),
-              text=(
-                  f"جاري معالجة {attendance_date.strftime('%d/%m/%Y')} "
-                  f"({index}/{total_dates})"
-              ),
-          )
-
+        progress.progress(
+            1.0,
+            text="تم تجهيز بيانات الدوام.",
+        )
         progress.empty()
 
         # EXACT MATCH ONLY:
