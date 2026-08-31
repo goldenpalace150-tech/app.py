@@ -1,6 +1,7 @@
 import base64
 from datetime import datetime, timedelta
 import io
+import hashlib
 import unicodedata
 import re
 import zoneinfo
@@ -2108,19 +2109,31 @@ try:
         end_date,
         include_historical_staff=False,
         requested_employee_names=(),
+        requested_dates=(),
     ):
-      """Load the whole attendance range with one request per data source.
+      """Load attendance only for the exact dates requested by the Excel file.
 
       When historical staff are enabled, inactive/resigned profiles are kept in the
-      roster. IDs that no longer have a personnel profile are also reconstructed
-      from the uploaded Excel roster so any surviving BioTime transactions can be
-      matched by exact emp_code.
+      roster. Transaction-only employee codes inside the Excel date window are also
+      exposed as historical candidates so the user can map them manually to an Excel
+      row. No employee is matched by name automatically.
       """
       requested_employee_names = {
           normalize_id(employee_id): clean_txt(employee_name)
           for employee_id, employee_name in requested_employee_names
           if normalize_id(employee_id)
       }
+      requested_date_set = {
+          attendance_date
+          for attendance_date in requested_dates
+          if start_date <= attendance_date <= end_date
+      }
+      if not requested_date_set:
+        cursor = start_date
+        while cursor <= end_date:
+          requested_date_set.add(cursor)
+          cursor += timedelta(days=1)
+
       token = get_auth_token()
       if not token:
         raise RuntimeError("تعذر المصادقة مع BioTime")
@@ -2231,11 +2244,6 @@ try:
               "historical_only": True,
           }
 
-      employee_catalog = {
-          employee_id: employee_data["name"]
-          for employee_id, employee_data in active_employees.items()
-      }
-
       leave_records = fetch_paginated_api(
           session,
           "/att/api/leave/",
@@ -2316,6 +2324,83 @@ try:
           timeout=30,
       )
 
+      # Historical/deleted profiles can disappear from /personnel/api/employees/
+      # while their transactions still retain emp_code. Recover those codes only from
+      # the same date window requested by the uploaded Excel file. They are NEVER
+      # auto-matched by name; they are merely offered in the manual mapping selector.
+      if include_historical_staff:
+        for log in raw_logs:
+          cleaned_code = normalize_id(log.get("emp_code"))
+          if not cleaned_code:
+            internal_emp = normalize_id(log.get("emp"))
+            cleaned_code = employee_internal_id_map.get(internal_emp, "")
+          if (
+              not cleaned_code
+              or cleaned_code in EXCLUDED_MANAGEMENT_CODES
+              or cleaned_code in active_employees
+          ):
+            continue
+
+          punch_value = log.get("punch_time")
+          if not punch_value:
+            continue
+          try:
+            punch_date = datetime.strptime(
+                str(punch_value)[:19], "%Y-%m-%d %H:%M:%S"
+            ).date()
+          except ValueError:
+            continue
+
+          # Only expose an orphan code if it participates in one of the exact work
+          # dates requested in Excel (including the before-05:00 next-morning window).
+          candidate_work_dates = {punch_date}
+          try:
+            punch_hour = int(str(punch_value)[11:13])
+          except (TypeError, ValueError):
+            punch_hour = 99
+          if punch_hour < 5:
+            candidate_work_dates.add(punch_date - timedelta(days=1))
+          if not (candidate_work_dates & requested_date_set):
+            continue
+
+          employee_obj = log.get("employee") if isinstance(log.get("employee"), dict) else {}
+          first_name = str(
+              log.get("first_name")
+              or employee_obj.get("first_name")
+              or ""
+          ).strip()
+          last_name = str(
+              log.get("last_name")
+              or employee_obj.get("last_name")
+              or ""
+          ).strip()
+          transaction_name = clean_txt(
+              log.get("employee_name")
+              or log.get("emp_name")
+              or f"{first_name} {last_name}".strip()
+              or f"موظف تاريخي {cleaned_code}"
+          )
+          active_employees[cleaned_code] = {
+              "name": transaction_name,
+              "dept": "غير محدد",
+              "historical_only": True,
+              "transaction_only": True,
+          }
+
+      employee_catalog = {
+          employee_id: employee_data["name"]
+          for employee_id, employee_data in active_employees.items()
+      }
+      historical_employee_catalog = {
+          employee_id: {
+              "name": employee_data["name"],
+              "dept": employee_data.get("dept", "غير محدد"),
+              "transaction_only": bool(employee_data.get("transaction_only")),
+          }
+          for employee_id, employee_data in active_employees.items()
+          if employee_data.get("historical_only")
+      }
+
       punches_by_emp_date = {}
       for log in raw_logs:
         cleaned_code = normalize_id(log.get("emp_code"))
@@ -2372,9 +2457,8 @@ try:
 
       all_attendance = {}
       today = datetime.now(SYRIA_TZ).date()
-      cursor = start_date
 
-      while cursor <= end_date:
+      for cursor in sorted(requested_date_set):
         date_map = {}
         leave_map = leave_by_date.get(cursor, {})
 
@@ -2579,9 +2663,13 @@ try:
           }
 
         all_attendance[cursor] = date_map
-        cursor += timedelta(days=1)
 
-      return all_attendance, employee_catalog, employee_internal_id_map
+      return (
+          all_attendance,
+          employee_catalog,
+          employee_internal_id_map,
+          historical_employee_catalog,
+      )
 
     def detect_month_sheet(workbook):
       preferred = [
@@ -2968,14 +3056,116 @@ try:
             for employee in excel_employees
             if employee["biotime_id"]
         )
-        all_attendance, employee_catalog, employee_internal_id_map = (
-            load_monthly_attendance_bulk(
-                range_start,
-                range_end,
-                include_historical_staff=include_historical_staff,
-                requested_employee_names=requested_employee_names,
-            )
+        requested_dates_for_load = tuple(
+            sorted({attendance_date for _column, attendance_date in dates_list})
         )
+        (
+            all_attendance,
+            employee_catalog,
+            employee_internal_id_map,
+            historical_employee_catalog,
+        ) = load_monthly_attendance_bulk(
+            range_start,
+            range_end,
+            include_historical_staff=include_historical_staff,
+            requested_employee_names=requested_employee_names,
+            requested_dates=requested_dates_for_load,
+        )
+
+        # Optional manual historical mapping. Normal active employees still use exact
+        # Column-B BioTime ID matching only. This selector exists solely for Excel rows
+        # whose BioTime ID is empty or no longer resolves in BioTime.
+        manual_historical_mappings = {}
+        mapping_rows = [
+            employee
+            for employee in excel_employees
+            if (
+                not employee["biotime_id"]
+                or employee["biotime_id"] not in employee_catalog
+            )
+        ]
+        template_signature = hashlib.sha256(original_template_bytes).hexdigest()[:12]
+        mapping_state_key = f"historical_mapping_confirmed_{template_signature}"
+
+        if include_historical_staff and mapping_rows and historical_employee_catalog:
+          confirmed_mapping = strlit.session_state.get(mapping_state_key)
+          if isinstance(confirmed_mapping, dict):
+            manual_historical_mappings = {
+                int(row_number): normalize_id(employee_id)
+                for row_number, employee_id in confirmed_mapping.items()
+                if normalize_id(employee_id) in historical_employee_catalog
+            }
+          else:
+            hide_loading_overlay(monthly_loading_overlay)
+            monthly_loading_overlay = None
+            progress.empty()
+
+            strlit.markdown(
+                '<div class="gp-section-title">🗂️ مطابقة الموظفين التاريخيين يدوياً</div>'
+                '<div class="gp-file-note">اختر موظف BioTime الصحيح لكل صف Excel. '
+                'لن تتم أي مطابقة تلقائية بالاسم، وسيتم استخدام تواريخ Excel فقط.</div>',
+                unsafe_allow_html=True,
+            )
+
+            option_ids = [""] + sorted(
+                historical_employee_catalog.keys(),
+                key=lambda value: (0, int(value)) if str(value).isdigit() else (1, str(value)),
+            )
+
+            def historical_option_label(employee_id):
+              if not employee_id:
+                return "— بدون مطابقة —"
+              info = historical_employee_catalog.get(employee_id, {})
+              source_suffix = " • من البصمات التاريخية" if info.get("transaction_only") else ""
+              return (
+                  f"{employee_id} — {info.get('name', '')}"
+                  f" — {info.get('dept', 'غير محدد')}{source_suffix}"
+              )
+
+            selected_mapping = {}
+            for excel_employee in mapping_rows:
+              row_number = excel_employee["row"]
+              excel_name = excel_employee["name"] or f"صف {row_number}"
+              existing_excel_id = excel_employee["biotime_id"]
+              row_label = f"Excel: {excel_name} — صف {row_number}"
+              if existing_excel_id:
+                row_label += f" — ID الحالي: {existing_excel_id}"
+              selected_id = strlit.selectbox(
+                  row_label,
+                  options=option_ids,
+                  format_func=historical_option_label,
+                  key=f"historical_match_{template_signature}_{row_number}",
+              )
+              if selected_id:
+                selected_mapping[row_number] = selected_id
+
+            duplicate_selections = {
+                employee_id
+                for employee_id in selected_mapping.values()
+                if list(selected_mapping.values()).count(employee_id) > 1
+            }
+            if duplicate_selections:
+              strlit.warning(
+                  "لا يمكن ربط موظف BioTime نفسه بأكثر من صف Excel. عدّل الاختيارات أولاً."
+              )
+              strlit.stop()
+
+            if strlit.button(
+                "✅ تأكيد المطابقة ومتابعة معالجة الملف",
+                use_container_width=True,
+                key=f"confirm_historical_mapping_{template_signature}",
+            ):
+              strlit.session_state[mapping_state_key] = {
+                  str(row_number): employee_id
+                  for row_number, employee_id in selected_mapping.items()
+              }
+              strlit.rerun()
+
+            strlit.info(
+                "بعد اختيار الموظفين اضغط تأكيد المطابقة، وسيكمل التطبيق إنشاء الملف تلقائياً."
+            )
+            strlit.stop()
+
         progress.progress(
             0.62,
             text="المرحلة 2/4 — تحميل قيم Actual WT / Total WT من BioTime...",
@@ -3119,24 +3309,47 @@ try:
         hide_loading_overlay(monthly_loading_overlay)
         monthly_loading_overlay = None
 
-        # EXACT MATCH ONLY:
-        # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
-        # No name fallback and no fuzzy matching.
+        # MATCHING RULES:
+        # 1) Normal rows keep exact Excel Column-B BioTime ID matching only.
+        # 2) Historical rows with no usable BioTime ID can be manually mapped by the
+        #    user to one historical BioTime employee. Names are never auto-matched.
         employee_matches = []
         unmatched_employees = []
         duplicate_excel_ids = set()
         seen_excel_ids = set()
 
         for excel_employee in excel_employees:
+          row_number = excel_employee["row"]
           excel_id = excel_employee["biotime_id"]
+          manually_selected_id = normalize_id(
+              manual_historical_mappings.get(row_number, "")
+          )
+
+          if manually_selected_id:
+            employee_matches.append(
+                {
+                    "row": row_number,
+                    "excel_name": excel_employee["name"],
+                    "employee_id": manually_selected_id,
+                    "api_name": employee_catalog.get(
+                        manually_selected_id,
+                        historical_employee_catalog.get(
+                            manually_selected_id, {}
+                        ).get("name", f"موظف {manually_selected_id}"),
+                    ),
+                    "score": 100,
+                    "match_type": "Manual Historical",
+                }
+            )
+            continue
 
           if not excel_id:
             unmatched_employees.append(
                 {
-                    "row": excel_employee["row"],
+                    "row": row_number,
                     "biotime_id": "",
                     "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID is empty",
+                    "reason": "BioTime ID is empty and no manual historical mapping was selected",
                 }
             )
             continue
@@ -3148,7 +3361,7 @@ try:
           if excel_id in employee_catalog:
             employee_matches.append(
                 {
-                    "row": excel_employee["row"],
+                    "row": row_number,
                     "excel_name": excel_employee["name"],
                     "employee_id": excel_id,
                     "api_name": employee_catalog[excel_id],
@@ -3159,10 +3372,10 @@ try:
           else:
             unmatched_employees.append(
                 {
-                    "row": excel_employee["row"],
+                    "row": row_number,
                     "biotime_id": excel_id,
                     "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID not found in app/BioTime ID list",
+                    "reason": "BioTime ID not found and no manual historical mapping was selected",
                 }
             )
 
@@ -3174,7 +3387,7 @@ try:
         cell_updates = []
         import_log = []
 
-        # Process every date column. Only exact BioTime ID matches are eligible.
+        # Process only date columns that physically exist in the uploaded Excel file.
         for match in employee_matches:
           employee_id = match["employee_id"]
           excel_row = match["row"]
@@ -3229,7 +3442,7 @@ try:
                     employee_id,
                     match["excel_name"],
                     match["api_name"],
-                    "Exact ID",
+                    match["match_type"],
                     attendance_date,
                     clock_in,
                     clock_out,
@@ -3279,6 +3492,7 @@ try:
             "biotime_report_rows": report_actual_count,
             "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
             "historical_mode": bool(include_historical_staff),
+            "manual_historical_matches": len(manual_historical_mappings),
         }
 
         hide_loading_overlay(export_loading_overlay)
