@@ -1,4 +1,5 @@
 import base64
+import hashlib
 from datetime import datetime, timedelta
 import io
 import unicodedata
@@ -16,7 +17,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-CLEAN-UI-WORKING-HRS-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-APPROVE-MISSING-STAFF-2026-08-31"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -2094,12 +2095,24 @@ try:
       return rows
 
     @strlit.cache_data(ttl=300, show_spinner=False)
-    def load_monthly_attendance_bulk(start_date, end_date):
-      """Load the whole attendance range with one request per data source.
+    def load_monthly_attendance_bulk(start_date, end_date, requested_dates=()):
+      """Load BioTime once for the Excel range, but build rows only for Excel dates.
 
-      This replaces the old one-date-at-a-time loop, which repeatedly downloaded
-      employees, devices, leave and transactions for every Excel date.
+      `requested_dates` is the exact set of date headers physically present in the
+      uploaded attendance sheet. Data can be fetched in one range for speed, but the
+      app never creates attendance output for dates that are not in the Excel file.
       """
+      requested_date_set = {
+          attendance_date
+          for attendance_date in requested_dates
+          if start_date <= attendance_date <= end_date
+      }
+      if not requested_date_set:
+        cursor = start_date
+        while cursor <= end_date:
+          requested_date_set.add(cursor)
+          cursor += timedelta(days=1)
+
       token = get_auth_token()
       if not token:
         raise RuntimeError("تعذر المصادقة مع BioTime")
@@ -2327,9 +2340,8 @@ try:
 
       all_attendance = {}
       today = datetime.now(SYRIA_TZ).date()
-      cursor = start_date
 
-      while cursor <= end_date:
+      for cursor in sorted(requested_date_set):
         date_map = {}
         leave_map = leave_by_date.get(cursor, {})
 
@@ -2518,9 +2530,13 @@ try:
           }
 
         all_attendance[cursor] = date_map
-        cursor += timedelta(days=1)
 
-      return all_attendance, employee_catalog, employee_internal_id_map
+      return (
+          all_attendance,
+          employee_catalog,
+          employee_internal_id_map,
+          active_employees,
+      )
 
     def detect_month_sheet(workbook):
       preferred = [
@@ -2575,6 +2591,48 @@ try:
 
       return date_columns
 
+    def detect_employee_total_row(ws):
+      """Return the summary/totals row that ends the employee roster.
+
+      The Golden Palace template normally labels this row `الإجمالي الكلي`. If the
+      label changes, use an Excel table totals row as a safe fallback.
+      """
+      for row_number in range(2, ws.max_row + 1):
+        label = clean_txt(ws.cell(row=row_number, column=3).value)
+        if label and ("الإجمالي" in label or "المجموع" in label):
+          return row_number
+
+      for table_name in ws.tables:
+        try:
+          table = ws.tables[table_name]
+          if int(table.totalsRowCount or 0) > 0:
+            match = re.match(r"^[A-Z]+(\d+):[A-Z]+(\d+)$", str(table.ref))
+            if match:
+              return int(match.group(2))
+        except Exception:
+          continue
+
+      return ws.max_row + 1
+
+    def find_available_employee_rows(ws, total_row):
+      """Find reserved blank staff rows before totals without overwriting anyone.
+
+      A row is available only when BOTH BioTime ID (column B) and employee name
+      (column C) are empty. Existing named rows are never reused, even when B is blank.
+      """
+      rows = []
+      for row_number in range(2, total_row):
+        biotime_id = normalize_id(ws.cell(row=row_number, column=2).value)
+        employee_name = clean_txt(ws.cell(row=row_number, column=3).value)
+        if not biotime_id and not employee_name:
+          rows.append(row_number)
+      return rows
+
+    def excel_employee_id_value(employee_id):
+      """Write numeric BioTime IDs as numbers while preserving non-numeric IDs."""
+      normalized = normalize_id(employee_id)
+      return int(normalized) if normalized.isdigit() else normalized
+
     def time_to_excel_value(value):
       """Convert HH:MM to a real Excel time fraction."""
       if value is None or str(value).strip() == "":
@@ -2612,61 +2670,140 @@ try:
               return int(style_index)
       return None
 
-    def patch_cell_value_xml(xml_text, row_number, column_number, value, style_id=None):
-      """Overwrite one attendance cell in the original worksheet XML."""
-      coordinate = f"{get_column_letter(column_number)}{row_number}"
-      pattern = re.compile(
-          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)/>'
-          rf'|<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>.*?</c>',
-          re.DOTALL,
-      )
-      match = pattern.search(xml_text)
-      if not match:
-        raise RuntimeError(f"Excel cell {coordinate} was not found in worksheet XML")
-      attrs = match.group(1) if match.group(1) is not None else match.group(2)
+    def find_existing_cell_style_id(ws, row_number, column_number):
+      """Resolve a cell's style to the original raw worksheet style index."""
+      cell = ws.cell(row=row_number, column=column_number)
+      workbook_styles = list(getattr(ws.parent, "_cell_styles", []))
+      for style_index, existing_style in enumerate(workbook_styles):
+        if existing_style == cell._style:
+          return int(style_index)
+      return None
+
+    def _xml_cell_fragment(coordinate, value, attrs="", tag_prefix="", style_id=None):
+      """Build one worksheet cell while preserving the sheet namespace prefix."""
+      attrs = attrs or f' r="{coordinate}"'
+      if not re.search(r'\br="[^"]+"', attrs):
+        attrs = f' r="{coordinate}"' + attrs
       attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
       if style_id is not None:
         attrs = re.sub(r'\s+s="\d+"', '', attrs)
         attrs += f' s="{int(style_id)}"'
 
-      # Always overwrite an existing attendance value with the newest result.
+      cell_tag = f"{tag_prefix}c"
+      value_tag = f"{tag_prefix}v"
+      is_tag = f"{tag_prefix}is"
+      text_tag = f"{tag_prefix}t"
+
       if value is None or value == "":
-        replacement = f"<c{attrs}/>"
-      elif isinstance(value, str):
+        return f"<{cell_tag}{attrs}/>"
+      if isinstance(value, str):
         safe_text = (
             value.replace("&", "&amp;").replace("<", "&lt;")
                  .replace(">", "&gt;").replace('"', "&quot;")
         )
-        replacement = f'<c{attrs} t="inlineStr"><is><t>{safe_text}</t></is></c>'
-      else:
-        replacement = f"<c{attrs}><v>{value}</v></c>"
-      return xml_text[:match.start()] + replacement + xml_text[match.end():]
+        return (
+            f'<{cell_tag}{attrs} t="inlineStr"><{is_tag}><{text_tag}>'
+            f'{safe_text}</{text_tag}></{is_tag}></{cell_tag}>'
+        )
+      return f"<{cell_tag}{attrs}><{value_tag}>{value}</{value_tag}></{cell_tag}>"
+
+    def patch_cell_value_xml(xml_text, row_number, column_number, value, style_id=None):
+      """Overwrite/create one worksheet cell without rebuilding the workbook package."""
+      coordinate = f"{get_column_letter(column_number)}{row_number}"
+      cell_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?c'
+      pattern = re.compile(
+          rf'<(?P<tag>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
+          rf'(?P<attrs>[^>]*)/>'
+          rf'|<(?P<tag2>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
+          rf'(?P<attrs2>[^>]*)>.*?</(?P=tag2)>',
+          re.DOTALL,
+      )
+      match = pattern.search(xml_text)
+      if match:
+        tag_name = match.group("tag") or match.group("tag2") or "c"
+        tag_prefix = tag_name[:-1]
+        attrs = match.group("attrs") if match.group("attrs") is not None else match.group("attrs2")
+        replacement = _xml_cell_fragment(
+            coordinate, value, attrs=attrs, tag_prefix=tag_prefix, style_id=style_id
+        )
+        return xml_text[:match.start()] + replacement + xml_text[match.end():]
+
+      # Some templates omit physically empty cells from the worksheet XML. Create
+      # the cell inside its existing row, preserving the row's namespace prefix and
+      # inserting it before the next higher column when possible.
+      row_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?row'
+      row_pattern = re.compile(
+          rf'<(?P<rowtag>{row_tag_pattern})\b(?=[^>]*\br="{row_number}")'
+          rf'(?P<rowattrs>[^>]*)>(?P<body>.*?)</(?P=rowtag)>',
+          re.DOTALL,
+      )
+      row_match = row_pattern.search(xml_text)
+      if not row_match:
+        raise RuntimeError(f"Excel row {row_number} was not found in worksheet XML")
+
+      row_tag = row_match.group("rowtag")
+      tag_prefix = row_tag[:-3]
+      body = row_match.group("body")
+      new_cell = _xml_cell_fragment(
+          coordinate, value, tag_prefix=tag_prefix, style_id=style_id
+      )
+
+      target_column = column_number
+      insert_at = len(body)
+      existing_cell_pattern = re.compile(
+          rf'<(?:[A-Za-z_][\w.\-]*:)?c\b[^>]*\br="([A-Z]+){row_number}"',
+          re.DOTALL,
+      )
+      for existing_match in existing_cell_pattern.finditer(body):
+        letters = existing_match.group(1)
+        existing_column = 0
+        for letter in letters:
+          existing_column = existing_column * 26 + (ord(letter) - 64)
+        if existing_column > target_column:
+          insert_at = existing_match.start()
+          break
+
+      new_body = body[:insert_at] + new_cell + body[insert_at:]
+      replacement_row = (
+          f'<{row_tag}{row_match.group("rowattrs")}>{new_body}</{row_tag}>'
+      )
+      return (
+          xml_text[:row_match.start()] + replacement_row + xml_text[row_match.end():]
+      )
 
     def patch_cell_formula_xml(xml_text, row_number, column_number, formula):
-      """Replace a formula and remove its stale cached result."""
+      """Replace a formula and remove its stale cached result, with namespace support."""
       coordinate = f"{get_column_letter(column_number)}{row_number}"
+      cell_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?c'
       pattern = re.compile(
-          rf'<c\b(?=[^>]*\br="{re.escape(coordinate)}")([^>]*)>(.*?)</c>',
+          rf'<(?P<tag>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
+          rf'(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>',
           re.DOTALL,
       )
       match = pattern.search(xml_text)
       if not match:
         raise RuntimeError(f"Excel formula cell {coordinate} was not found")
-      attrs = match.group(1)
-      body = match.group(2)
+      tag_name = match.group("tag")
+      tag_prefix = tag_name[:-1]
+      attrs = match.group("attrs")
+      body = match.group("body")
       formula_text = str(formula or "")
       if formula_text.startswith("="):
         formula_text = formula_text[1:]
       safe_formula = formula_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-      if re.search(r'<f(?:\s[^>]*)?>.*?</f>', body, re.DOTALL):
+      escaped_prefix = re.escape(tag_prefix)
+      formula_pattern = rf'<{escaped_prefix}f(?:\s[^>]*)?>.*?</{escaped_prefix}f>'
+      value_pattern = rf'<{escaped_prefix}v>.*?</{escaped_prefix}v>'
+      if re.search(formula_pattern, body, re.DOTALL):
         body = re.sub(
-            r'<f(?:\s[^>]*)?>.*?</f>', f'<f>{safe_formula}</f>',
+            formula_pattern,
+            f'<{tag_prefix}f>{safe_formula}</{tag_prefix}f>',
             body, count=1, flags=re.DOTALL,
         )
       else:
-        body = f'<f>{safe_formula}</f>' + body
-      body = re.sub(r'<v>.*?</v>', '', body, flags=re.DOTALL)
-      replacement = f"<c{attrs}>{body}</c>"
+        body = f'<{tag_prefix}f>{safe_formula}</{tag_prefix}f>' + body
+      body = re.sub(value_pattern, '', body, flags=re.DOTALL)
+      replacement = f"<{tag_name}{attrs}>{body}</{tag_name}>"
       return xml_text[:match.start()] + replacement + xml_text[match.end():]
 
     def build_total_formula_updates(ws, employee_matches, date_columns, today_date):
@@ -2757,19 +2894,22 @@ try:
 
         for update in cell_updates:
           value = update["value"]
-          # Only real numeric attendance durations need the existing [h]:mm style.
-          # A/L/blank cells keep their original template style untouched.
-          use_duration_style = (
-              duration_style_id
-              if duration_style_id is not None
-              and value not in (None, "")
-              and not isinstance(value, str)
-              else None
-          )
+          explicit_style_id = update.get("style_id")
+          # Approved BioTime ID/name cells may provide their existing row style.
+          # Otherwise only real numeric attendance durations use [h]:mm.
+          use_cell_style = explicit_style_id
+          if use_cell_style is None:
+            use_cell_style = (
+                duration_style_id
+                if duration_style_id is not None
+                and value not in (None, "")
+                and not isinstance(value, str)
+                else None
+            )
           sheet_xml_text = patch_cell_value_xml(
               sheet_xml_text,
               update["row"], update["column"], value,
-              style_id=use_duration_style,
+              style_id=use_cell_style,
           )
 
         for formula_update in formula_updates:
@@ -2854,9 +2994,15 @@ try:
         # IMPORTANT:
         # Excel Column B is the BioTime ID.
         # Excel Column A is NOT used for employee matching.
-        # Employee names are NOT used for matching.
+        # Employee names are NOT used for automatic matching.
+        # New BioTime staff are added only after explicit user approval.
+        employee_total_row = detect_employee_total_row(ws_target)
+        available_new_staff_rows = find_available_employee_rows(
+            ws_target, employee_total_row
+        )
+
         excel_employees = []
-        for row in range(2, ws_target.max_row + 1):
+        for row in range(2, employee_total_row):
           biotime_id = normalize_id(ws_target.cell(row=row, column=2).value)
           employee_name = clean_txt(ws_target.cell(row=row, column=3).value)
 
@@ -2902,9 +3048,141 @@ try:
             text="المرحلة 1/4 — تحميل بيانات BioTime الشهرية...",
         )
 
-        all_attendance, employee_catalog, employee_internal_id_map = (
-            load_monthly_attendance_bulk(range_start, range_end)
+        requested_dates_for_load = tuple(
+            sorted({attendance_date for _column, attendance_date in dates_list})
         )
+        (
+            all_attendance,
+            employee_catalog,
+            employee_internal_id_map,
+            active_employee_details,
+        ) = load_monthly_attendance_bulk(
+            range_start,
+            range_end,
+            requested_dates=requested_dates_for_load,
+        )
+
+        # Find ACTIVE BioTime employees whose BioTime ID does not exist in Excel B.
+        # This is an ID comparison only. Names/departments are shown for review but
+        # are never used to auto-match an existing Excel employee.
+        excel_biotime_ids = {
+            employee["biotime_id"]
+            for employee in excel_employees
+            if employee["biotime_id"]
+        }
+        missing_active_ids = [
+            employee_id
+            for employee_id in active_employee_details
+            if employee_id not in excel_biotime_ids
+        ]
+        missing_active_ids.sort(
+            key=lambda value: (0, int(value)) if str(value).isdigit() else (1, str(value))
+        )
+
+        template_signature = hashlib.sha256(original_template_bytes).hexdigest()[:16]
+        candidate_signature = hashlib.sha256(
+            "|".join(missing_active_ids).encode("utf-8")
+        ).hexdigest()[:10]
+        approval_state_key = (
+            f"approved_missing_biotime_staff_{template_signature}_{candidate_signature}"
+        )
+        approved_new_staff_ids = strlit.session_state.get(approval_state_key)
+
+        if missing_active_ids and approved_new_staff_ids is None:
+          # Stop before Excel modification. The user must explicitly review and approve.
+          hide_loading_overlay(monthly_loading_overlay)
+          monthly_loading_overlay = None
+          progress.empty()
+
+          strlit.markdown(
+              '<div class="gp-section-title">👤 موظفون موجودون في BioTime وغير موجودين في Excel</div>'
+              '<div class="gp-file-note">راجع القائمة واختر فقط من تريد إضافته إلى ملف Excel. '
+              'لن يتم إضافة أي موظف بدون موافقتك، والمطابقة هنا حسب BioTime ID فقط.</div>',
+              unsafe_allow_html=True,
+          )
+
+          review_rows = []
+          for employee_id in missing_active_ids:
+            employee_info = active_employee_details.get(employee_id, {})
+            review_rows.append(
+                {
+                    "BioTime ID": employee_id,
+                    "الاسم": employee_info.get("name", ""),
+                    "القسم": employee_info.get("dept", "غير محدد"),
+                }
+            )
+          strlit.dataframe(
+              pd.DataFrame(review_rows),
+              use_container_width=True,
+              hide_index=True,
+          )
+
+          strlit.caption(
+              f"صفوف Excel الفارغة المتاحة للإضافة: {len(available_new_staff_rows)}"
+          )
+
+          def missing_staff_option_label(employee_id):
+            employee_info = active_employee_details.get(employee_id, {})
+            return (
+                f"{employee_info.get('name', '')} — BioTime ID {employee_id}"
+                f" — {employee_info.get('dept', 'غير محدد')}"
+            )
+
+          selected_new_staff = strlit.multiselect(
+              "اختر الموظفين الذين توافق على إضافتهم",
+              options=missing_active_ids,
+              default=[],
+              format_func=missing_staff_option_label,
+              key=f"missing_staff_review_{template_signature}_{candidate_signature}",
+          )
+
+          too_many_selected = len(selected_new_staff) > len(available_new_staff_rows)
+          if too_many_selected:
+            strlit.error(
+                "عدد الموظفين المختارين أكبر من عدد الصفوف الفارغة المتاحة في ملف Excel. "
+                "خفّض الاختيار أو أضف صفوف موظفين فارغة إلى القالب أولاً."
+            )
+
+          if strlit.button(
+              "✅ تأكيد الاختيار ومتابعة معالجة الملف",
+              use_container_width=True,
+              disabled=too_many_selected,
+              key=f"confirm_missing_staff_{template_signature}_{candidate_signature}",
+          ):
+            strlit.session_state[approval_state_key] = tuple(selected_new_staff)
+            strlit.rerun()
+
+          strlit.stop()
+
+        approved_new_staff_ids = [
+            normalize_id(employee_id)
+            for employee_id in (approved_new_staff_ids or ())
+            if normalize_id(employee_id) in active_employee_details
+            and normalize_id(employee_id) in missing_active_ids
+        ]
+        if len(approved_new_staff_ids) > len(available_new_staff_rows):
+          raise RuntimeError(
+              "The approved BioTime staff exceed the empty employee rows available in Excel."
+          )
+
+        approved_new_staff_rows = []
+        for row_number, employee_id in zip(
+            available_new_staff_rows, approved_new_staff_ids
+        ):
+          employee_info = active_employee_details[employee_id]
+          approved_new_staff_rows.append(
+              {
+                  "row": row_number,
+                  "employee_id": employee_id,
+                  "name": employee_info.get("name", f"موظف {employee_id}"),
+                  "dept": employee_info.get("dept", "غير محدد"),
+              }
+          )
+
+        target_employee_ids = (
+            set(excel_biotime_ids) | set(approved_new_staff_ids)
+        ) & set(active_employee_details.keys())
+
         progress.progress(
             0.62,
             text="المرحلة 2/4 — تحميل قيم Actual WT / Total WT من BioTime...",
@@ -2917,6 +3195,8 @@ try:
         expected_single_punch_keys = set()
         for attendance_date, date_map in all_attendance.items():
           for employee_id, attendance in date_map.items():
+            if employee_id not in target_employee_ids:
+              continue
             status = str(attendance.get("Status", "") or "")
             if "Leave" in status or "Absence" in status:
               continue
@@ -3023,6 +3303,8 @@ try:
         recovered_single_punch = 0
         for attendance_date, date_map in all_attendance.items():
           for employee_id, attendance in date_map.items():
+            if employee_id not in target_employee_ids:
+              continue
             status = str(attendance.get("Status", "") or "")
             if "Leave" in status or "Absence" in status:
               continue
@@ -3091,6 +3373,21 @@ try:
                 }
             )
 
+        # Add only the BioTime employees explicitly approved by the user. They are
+        # placed in reserved blank roster rows and then processed exactly like every
+        # other employee. Existing named Excel rows are never overwritten.
+        for approved_employee in approved_new_staff_rows:
+          employee_matches.append(
+              {
+                  "row": approved_employee["row"],
+                  "excel_name": approved_employee["name"],
+                  "employee_id": approved_employee["employee_id"],
+                  "api_name": approved_employee["name"],
+                  "score": 100,
+                  "match_type": "Approved New BioTime Staff",
+              }
+          )
+
         # Automatically generate the completed attendance file immediately after upload.
         export_loading_overlay = show_loading_overlay(
             "جاري تحديث القيم وتجهيز ملف Excel النهائي..."
@@ -3099,7 +3396,32 @@ try:
         cell_updates = []
         import_log = []
 
-        # Process every date column. Only exact BioTime ID matches are eligible.
+        # Write the approved employee's BioTime ID and name into the reserved blank
+        # Excel row. Column A is deliberately left exactly as the template provided it.
+        for approved_employee in approved_new_staff_rows:
+          cell_updates.append(
+              {
+                  "row": approved_employee["row"],
+                  "column": 2,
+                  "value": excel_employee_id_value(approved_employee["employee_id"]),
+                  "style_id": find_existing_cell_style_id(
+                      ws_target, approved_employee["row"], 2
+                  ),
+              }
+          )
+          cell_updates.append(
+              {
+                  "row": approved_employee["row"],
+                  "column": 3,
+                  "value": approved_employee["name"],
+                  "style_id": find_existing_cell_style_id(
+                      ws_target, approved_employee["row"], 3
+                  ),
+              }
+          )
+
+        # Process every date column. Existing exact-ID staff and approved new staff
+        # use the same attendance calculation and the same Excel date columns.
         for match in employee_matches:
           employee_id = match["employee_id"]
           excel_row = match["row"]
@@ -3152,7 +3474,7 @@ try:
                     employee_id,
                     match["excel_name"],
                     match["api_name"],
-                    "Exact ID",
+                    match.get("match_type", "Exact ID"),
                     attendance_date,
                     clock_in,
                     clock_out,
@@ -3200,6 +3522,7 @@ try:
             "dates": len(dates_list),
             "single_punch": recovered_single_punch,
             "biotime_report_rows": report_actual_count,
+            "added_staff": len(approved_new_staff_rows),
             "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
         }
 
@@ -3223,6 +3546,7 @@ try:
                 ("☝️", "بصمة واحدة", summary.get("single_punch", 0)),
                 ("🧮", "خانات تم تجهيزها", summary.get("filled", 0)),
                 ("📡", "قيم تقرير BioTime", summary.get("biotime_report_rows", 0)),
+                ("➕", "موظفون تمت إضافتهم", summary.get("added_staff", 0)),
             ])
 
           strlit.markdown(
