@@ -1307,6 +1307,15 @@ try:
         label_visibility="collapsed",
         key="monthly_attendance_template",
     )
+    include_historical_staff = strlit.checkbox(
+        "🗂️ تضمين الموظفين غير النشطين / المستقيلين / المحذوفين تاريخياً",
+        value=False,
+        key="include_historical_staff",
+        help=(
+            "عند التفعيل، يحاول التطبيق استرجاع دوام الموظفين غير النشطين "
+            "والمستقيلين، وكذلك الموظفين المحذوفين إذا بقيت بصماتهم التاريخية في BioTime."
+        ),
+    )
     strlit.markdown(
         '<div class="gp-tech-note">Single Punch → Actual WT &nbsp;|&nbsp; Normal IN/OUT → Total WT</div>',
         unsafe_allow_html=True,
@@ -2094,12 +2103,24 @@ try:
       return rows
 
     @strlit.cache_data(ttl=300, show_spinner=False)
-    def load_monthly_attendance_bulk(start_date, end_date):
+    def load_monthly_attendance_bulk(
+        start_date,
+        end_date,
+        include_historical_staff=False,
+        requested_employee_names=(),
+    ):
       """Load the whole attendance range with one request per data source.
 
-      This replaces the old one-date-at-a-time loop, which repeatedly downloaded
-      employees, devices, leave and transactions for every Excel date.
+      When historical staff are enabled, inactive/resigned profiles are kept in the
+      roster. IDs that no longer have a personnel profile are also reconstructed
+      from the uploaded Excel roster so any surviving BioTime transactions can be
+      matched by exact emp_code.
       """
+      requested_employee_names = {
+          normalize_id(employee_id): clean_txt(employee_name)
+          for employee_id, employee_name in requested_employee_names
+          if normalize_id(employee_id)
+      }
       token = get_auth_token()
       if not token:
         raise RuntimeError("تعذر المصادقة مع BioTime")
@@ -2155,7 +2176,12 @@ try:
             str(emp.get("enable_attendance", True)).lower()
             in ("true", "1", "yes")
         )
-        if not is_active or emp_status in ("1", "2", "D") or not enable_att:
+        currently_active = (
+            is_active
+            and emp_status not in ("1", "2", "D")
+            and enable_att
+        )
+        if not include_historical_staff and not currently_active:
           continue
         if not cleaned_code or cleaned_code in EXCLUDED_MANAGEMENT_CODES:
           continue
@@ -2180,11 +2206,30 @@ try:
         active_employees[cleaned_code] = {
             "name": clean_txt(full_name or f"موظف {cleaned_code}"),
             "dept": clean_txt(dept_name),
+            "historical_only": not currently_active,
         }
 
         internal_id = normalize_id(emp.get("id"))
         if internal_id:
           employee_internal_id_map[internal_id] = cleaned_code
+
+      # A deleted BioTime profile may no longer be returned by /employees/, while
+      # its historical transactions still retain emp_code. When the user enables
+      # historical staff, keep the exact Excel BioTime IDs as placeholder roster
+      # entries so those old transactions can still be recovered.
+      if include_historical_staff:
+        for requested_id, requested_name in requested_employee_names.items():
+          if (
+              not requested_id
+              or requested_id in EXCLUDED_MANAGEMENT_CODES
+              or requested_id in active_employees
+          ):
+            continue
+          active_employees[requested_id] = {
+              "name": requested_name or f"موظف {requested_id}",
+              "dept": "غير محدد",
+              "historical_only": True,
+          }
 
       employee_catalog = {
           employee_id: employee_data["name"]
@@ -2363,6 +2408,22 @@ try:
                   "Calculated WT": "",
                   "Total WT": "",
                   "Status": f"Leave - {leave_map[code]}",
+              }
+            elif emp_data.get("historical_only"):
+              # Do not invent absences before/after an inactive employee's actual
+              # employment period. Historical staff are filled only where BioTime
+              # still has attendance/leave data; otherwise the Excel cell stays blank.
+              date_map[code] = {
+                  "Employee ID": code,
+                  "First Name": name,
+                  "Department": dept,
+                  "Date": cursor.strftime("%Y-%m-%d"),
+                  "Clock In": "",
+                  "Clock Out": "",
+                  "Actual WT": "",
+                  "Calculated WT": "",
+                  "Total WT": "",
+                  "Status": "Historical No Record",
               }
             else:
               date_map[code] = {
@@ -2902,8 +2963,18 @@ try:
             text="المرحلة 1/4 — تحميل بيانات BioTime الشهرية...",
         )
 
+        requested_employee_names = tuple(
+            (employee["biotime_id"], employee["name"])
+            for employee in excel_employees
+            if employee["biotime_id"]
+        )
         all_attendance, employee_catalog, employee_internal_id_map = (
-            load_monthly_attendance_bulk(range_start, range_end)
+            load_monthly_attendance_bulk(
+                range_start,
+                range_end,
+                include_historical_staff=include_historical_staff,
+                requested_employee_names=requested_employee_names,
+            )
         )
         progress.progress(
             0.62,
@@ -2918,7 +2989,11 @@ try:
         for attendance_date, date_map in all_attendance.items():
           for employee_id, attendance in date_map.items():
             status = str(attendance.get("Status", "") or "")
-            if "Leave" in status or "Absence" in status:
+            if (
+                "Leave" in status
+                or "Absence" in status
+                or status == "Historical No Record"
+            ):
               continue
             key = (attendance_date, employee_id)
             expected_attendance_keys.add(key)
@@ -3134,6 +3209,8 @@ try:
                 cell_value = "L"
               elif "Absence" in status:
                 cell_value = "A"
+              elif status == "Historical No Record":
+                cell_value = None
               else:
                 excel_time = time_to_excel_value(total_work)
                 cell_value = excel_time if excel_time is not None else None
@@ -3201,6 +3278,7 @@ try:
             "single_punch": recovered_single_punch,
             "biotime_report_rows": report_actual_count,
             "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
+            "historical_mode": bool(include_historical_staff),
         }
 
         hide_loading_overlay(export_loading_overlay)
