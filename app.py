@@ -17,7 +17,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-CLEAN-UI-WORKING-HRS-2026-08-30"
+APP_VERSION = "BIO-ATTENDANCE-HISTORICAL-NAMES-MANUAL-MATCH-2026-08-31"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -2186,7 +2186,12 @@ try:
         )
         emp_status = str(emp.get("status", "0")).upper()
         enable_att = (
-            str(emp.get("enable_attendance", True)).lower()
+            str(
+                emp.get(
+                    "enable_attendance",
+                    emp.get("enable_att", True),
+                )
+            ).lower()
             in ("true", "1", "yes")
         )
         currently_active = (
@@ -2226,10 +2231,117 @@ try:
         if internal_id:
           employee_internal_id_map[internal_id] = cleaned_code
 
-      # A deleted BioTime profile may no longer be returned by /employees/, while
-      # its historical transactions still retain emp_code. When the user enables
-      # historical staff, keep the exact Excel BioTime IDs as placeholder roster
-      # entries so those old transactions can still be recovered.
+      # BioTime keeps resigned employees in a dedicated resignation endpoint even
+      # when they no longer appear in the normal employee list. Fetch that roster
+      # ONLY as identity metadata for the manual selector (ID/name/resignation date).
+      # Attendance itself is still loaded only for the exact dates in the Excel file.
+      resign_info_by_code = {}
+      if include_historical_staff:
+        resign_records = fetch_paginated_api(
+            session,
+            "/personnel/api/resigns/",
+            {"page_size": 5000},
+            headers,
+            timeout=20,
+        )
+
+        for resign in resign_records:
+          employee_obj = (
+              resign.get("employee")
+              if isinstance(resign.get("employee"), dict)
+              else {}
+          )
+          resigned_code = normalize_id(
+              employee_obj.get("emp_code")
+              or resign.get("emp_code")
+              or resign.get("employee_code")
+          )
+          if (
+              not resigned_code
+              or resigned_code in EXCLUDED_MANAGEMENT_CODES
+          ):
+            continue
+
+          first_name = str(
+              resign.get("first_name")
+              or employee_obj.get("first_name")
+              or ""
+          ).strip()
+          last_name = str(
+              resign.get("last_name")
+              or employee_obj.get("last_name")
+              or ""
+          ).strip()
+          resigned_name = clean_txt(f"{first_name} {last_name}".strip())
+
+          dept_value = employee_obj.get("department")
+          if isinstance(dept_value, dict):
+            resigned_dept = clean_txt(
+                dept_value.get("dept_name")
+                or dept_value.get("name")
+                or "غير محدد"
+            )
+          else:
+            resigned_dept = clean_txt(str(dept_value or "غير محدد"))
+
+          resign_date = str(
+              resign.get("resign_date")
+              or resign.get("resignation_date")
+              or ""
+          ).strip()
+          resign_type_value = resign.get("resign_type")
+          if isinstance(resign_type_value, dict):
+            resign_type = clean_txt(
+                resign_type_value.get("resign_name")
+                or resign_type_value.get("name")
+                or resign_type_value.get("type_name")
+                or ""
+            )
+          else:
+            resign_type = clean_txt(str(resign_type_value or ""))
+
+          resign_info_by_code[resigned_code] = {
+              "name": resigned_name,
+              "dept": resigned_dept or "غير محدد",
+              "resign_date": resign_date,
+              "resign_type": resign_type,
+          }
+
+          existing = active_employees.get(resigned_code)
+          if existing is None:
+            active_employees[resigned_code] = {
+                "name": resigned_name or "الاسم غير متوفر",
+                "dept": resigned_dept or "غير محدد",
+                "historical_only": True,
+                "resigned": True,
+                "resign_date": resign_date,
+                "resign_type": resign_type,
+            }
+          else:
+            # Preserve richer employee metadata when available, but mark the profile
+            # as historical/resigned and fill any missing name/department from resigns.
+            existing["historical_only"] = True
+            existing["resigned"] = True
+            existing["resign_date"] = resign_date
+            existing["resign_type"] = resign_type
+            if resigned_name and (
+                not existing.get("name")
+                or str(existing.get("name", "")).startswith("موظف ")
+            ):
+              existing["name"] = resigned_name
+            if resigned_dept and (
+                not existing.get("dept")
+                or existing.get("dept") == "غير محدد"
+            ):
+              existing["dept"] = resigned_dept
+
+          resigned_internal_id = normalize_id(employee_obj.get("id"))
+          if resigned_internal_id:
+            employee_internal_id_map[resigned_internal_id] = resigned_code
+
+      # A deleted BioTime profile may no longer be returned by either /employees/
+      # or /resigns/. Keep an Excel-ID placeholder only so surviving transactions
+      # can still be recovered. This placeholder is never matched by name.
       if include_historical_staff:
         for requested_id, requested_name in requested_employee_names.items():
           if (
@@ -2239,9 +2351,10 @@ try:
           ):
             continue
           active_employees[requested_id] = {
-              "name": requested_name or f"موظف {requested_id}",
+              "name": requested_name or "الاسم غير متوفر",
               "dept": "غير محدد",
               "historical_only": True,
+              "transaction_only": True,
           }
 
       leave_records = fetch_paginated_api(
@@ -2378,13 +2491,15 @@ try:
               log.get("employee_name")
               or log.get("emp_name")
               or f"{first_name} {last_name}".strip()
-              or f"موظف تاريخي {cleaned_code}"
           )
           active_employees[cleaned_code] = {
-              "name": transaction_name,
+              "name": transaction_name or "الاسم غير متوفر",
               "dept": "غير محدد",
               "historical_only": True,
               "transaction_only": True,
+              "resigned": False,
+              "resign_date": "",
+              "resign_type": "",
           }
 
       employee_catalog = {
@@ -2393,9 +2508,12 @@ try:
       }
       historical_employee_catalog = {
           employee_id: {
-              "name": employee_data["name"],
+              "name": employee_data.get("name") or "الاسم غير متوفر",
               "dept": employee_data.get("dept", "غير محدد"),
               "transaction_only": bool(employee_data.get("transaction_only")),
+              "resigned": bool(employee_data.get("resigned")),
+              "resign_date": str(employee_data.get("resign_date", "") or ""),
+              "resign_type": str(employee_data.get("resign_type", "") or ""),
           }
           for employee_id, employee_data in active_employees.items()
           if employee_data.get("historical_only")
@@ -3115,11 +3233,28 @@ try:
             def historical_option_label(employee_id):
               if not employee_id:
                 return "— بدون مطابقة —"
+
               info = historical_employee_catalog.get(employee_id, {})
-              source_suffix = " • من البصمات التاريخية" if info.get("transaction_only") else ""
+              employee_name = clean_txt(info.get("name")) or "الاسم غير متوفر"
+              department_name = clean_txt(info.get("dept")) or "غير محدد"
+
+              if info.get("resigned"):
+                status_text = "مستقيل"
+                resign_type = clean_txt(info.get("resign_type"))
+                resign_date = clean_txt(info.get("resign_date"))
+                if resign_type:
+                  status_text += f" ({resign_type})"
+                if resign_date:
+                  status_text += f" — تاريخ الاستقالة {resign_date}"
+              elif info.get("transaction_only"):
+                status_text = "سجل بصمات تاريخي — الاسم قد يكون غير متوفر"
+              else:
+                status_text = "غير نشط"
+
+              # Put the staff NAME first so the manual match is easy to verify.
               return (
-                  f"{employee_id} — {info.get('name', '')}"
-                  f" — {info.get('dept', 'غير محدد')}{source_suffix}"
+                  f"{employee_name} — BioTime ID {employee_id}"
+                  f" — {department_name} — {status_text}"
               )
 
             selected_mapping = {}
