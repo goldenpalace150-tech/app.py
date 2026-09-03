@@ -1,3582 +1,1361 @@
-import base64
-import hashlib
-from datetime import datetime, timedelta
-import io
-import unicodedata
-import re
-import zoneinfo
-import zipfile
-import xml.etree.ElementTree as ET
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+import streamlit as st
 import pandas as pd
+from datetime import datetime
+import re
+import io
 import requests
-import streamlit as strlit
+import base64
+import urllib.parse
+import os
+from streamlit_gsheets import GSheetsConnection
 
 # ==========================================
-# 0. RTL ARABIC TEXT & VISUAL CONFIG
+# SYSTEM CONFIGURATION & API
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-APPROVE-MISSING-STAFF-2026-08-31"
+def get_runtime_secret(name):
+    """Load deployment secrets without committing them to the public repository."""
+    try:
+        value = st.secrets.get(name, "")
+        if value:
+            return str(value).strip()
+    except Exception:
+        pass
+    return str(os.environ.get(name, "")).strip()
 
-TEXT_CONFIG = {
-    "page_title": "حضور وانصراف القصر الذهبي",
-    "title_main": "✨ شركة القصر الذهبي ✨",
-    "search_placeholder": "🔍 ابحث باسم الموظف أو رقم الكود...",
-    "header_all": "👥 كافة موظفي الشركة النشطين ({})",
-    "header_present": "🟢 المتواجدون / الحضور ({})",
-    "header_late": "⏰ الموظفون المتأخرون ({})",
-    "header_checkout": "🏁 المنصرفون ({})",
-    "header_leave": "🏖️ الموظفون في إجازة ({})",
-    "header_absent": "❌ الغيابات ({})",
-    "err_api": "خطأ في الاتصال بواجهة BioTime: {}",
+
+IMGBB_API_KEY = get_runtime_secret("IMGBB_API_KEY")
+
+st.set_page_config(page_title="Al-Qasr Al-Zahabi ERP", layout="wide", page_icon="🏢")
+
+query_params = st.query_params
+is_tv_mode = "tv" in query_params or query_params.get("mode") == "tv"
+
+if is_tv_mode:
+    st.markdown("""
+        <style>
+            [data-testid='stSidebar'] {display: none !important;}
+            header {visibility: hidden !important;}
+            .stApp { background-color: #f8f9fa; direction: rtl; text-align: right; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+            h1, h2, h3, h4, p, span, label, div { text-align: right; }
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+        <style>
+            .stApp { background-color: #f8f9fa; direction: rtl; text-align: right; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+            h1, h2, h3, h4, p, span, label, div { text-align: right; }
+            .stTabs [data-baseweb="tab-list"] { gap: 10px; border-bottom: 2px solid #e2e8f0; }
+            .stTabs [data-baseweb="tab"] { background-color: transparent; border-radius: 4px 4px 0 0; padding: 10px 20px; font-weight: 600; color: #4a5568; }
+            .stTabs [aria-selected="true"] { border-bottom: 3px solid #3182ce; color: #2b6cb0; background-color: #ebf8ff; }
+            .erp-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
+            .locked-card { background: #fff5f5; padding: 20px; border: 1px solid #feb2b2; border-radius: 8px; margin-bottom: 20px; }
+            .invoice-box { background: white; padding: 30px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 800px; margin: auto; }
+            .invoice-header { text-align: center; border-bottom: 2px solid #2b6cb0; padding-bottom: 15px; margin-bottom: 20px; }
+        </style>
+    """, unsafe_allow_html=True)
+
+# ==========================================
+# DATABASE ORM (DocType Engine)
+# ==========================================
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+CASE_STATUS_OPEN = "مفتوح"
+CASE_STATUS_CLOSED = "مغلق"
+COLLECTION_NOT_READY = "لم يجهز للتسليم بعد"
+COLLECTION_AWAITING = "بانتظار تأكيد الاستلام"
+COLLECTION_PAID_AWAITING_CLOSE = "تم تسجيل القبض - بانتظار إغلاق الحالة"  # legacy value
+COLLECTION_SPECIAL_AWAITING = "حالة خاصة - بانتظار الاستلام"
+COLLECTION_CLOSED = "تم الاستلام وإغلاق الحالة"
+
+# Terminal no-charge notes. Customer S/D cases wait for a manual collection
+# confirmation; partner V cases close automatically because no payment is due.
+NO_CHARGE_SPECIAL_CASES = {
+    "يعمل من المصدر",
+    "الزبون رفض الإصلاح",
+    "مكلف",
+    "كفالة",
+    "غير قابل للإصلاح",
+    "لا يوجد عطل",
 }
 
-strlit.set_page_config(
-    page_title=TEXT_CONFIG["page_title"],
-    page_icon="📡",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-# ==========================================
-# 1. CSS STYLING & ANIMATIONS
-# ==========================================
-strlit.markdown(
-    """
-    <style>
-    header[data-testid="stHeader"] { display: none !important; }
-    footer { display: none !important; }
-    .stApp { direction: rtl; background-color: #f4f7f9; font-family: system-ui, -apple-system, sans-serif; }
-    
-    .block-container {
-        padding-top: 15px !important;
-        padding-bottom: 30px !important; 
-        padding-left: 10px !important;
-        padding-right: 10px !important;
-        max-width: 100% !important;
-    }
-
-    .status-badge {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(145deg, #ffffff, #f0f4f8);
-        border: 1px solid #cbd5e1;
-        padding: 8px 20px;
-        border-radius: 30px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.04);
-        margin: 0 auto 15px auto;
-        width: fit-content;
-        gap: 12px;
-    }
-    
-    .animated-dish {
-        width: 34px;
-        height: 34px;
-        object-fit: contain;
-        transform-origin: center center;
-        animation: rotate-360 5s linear infinite;
-    }
-    
-    @keyframes rotate-360 {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-
-    .status-indicator {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .blinking-dot {
-        width: 10px;
-        height: 10px;
-        background-color: #22c55e;
-        border-radius: 50%;
-        display: inline-block;
-        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-        animation: pulse-green 1.5s infinite;
-    }
-
-    @keyframes pulse-green {
-        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-        70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-    }
-
-    .online-text {
-        font-size: 14px;
-        font-weight: 800;
-        color: #0f172a;
-        letter-spacing: 0.5px;
-    }
-
-    div[data-testid="stColumn"] button {
-        width: 100% !important;
-        background: #ffffff !important;
-        border-radius: 12px !important;
-        padding: 12px 10px !important;
-        text-align: center !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
-        border: 1px solid #cbd5e1 !important;
-        margin-bottom: 6px !important;
-        transition: all 0.2s ease !important;
-    }
-    div[data-testid="stColumn"] button p {
-        font-size: 13px !important;
-        color: #1e293b !important;
-        font-weight: 700 !important;
-        margin: 0 !important;
-        white-space: pre-line !important;
-        line-height: 1.4 !important;
-    }
-
-    .responsive-grid-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 15px;
-        font-size: 13px;
-        background-color: #ffffff;
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-    }
-    .responsive-grid-table .table-main-title-header {
-        background: #0f172a;
-        color: #ffffff !important;
-        text-align: center;
-        font-size: 14px;
-        padding: 12px;
-    }
-    .responsive-grid-table th {
-        background-color: #f8fafc;
-        color: #475569;
-        padding: 10px;
-        border-bottom: 1px solid #e2e8f0;
-        text-align: center;
-    }
-    .responsive-grid-table td { 
-        padding: 10px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 500; color: #1e293b;
-    }
-    .badge-present { background-color: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
-    .badge-late { background-color: #fef3c7; color: #9a3412; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
-    .badge-leave { background-color: #e0f2fe; color: #0369a1; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
-    .badge-absent { background-color: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 6px; font-size: 11px; }
-
-    /* ===== Interface polish: cards, upload, progress, download, mobile ===== */
-    .gp-section-title {
-        font-size: 15px;
-        font-weight: 800;
-        color: #0f172a;
-        margin: 8px 2px 10px 2px;
-    }
-
-    .gp-kpi-grid {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(120px, 1fr));
-        gap: 9px;
-        margin: 0 0 14px 0;
-    }
-
-    .gp-kpi-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 11px 8px;
-        text-align: center;
-        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.05);
-        min-height: 68px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-
-    .gp-kpi-icon { font-size: 16px; line-height: 1; margin-bottom: 5px; }
-    .gp-kpi-value { font-size: 22px; line-height: 1.1; font-weight: 900; color: #0f172a; }
-    .gp-kpi-label { margin-top: 4px; font-size: 11px; font-weight: 700; color: #64748b; }
-
-    /* Clickable attendance summary cards (Streamlit buttons). */
-    div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] > button {
-        min-height: 86px;
-        border-radius: 14px !important;
-        border: 1px solid #e2e8f0 !important;
-        background: #ffffff !important;
-        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.05) !important;
-        font-weight: 800 !important;
-        line-height: 1.45 !important;
-        white-space: pre-line !important;
-    }
-
-    .gp-file-note {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 9px 12px;
-        margin-bottom: 7px;
-        color: #475569;
-        font-size: 12px;
-        font-weight: 650;
-        text-align: center;
-    }
-
-    div[data-testid="stFileUploader"] {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 6px;
-    }
-    div[data-testid="stFileUploaderDropzone"] {
-        border-radius: 11px !important;
-        border-color: #cbd5e1 !important;
-        background: #ffffff !important;
-        padding-top: 10px !important;
-        padding-bottom: 10px !important;
-    }
-    div[data-testid="stFileUploader"] small { display: none !important; }
-
-    div[data-testid="stProgress"] { margin-top: 8px; margin-bottom: 8px; }
-
-    .gp-download-ready {
-        background: #ecfdf5;
-        border: 1px solid #bbf7d0;
-        color: #166534;
-        border-radius: 12px;
-        padding: 10px 12px;
-        margin: 8px 0;
-        text-align: center;
-        font-weight: 800;
-        font-size: 13px;
-    }
-
-    .gp-tech-note {
-        color: #64748b;
-        font-size: 11px;
-        text-align: center;
-        margin-top: 4px;
-    }
-
-    @media (max-width: 900px) {
-        .gp-kpi-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
-        .block-container { padding-left: 7px !important; padding-right: 7px !important; }
-        .status-badge { padding: 7px 14px; margin-bottom: 10px; }
-        .responsive-grid-table { font-size: 11px; display: block; overflow-x: auto; white-space: nowrap; }
-    }
-
-    @media (max-width: 560px) {
-        .gp-kpi-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 7px; }
-        .gp-kpi-card { min-height: 62px; padding: 9px 6px; }
-        .gp-kpi-value { font-size: 19px; }
-        .gp-kpi-label { font-size: 10px; }
-        div[data-testid="stColumn"] { min-width: 100% !important; }
-        div[data-testid="stColumn"] button { padding: 10px 8px !important; }
-    }
-
-    /* Full-screen loading veil used only while the app is waiting/processing. */
-    .gp-loading-overlay {
-        position: fixed; inset: 0; z-index: 999999;
-        background: rgba(241, 245, 249, 0.78);
-        backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px);
-        display: flex; align-items: center; justify-content: center; direction: rtl;
-    }
-    .gp-loading-box {
-        min-width: 220px; background: rgba(255,255,255,0.96);
-        border: 1px solid #cbd5e1; border-radius: 18px;
-        box-shadow: 0 18px 55px rgba(15,23,42,0.16);
-        padding: 22px 26px; text-align: center; color: #0f172a; font-weight: 800;
-    }
-    .gp-loading-spinner {
-        width: 38px; height: 38px; margin: 0 auto 12px auto;
-        border: 4px solid #dbeafe; border-top-color: #2563eb;
-        border-radius: 50%; animation: gp-spin 0.8s linear infinite;
-    }
-    @keyframes gp-spin { to { transform: rotate(360deg); } }
-    </style>
-""",
-    unsafe_allow_html=True,
-)
-
-EXCLUDED_MANAGEMENT_CODES = ("40",)
-# A lone punch at or after this hour is treated as an OUT punch.
-SINGLE_PUNCH_OUT_HOUR = 14
-# General Time Table boundaries visible in BioTime's Monthly Attendance Summary.
-# When one side of a punch pair is missing, BioTime fills the missing side with
-# the timetable boundary: 09:00 for missing IN, 19:00 for missing OUT.
-SINGLE_PUNCH_SHIFT_START_HOUR = 9
-SINGLE_PUNCH_SHIFT_END_HOUR = 19
-SYRIA_TZ = zoneinfo.ZoneInfo("Asia/Damascus")
-
-BASE_URL = strlit.secrets["biotime"]["base_url"].rstrip("/")
-TOKEN_URL = strlit.secrets["biotime"]["token_url"]
-EMAIL = strlit.secrets["biotime"]["email"]
-PASSWORD = strlit.secrets["biotime"]["password"]
-COMPANY = strlit.secrets["biotime"]["company"]
-
-if "debug_logs" not in strlit.session_state:
-  strlit.session_state["debug_logs"] = []
-if "selected_view" not in strlit.session_state:
-  strlit.session_state["selected_view"] = "present"
-
-
-def clean_txt(raw_text):
-  return (
-      str(
-          unicodedata.normalize("NFKC", str(raw_text))
-          .replace("\u2066", "")
-          .replace("\u2069", "")
-          .strip()
-      )
-      if raw_text
-      else ""
-  )
-
-
-def render_kpi_cards(items):
-  """Render compact responsive summary cards without changing app logic."""
-  cards = []
-  for icon, label, value in items:
-    cards.append(
-        '<div class="gp-kpi-card">'
-        f'<div class="gp-kpi-icon">{icon}</div>'
-        f'<div class="gp-kpi-value">{value}</div>'
-        f'<div class="gp-kpi-label">{label}</div>'
-        '</div>'
-    )
-  strlit.markdown(
-      '<div class="gp-kpi-grid">' + ''.join(cards) + '</div>',
-      unsafe_allow_html=True,
-  )
-
-
-
-def _popup_dataframe(title, rows, search_key):
-  """Open employee details only when a top summary card is clicked."""
-  def render_content():
-    if not rows:
-      strlit.info("لا توجد سجلات في هذه الفئة.")
-      return
-
-    df = pd.DataFrame(rows)
-    search_value = strlit.text_input(
-        "",
-        placeholder="🔍 ابحث باسم الموظف أو رقم الكود...",
-        label_visibility="collapsed",
-        key=f"popup_search_{search_key}",
-    ).strip().casefold()
-
-    if search_value:
-      mask = df.astype(str).apply(
-          lambda column: column.str.casefold().str.contains(
-              search_value,
-              regex=False,
-              na=False,
-          )
-      ).any(axis=1)
-      df = df[mask]
-
-    strlit.dataframe(df, use_container_width=True, hide_index=True)
-
-  if hasattr(strlit, "dialog"):
-    dialog_renderer = strlit.dialog(title)(render_content)
-    dialog_renderer()
-  else:
-    # Compatibility fallback for an older Streamlit runtime.
-    with strlit.expander(title, expanded=True):
-      render_content()
-
-
-def render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s):
-  """Render the six clean summary cards; details appear only in a dialog."""
-  specs = [
-      (
-          "all",
-          "👥",
-          "الموظفون النشطون",
-          len(act),
-          [
-              {"الكود": c, "الاسم": d["name"], "القسم": d["dept"], "الحالة": "نشط"}
-              for c, d in act.items()
-          ],
-      ),
-      (
-          "present",
-          "🟢",
-          "الحضور الآن",
-          len(pre),
-          [
-              {"الكود": c, "الاسم": n, "القسم": dpt, "الدخول": t, "الجهاز": d}
-              for c, n, dpt, t, d in pre
-          ],
-      ),
-      (
-          "late",
-          "⏰",
-          "المتأخرون",
-          len(lat),
-          [
-              {"الكود": c, "الاسم": n, "القسم": dpt, "الدخول": t, "الجهاز": d}
-              for c, n, dpt, t, d in lat
-          ],
-      ),
-      (
-          "checkout",
-          "🏁",
-          "المنصرفون",
-          len(chk),
-          [
-              {"الكود": c, "الاسم": n, "القسم": dpt, "الانصراف": t, "الجهاز": d}
-              for c, n, dpt, t, d in chk
-          ],
-      ),
-      (
-          "leave",
-          "🏖️",
-          "الإجازات",
-          len(lev),
-          [
-              {"الكود": c, "الاسم": n, "القسم": dpt, "نوع الإجازة": reason}
-              for c, n, dpt, reason in lev
-          ],
-      ),
-      (
-          "absent",
-          "❌",
-          "الغيابات",
-          len(abs_s),
-          [
-              {"الكود": c, "الاسم": n, "القسم": dpt, "الحالة": "غياب"}
-              for c, n, dpt in abs_s
-          ],
-      ),
-  ]
-
-  cols = strlit.columns(6)
-  for column, (key, icon, label, value, rows) in zip(cols, specs):
-    with column:
-      clicked = strlit.button(
-          f"{icon}\n{value}\n{label}",
-          key=f"summary_card_{key}",
-          use_container_width=True,
-      )
-      if clicked:
-        _popup_dataframe(f"{icon} {label} ({value})", rows, key)
-
-
-def normalize_punch_to_minute(value):
-  """Use the same minute precision displayed by BioTime reports.
-
-  BioTime's Clock In / Clock Out report columns are minute-precision values.
-  Using raw transaction seconds and flooring the final duration makes many
-  locally calculated totals one minute shorter than BioTime.
-  """
-  if value is None:
-    return None
-  return value.replace(second=0, microsecond=0)
-
-
-def calculate_single_punch_actual_wt(punch_time, is_out_punch, work_date=None):
-  """Reproduce BioTime Monthly Attendance Summary for one missing punch.
-
-  Missing IN  -> assume 09:00 and keep the real OUT, even when OUT is after
-                 19:00 or shortly after midnight on the next calendar day.
-  Missing OUT -> keep the real IN and assume 19:00 on the work date.
-
-  This is intentionally NOT capped at ten hours. The user's BioTime report shows,
-  for example, a missing IN with 21:32 OUT as 12:32 and a midnight OUT as 15:00.
-  """
-  punch_time = normalize_punch_to_minute(punch_time)
-  if punch_time is None:
-    return ""
-
-  if work_date is None:
-    # A punch shortly after midnight is normally the previous work day's OUT.
-    if is_out_punch and punch_time.hour < 5:
-      work_date = punch_time.date() - timedelta(days=1)
-    else:
-      work_date = punch_time.date()
-
-  shift_start = datetime.combine(work_date, datetime.min.time()).replace(
-      hour=SINGLE_PUNCH_SHIFT_START_HOUR
-  )
-  shift_end = datetime.combine(work_date, datetime.min.time()).replace(
-      hour=SINGLE_PUNCH_SHIFT_END_HOUR
-  )
-
-  if is_out_punch:
-    effective_in = shift_start
-    effective_out = punch_time
-  else:
-    effective_in = punch_time
-    effective_out = shift_end
-
-  worked_seconds = int((effective_out - effective_in).total_seconds())
-  if worked_seconds < 0:
-    return ""
-
-  total_minutes = worked_seconds // 60
-  hours, minutes = divmod(total_minutes, 60)
-  return f"{hours:02d}:{minutes:02d}"
-
-
-def calculate_actual_wt_for_workday(work_date, clock_in, clock_out):
-  """Return the single-punch value used by BioTime's monthly summary.
-
-  For normal two-punch attendance the app uses Total WT instead. This function
-  mainly exists for a missing IN or OUT and follows the General Time Table
-  boundaries without the previous ten-hour cap.
-  """
-  if clock_in is None and clock_out is None:
-    return ""
-
-  if clock_in is None:
-    return calculate_single_punch_actual_wt(
-        clock_out,
-        is_out_punch=True,
-        work_date=work_date,
-    )
-  if clock_out is None:
-    return calculate_single_punch_actual_wt(
-        clock_in,
-        is_out_punch=False,
-        work_date=work_date,
-    )
-
-  # Kept for completeness; normal attendance exports Total WT below.
-  return calculate_total_wt_for_workday(clock_in, clock_out)
-
-
-def calculate_total_wt_for_workday(clock_in, clock_out):
-  """BioTime Total Hrs: minute-precision interval between IN and OUT.
-
-  Cross-midnight shifts are preserved. Example: 10:37 -> 00:29 next day = 13:52.
-  """
-  if clock_in is None or clock_out is None:
-    return ""
-
-  clock_in = normalize_punch_to_minute(clock_in)
-  clock_out = normalize_punch_to_minute(clock_out)
-
-  worked_seconds = int((clock_out - clock_in).total_seconds())
-  if worked_seconds < 0:
-    return ""
-
-  total_minutes = worked_seconds // 60
-  hours, minutes = divmod(total_minutes, 60)
-  return f"{hours:02d}:{minutes:02d}"
-
-
-def calculate_monthly_working_hours(work_date, clock_in, clock_out):
-  """Final value written to Excel, matching BioTime Monthly Attendance Summary."""
-  if clock_in is not None and clock_out is not None:
-    return calculate_total_wt_for_workday(clock_in, clock_out)
-  if clock_in is not None:
-    return calculate_single_punch_actual_wt(
-        clock_in,
-        is_out_punch=False,
-        work_date=work_date,
-    )
-  if clock_out is not None:
-    return calculate_single_punch_actual_wt(
-        clock_out,
-        is_out_punch=True,
-        work_date=work_date,
-    )
-  return ""
-
-
-def calculate_odd_even_punch_total(punch_times):
-  """Sum BioTime punches as sequential odd/even IN->OUT pairs.
-
-  Punch 1 -> Punch 2, Punch 3 -> Punch 4, and so on. This is required
-  when an employee has multiple attendance sessions in one work day; using only
-  the first pair or a simple first-to-last interval gives the wrong duty time.
-
-  Only complete pairs are summed here. A true one-punch day continues to use
-  the existing single-punch Actual WT rule.
-  """
-  ordered = sorted(
-      [value for value in punch_times if value is not None],
-  )
-  if len(ordered) < 2:
-    return ""
-
-  total_seconds = 0
-  complete_pairs = 0
-  for index in range(0, len(ordered) - 1, 2):
-    pair_in = normalize_punch_to_minute(ordered[index])
-    pair_out = normalize_punch_to_minute(ordered[index + 1])
-    if pair_in is None or pair_out is None or pair_out < pair_in:
-      continue
-    total_seconds += int((pair_out - pair_in).total_seconds())
-    complete_pairs += 1
-
-  if complete_pairs == 0:
-    return ""
-
-  total_minutes = total_seconds // 60
-  hours, minutes = divmod(total_minutes, 60)
-  return f"{hours:02d}:{minutes:02d}"
-
-
-def classify_transaction_punch(log, punch_time):
-  """Return 'in', 'out', or 'unknown' from BioTime transaction punch state.
-
-  BioTime transactions expose punch_state/punch_state_display. Respect those
-  values first; only use the time of day when a device did not supply a usable
-  state. This prevents multiple IN-only or OUT-only punches from being paired
-  together into false 00:01/00:05/00:41 work durations.
-  """
-  display = clean_txt(log.get("punch_state_display", "")).casefold()
-  raw_state = str(log.get("punch_state", "") or "").strip().casefold()
-
-  display_compact = re.sub(r"[^a-z0-9]+", " ", display).strip()
-  if display_compact in {
-      "check in", "clock in", "in", "normal in", "overtime in", "ot in"
-  }:
-    return "in"
-  if display_compact in {
-      "check out", "clock out", "out", "normal out", "overtime out", "ot out"
-  }:
-    return "out"
-
-  if raw_state in {"0", "in", "check in", "check-in", "clock in", "4"}:
-    return "in"
-  if raw_state in {"1", "out", "check out", "check-out", "clock out", "5"}:
-    return "out"
-
-  return "unknown"
-
-
-def show_loading_overlay(message="جاري معالجة البيانات..."):
-  """Fade the full app while a blocking operation is running."""
-  placeholder = strlit.empty()
-  safe_message = clean_txt(message)
-  placeholder.markdown(
-      f"""
-      <div class="gp-loading-overlay">
-        <div class="gp-loading-box">
-          <div class="gp-loading-spinner"></div>
-          <div>{safe_message}</div>
-        </div>
-      </div>
-      """,
-      unsafe_allow_html=True,
-  )
-  return placeholder
-
-
-def hide_loading_overlay(placeholder):
-  if placeholder is not None:
-    placeholder.empty()
-
-
-@strlit.cache_data(ttl=300)
-def get_auth_token():
-  try:
-    payload = {
-        "username": EMAIL,
-        "email": EMAIL,
-        "password": PASSWORD,
-        "company": COMPANY,
-    }
-    res = requests.post(TOKEN_URL, json=payload, timeout=15)
-
-    if res.status_code in (200, 201):
-      return res.json().get("token")
-    else:
-      strlit.error(f"BioTime Server Error (Code {res.status_code}): {res.text}")
-      return None
-
-  except requests.exceptions.Timeout:
-    strlit.error("Connection Failed: BioTime server timed out.")
-    return None
-  except Exception as e:
-    strlit.error(f"Connection Failed: {str(e)}")
-    return None
-
-
-def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
-  token = get_auth_token()
-  if not token:
-    raise Exception(
-        "تعذر المصادقة مع السيرفر. يرجى مراجعة تفاصيل الخطأ بالأعلى."
-    )
-  headers = {
-      "Authorization": f"Token {token}",
-      "Content-Type": "application/json",
-  }
-
-  devices = []
-  try:
-    for endpoint in ["/iclock/api/terminals/", "/iclock/api/devices/"]:
-      dev_res = requests.get(
-          f"{BASE_URL}{endpoint}", headers=headers, timeout=10
-      )
-      if dev_res.status_code == 200:
-        d_data = dev_res.json()
-        devices = (
-            d_data.get("data", d_data)
-            if isinstance(d_data, (dict, list))
-            else []
-        )
-        break
-  except Exception:
-    pass
-
-  terminal_map = {
-      str(d.get("sn", "")): (
-          d.get("alias") or d.get("terminal_name") or str(d.get("sn", ""))
-      )
-      for d in devices
-      if d.get("sn")
-  }
-
-  all_employees = []
-  try:
-    emp_res = requests.get(
-        f"{BASE_URL}/personnel/api/employees/?page_size=1000",
-        headers=headers,
-        timeout=15,
-    )
-    if emp_res.status_code == 200:
-      all_employees = emp_res.json().get("data", [])
-  except Exception:
-    pass
-
-  active_employees = {}
-  for emp in all_employees:
-    raw_code = str(emp.get("emp_code", "")).strip()
-    cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-
-    is_active = (
-        str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
-    )
-    emp_status = str(emp.get("status", "0")).upper()
-    enable_att = (
-        str(emp.get("enable_attendance", True)).lower() in ("true", "1", "yes")
-    )
-
-    if not is_active or emp_status in ("1", "2", "D") or not enable_att:
-      continue
-
-    if cleaned_code and cleaned_code not in EXCLUDED_MANAGEMENT_CODES:
-      f_name = str(emp.get("first_name", "")).strip()
-      l_name = str(emp.get("last_name", "")).strip()
-      if f_name.lower() == "none":
-        f_name = ""
-      if l_name.lower() == "none":
-        l_name = ""
-      full_name = f"{f_name} {l_name}".strip()
-
-      dept_data = emp.get("department", {})
-      dept_name = (
-          dept_data.get("dept_name")
-          if isinstance(dept_data, dict)
-          else str(emp.get("department", ""))
-      )
-      if not dept_name or dept_name.lower() == "none":
-        dept_name = "غير محدد"
-
-      active_employees[cleaned_code] = {
-          "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
-          "dept": clean_txt(dept_name),
-      }
-
-  leave_records = []
-  try:
-    leave_res = requests.get(
-        f"{BASE_URL}/att/api/leave/?page_size=1000", headers=headers, timeout=10
-    )
-    if leave_res.status_code == 200:
-      l_data = leave_res.json()
-      leave_records = (
-          l_data.get("data", l_data) if isinstance(l_data, (dict, list)) else []
-      )
-  except Exception:
+SCHEMA = {
+    "Ledger": [
+        "service_id", "tool_name", "customer_name", "phone_number", "warranty_status", "document_origin",
+        "reported_issue", "technician", "status", "cost_debit", "payment_credit", "balance",
+        "spare_parts", "resolution_notes", "remarks", "date_logged", "date_resolved",
+        "accessories", "loaner_item", "priority", "tool_photo_link",
+        "source_account", "source_account_g", "source_document_count", "document_history",
+        "repair_stage", "collection_status", "special_case", "partner_claim_status", "partner_claim_amount",
+        "case_status", "closed_at", "closed_by", "close_note"
+    ],
+    "Stock": ["item_code", "item_name", "quantity", "price"],
+    "Hawara": ["order_id", "order_type", "linked_service_id", "courier", "delivery_note", "document_link", "status", "date_logged"],
+    "Dispatch": ["dispatch_id", "service_id", "customer_name", "courier", "delivery_note", "document_link", "date"]
+}
+
+STOCK_COLUMNS = SCHEMA["Stock"]
+
+
+def normalize_doc_string(val):
+    return re.sub(r'\s+', ' ', str(val or '')).strip()
+
+
+def get_status_rank(val):
+    """Ranking used only for source-document stage comparison."""
+    s = normalize_doc_string(val)
+    if "قبض" in s or "Collected" in s:
+        return 4
+    if "خ صيانة" in s or "حساب وكيل" in s:
+        return 3
+    if "مبيع خ ص" in s or "جاهز" in s:
+        return 2
+    if "اد خ ص" in s or "المعالجة" in s:
+        return 1
+    return 0
+
+
+def map_document_to_status(doc_string, cost=0.0, collection_status="", special_case="", partner_claim_status="", case_status=""):
+    doc = normalize_doc_string(doc_string)
+    special = normalize_doc_string(special_case)
+    collection = normalize_doc_string(collection_status)
+    partner = normalize_doc_string(partner_claim_status)
+    case = normalize_doc_string(case_status)
+
+    if case == CASE_STATUS_CLOSED or COLLECTION_CLOSED in collection or collection == "تم التحصيل والتسليم":
+        return "مغلق - تم الاستلام (Closed)"
+    if special:
+        return f"حالة خاصة - بانتظار الاستلام ({special})"
+    if "خ صيانة" in doc and "بانتظار" not in partner:
+        return "مغلق محاسبياً - حساب شريك (Partner Claimed)"
+    if "قبض" in doc:
+        return "مغلق - تم الاستلام (Closed)"
+    if "مبيع خ ص" in doc or "جاهز" in doc:
+        return "جاهز للتسليم - بانتظار الاستلام (Ready / Awaiting Collection)"
+    if "اد خ ص" in doc or "المعالجة" in doc:
+        return "قيد المعالجة (In Progress)"
+    return "قيد الانتظار (Waiting)"
+
+
+def parse_excel_date(value):
     try:
-      leave_res = requests.get(
-          f"{BASE_URL}/iclock/api/leave/?page_size=1000",
-          headers=headers,
-          timeout=10,
-      )
-      if leave_res.status_code == 200:
-        l_data = leave_res.json()
-        leave_records = (
-            l_data.get("data", l_data)
-            if isinstance(l_data, (dict, list))
-            else []
-        )
+        if value is None or str(value).strip() in ("", "nan", "NaT"):
+            return ""
+        if isinstance(value, (int, float)) and not pd.isna(value):
+            return (pd.Timestamp("1899-12-30") + pd.to_timedelta(float(value), unit="D")).strftime("%Y-%m-%d")
+        parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+        return parsed.strftime("%Y-%m-%d") if pd.notna(parsed) else ""
     except Exception:
-      pass
-
-  on_leave_employees = {}
-  for leave in leave_records:
-    raw_code = str(
-        leave.get("emp_code") or leave.get("employee_code") or ""
-    ).strip()
-    cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-    start_t = (
-        leave.get("start_time")
-        or leave.get("start_date")
-        or leave.get("start_datetime")
-    )
-    end_t = (
-        leave.get("end_time")
-        or leave.get("end_date")
-        or leave.get("end_datetime")
-    )
-
-    leave_name = "إجازة"
-    if "leave_type" in leave:
-      if isinstance(leave["leave_type"], dict):
-        leave_name = leave["leave_type"].get("leave_name", "إجازة")
-      else:
-        leave_name = str(leave["leave_type"])
-    elif "leave_name" in leave:
-      leave_name = leave["leave_name"]
-
-    if cleaned_code and start_t and end_t:
-      try:
-        s_date = datetime.strptime(str(start_t)[:10], "%Y-%m-%d").date()
-        e_date = datetime.strptime(str(end_t)[:10], "%Y-%m-%d").date()
-        if s_date <= selected_date_obj <= e_date:
-          on_leave_employees[cleaned_code] = clean_txt(leave_name)
-      except Exception:
-        pass
-
-  prev_day = selected_date_obj.strftime("%Y-%m-%d") + " 00:00:00"
-  next_day = (selected_date_obj + timedelta(days=1)).strftime(
-      "%Y-%m-%d"
-  ) + " 05:00:00"
-
-  raw_logs = []
-  try:
-    logs_res = requests.get(
-        f"{BASE_URL}/iclock/api/transactions/?start_time={prev_day}&end_time={next_day}&page_size=5000",
-        headers=headers,
-        timeout=15,
-    )
-    if logs_res.status_code == 200:
-      raw_logs = logs_res.json().get("data", [])
-  except Exception:
-    pass
-
-  emp_punches = {}
-  for log in raw_logs:
-    raw_code = str(log.get("emp_code", "")).strip()
-    cleaned_code = str(int(raw_code)) if raw_code.isdigit() else raw_code
-    if cleaned_code in active_employees and log.get("punch_time"):
-      try:
-        p_time = datetime.strptime(
-            log.get("punch_time")[:19], "%Y-%m-%d %H:%M:%S"
-        )
-        dev_sn = str(log.get("terminal_sn", ""))
-        dev_name = (
-            log.get("terminal_alias")
-            or log.get("terminal_name")
-            or terminal_map.get(dev_sn, dev_sn or "جهاز رئيسي")
-        )
-        emp_punches.setdefault(cleaned_code, []).append((p_time, dev_name))
-      except Exception:
-        continue
-
-  (
-      present_staff,
-      late_staff,
-      absent_staff,
-      checkout_staff,
-      leave_staff,
-      excel_rows,
-  ) = ([], [], [], [], [], [])
-
-  for code, emp_data in active_employees.items():
-    name = emp_data["name"]
-    dept = emp_data["dept"]
-    punches = sorted(emp_punches.get(code, []), key=lambda x: x[0])
-    filtered_punches = []
-
-    for p_time, d_name in punches:
-      if (
-          not filtered_punches
-          or abs((p_time - filtered_punches[-1][0]).total_seconds()) > 60
-      ):
-        filtered_punches.append((p_time, d_name))
-
-    day_punches = [
-        (p, d)
-        for p, d in filtered_punches
-        if p.date() == selected_date_obj and p.hour >= 5
-    ]
-
-    if not day_punches:
-      if code in on_leave_employees:
-        leave_reason = on_leave_employees[code]
-        leave_staff.append((code, name, dept, leave_reason))
-        excel_rows.append({
-            "Employee ID": code,
-            "First Name": name,
-            "Department": dept,
-            "Date": selected_date_str,
-            "Clock In": "",
-            "Clock Out": "",
-            "Total WT": "",
-            "Status": f"Leave - {leave_reason}",
-        })
-      else:
-        absent_staff.append((code, name, dept))
-        excel_rows.append({
-            "Employee ID": code,
-            "First Name": name,
-            "Department": dept,
-            "Date": selected_date_str,
-            "Clock In": "",
-            "Clock Out": "",
-            "Total WT": "",
-            "Status": "Absence(A)",
-        })
-      continue
-
-    first_p, first_dev = day_punches[0]
-
-    next_morning = [
-        (p, d)
-        for p, d in filtered_punches
-        if p.date() == selected_date_obj + timedelta(days=1) and p.hour < 5
-    ]
-
-    # For exactly one punch, classify an early punch as IN and an afternoon/
-    # evening punch as OUT. Calculate the same schedule-aware Actual WT shown
-    # by BioTime's Basic Report, without requiring a second upload or report API.
-    single_punch_only = len(day_punches) == 1 and not next_morning
-    single_punch_is_out = (
-        single_punch_only and first_p.hour >= SINGLE_PUNCH_OUT_HOUR
-    )
-
-    is_late = (
-        not single_punch_is_out
-        and (first_p.hour > 9 or (first_p.hour == 9 and first_p.minute > 15))
-    )
-
-    if single_punch_only:
-      clock_in_value = "" if single_punch_is_out else first_p.strftime("%H:%M")
-      clock_out_value = first_p.strftime("%H:%M") if single_punch_is_out else ""
-      single_punch_actual_wt = calculate_single_punch_actual_wt(
-          first_p,
-          single_punch_is_out,
-          selected_date_obj,
-      )
-
-      if single_punch_is_out:
-        checkout_staff.append(
-            (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-        )
-        status_str = "Present(P) / Missing IN"
-      else:
-        present_staff.append(
-            (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-        )
-        status_str = (
-            "Late(LT) / Missing OUT" if is_late else "Present(P) / Missing OUT"
-        )
-        if is_late:
-          late_staff.append(
-              (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-          )
-
-      excel_rows.append({
-          "Employee ID": code,
-          "First Name": name,
-          "Department": dept,
-          "Date": selected_date_str,
-          "Clock In": clock_in_value,
-          "Clock Out": clock_out_value,
-          "Actual WT": single_punch_actual_wt,
-          "Calculated WT": single_punch_actual_wt,
-          "Total WT": single_punch_actual_wt,
-          "Status": status_str,
-      })
-      continue
-
-    punch_count = (
-        2 if (len(day_punches) % 2 != 0 and next_morning) else len(day_punches)
-    )
-
-    last_p = None
-    last_dev = first_dev
-
-    if punch_count % 2 == 0:
-      last_p, last_dev = (
-          next_morning[-1]
-          if (len(day_punches) % 2 != 0 and next_morning)
-          else day_punches[-1]
-      )
-    elif not is_today and len(day_punches) > 1:
-      last_p, last_dev = day_punches[-1]
-
-    ordered_workday_punches = [p for p, _d in day_punches] + [
-        p for p, _d in next_morning
-    ]
-    if len(ordered_workday_punches) > 2 and len(ordered_workday_punches) % 2 == 0:
-      total_wt_str = calculate_odd_even_punch_total(ordered_workday_punches)
-    else:
-      total_wt_str = calculate_total_wt_for_workday(first_p, last_p)
-
-    status_str = "Late(LT)" if is_late else "Present(P)"
-
-    if is_late:
-      late_staff.append(
-          (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-      )
-
-    if is_today:
-      if punch_count % 2 != 0:
-        present_staff.append(
-            (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-        )
-        excel_rows.append({
-            "Employee ID": code,
-            "First Name": name,
-            "Department": dept,
-            "Date": selected_date_str,
-            "Clock In": first_p.strftime("%H:%M"),
-            "Clock Out": "",
-            "Total WT": "",
-            "Status": status_str,
-        })
-      else:
-        last_p_real, last_dev_real = (
-            next_morning[-1]
-            if (len(day_punches) % 2 != 0 and next_morning)
-            else day_punches[-1]
-        )
-        checkout_staff.append((
-            code,
-            name,
-            dept,
-            last_p_real.strftime("%I:%M %p"),
-            last_dev_real,
-        ))
-        excel_rows.append({
-            "Employee ID": code,
-            "First Name": name,
-            "Department": dept,
-            "Date": selected_date_str,
-            "Clock In": first_p.strftime("%H:%M"),
-            "Clock Out": last_p_real.strftime("%H:%M"),
-            "Total WT": total_wt_str,
-            "Status": status_str,
-        })
-    else:
-      if last_p:
-        checkout_staff.append(
-            (code, name, dept, last_p.strftime("%I:%M %p"), last_dev)
-        )
-      else:
-        present_staff.append(
-            (code, name, dept, first_p.strftime("%I:%M %p"), first_dev)
-        )
-
-      excel_rows.append({
-          "Employee ID": code,
-          "First Name": name,
-          "Department": dept,
-          "Date": selected_date_str,
-          "Clock In": first_p.strftime("%H:%M"),
-          "Clock Out": last_p.strftime("%H:%M") if last_p else "",
-          "Total WT": total_wt_str,
-          "Status": status_str,
-      })
-
-  absent_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-  present_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-  late_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-  leave_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-  checkout_staff.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999)
-
-  return (
-      active_employees,
-      present_staff,
-      late_staff,
-      absent_staff,
-      checkout_staff,
-      leave_staff,
-      devices,
-      excel_rows,
-  )
-
-
-# ==========================================
-# 3. INTERFACE RENDERING
-# ==========================================
-now_syria = datetime.now(SYRIA_TZ)
-today_str = now_syria.strftime("%Y-%m-%d")
-
-dish_img_tag = ""
-try:
-  with open("image_632b3d.jpg", "rb") as img_file:
-    encoded_string = base64.b64encode(img_file.read()).decode()
-    dish_img_tag = f'<img src="data:image/jpeg;base64,{encoded_string}" class="animated-dish" />'
-except Exception:
-  dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
-
-c_date, c_ref = strlit.columns(2)
-with c_date:
-  selected_date_obj_input = strlit.date_input(
-      "", value=now_syria.date(), label_visibility="collapsed"
-  )
-  selected_date_str = selected_date_obj_input.strftime("%Y-%m-%d")
-with c_ref:
-  if strlit.button("🔄 تحديث البيانات", use_container_width=True):
-    strlit.cache_data.clear()
-    strlit.rerun()
-
-is_today = selected_date_str == today_str
-
-if "last_selected_date" not in strlit.session_state:
-  strlit.session_state["last_selected_date"] = selected_date_str
-
-if strlit.session_state["last_selected_date"] != selected_date_str:
-  strlit.session_state["last_selected_date"] = selected_date_str
-  strlit.session_state["selected_view"] = "present" if is_today else "all"
-
-if is_today:
-  strlit.markdown(
-      f"""
-        <div class="status-badge">
-            {dish_img_tag}
-            <div class="status-indicator">
-                <span class="blinking-dot"></span>
-                <span class="online-text">Online (مباشر)</span>
-            </div>
-        </div>
-        """,
-      unsafe_allow_html=True,
-  )
-else:
-  strlit.markdown(
-      f"""
-        <div class="status-badge" style="border-color: #94a3b8; background: #e2e8f0;">
-            {dish_img_tag}
-            <div class="status-indicator">
-                <span style="font-weight: 800; color: #475569; font-size: 14px;">أرشيف تاريخي ({selected_date_str})</span>
-            </div>
-        </div>
-        """,
-      unsafe_allow_html=True,
-  )
-
-main_loading_overlay = show_loading_overlay("جاري تحديث بيانات BioTime...")
-try:
-  act, pre, lat, abs_s, chk, lev, devices, exc = load_attendance_data_from_api(
-      selected_date_str, selected_date_obj_input, is_today
-  )
-  hide_loading_overlay(main_loading_overlay)
-  main_loading_overlay = None
-
-  render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
-
-  # 📥 UPLOAD TEMPLATE & FILL ATTENDANCE VALUES OR GENERATE DEFAULT REPORT
-  col_gen, col_up = strlit.columns(2)
-
-  with col_gen:
-    # Standard Generated Attendance Report
-    df_excel = pd.DataFrame(exc)
-    output = io.BytesIO()
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Attendance Report"
-
-    thin_border = Border(
-        left=Side(style="thin", color="D3D3D3"),
-        right=Side(style="thin", color="D3D3D3"),
-        top=Side(style="thin", color="D3D3D3"),
-        bottom=Side(style="thin", color="D3D3D3"),
-    )
-
-    headers = [
-        "Employee ID",
-        "First Name",
-        "Department",
-        "Date",
-        "Clock In",
-        "Clock Out",
-        "Total WT",
-        "Status",
-    ]
-    ws.append(headers)
-    ws.row_dimensions[1].height = 24
-
-    for col_idx in range(1, len(headers) + 1):
-      cell = ws.cell(row=1, column=col_idx)
-      cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-      cell.fill = PatternFill(
-          start_color="1F4E78", end_color="1F4E78", fill_type="solid"
-      )
-      cell.alignment = Alignment(horizontal="center", vertical="center")
-      cell.border = thin_border
-
-    for idx, row_data in enumerate(exc, 2):
-      ws.row_dimensions[idx].height = 20
-      ws.append([
-          row_data["Employee ID"],
-          row_data["First Name"],
-          row_data["Department"],
-          row_data["Date"],
-          row_data["Clock In"],
-          row_data["Clock Out"],
-          row_data["Total WT"],
-          row_data["Status"],
-      ])
-
-      status_val = str(row_data["Status"])
-      row_fill = None
-      row_font_color = "000000"
-
-      if "Leave" in status_val or "L" in status_val:
-        row_fill = PatternFill(
-            start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
-        )
-        row_font_color = "002060"
-      elif "Absence" in status_val or "A" in status_val:
-        row_fill = PatternFill(
-            start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
-        )
-        row_font_color = "9C0006"
-
-      for col_idx in range(1, 9):
-        cell = ws.cell(row=idx, column=col_idx)
-
-        if row_fill:
-          cell.fill = row_fill
-          cell.font = Font(
-              name="Calibri", size=11, bold=True, color=row_font_color
-          )
-        else:
-          cell.font = Font(name="Calibri", size=11)
-
-        if col_idx == 8 and not row_fill:
-          if "Late" in status_val or "LT" in status_val:
-            cell.font = Font(
-                name="Calibri", size=11, bold=True, color="9C0006"
-            )
-            cell.fill = PatternFill(
-                start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
-            )
-          elif "Present" in status_val or "P" in status_val:
-            cell.font = Font(
-                name="Calibri", size=11, bold=True, color="006100"
-            )
-            cell.fill = PatternFill(
-                start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
-            )
-
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = thin_border
-
-    for col in ws.columns:
-      max_len = 0
-      col_letter = get_column_letter(col[0].column)
-      for cell in col:
-        if cell.value:
-          max_len = max(max_len, len(str(cell.value)))
-      ws.column_dimensions[col_letter].width = max(max_len + 5, 14)
-
-    wb.save(output)
-    excel_data = output.getvalue()
-
-    strlit.download_button(
-        label="📥 تحميل تقرير اليوم (افتراضي)",
-        data=excel_data,
-        file_name=f"Daily_Attendance_Report_{selected_date_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-
-  with col_up:
-    strlit.markdown(
-        '<div class="gp-section-title">📊 جدول الدوام الشهري</div>'
-        '<div class="gp-file-note">ارفع ملف Excel فقط — بيانات BioTime تُجلب تلقائياً.</div>',
-        unsafe_allow_html=True,
-    )
-    # ONE upload box only: the monthly attendance Excel template.
-    # BioTime calculated work hours are fetched automatically from BioTime.
-    uploaded_template = strlit.file_uploader(
-        "📂 رفع جدول الدوام الشهري وتعبئته تلقائياً",
-        type=["xlsx", "xlsm"],
-        label_visibility="collapsed",
-        key="monthly_attendance_template",
-    )
-    strlit.markdown(
-        '<div class="gp-tech-note">Single Punch → Actual WT &nbsp;|&nbsp; Normal IN/OUT → Total WT</div>',
-        unsafe_allow_html=True,
-    )
-
-    def normalize_id(value):
-      """Normalize an employee ID without changing its identity."""
-      if value is None:
         return ""
 
-      # Excel may give a numeric ID as 1.0 when the source cell is numeric.
-      if isinstance(value, float) and value.is_integer():
-        value = int(value)
 
-      raw = str(value).strip()
-      if not raw:
+def extract_service_id(account_value, account_g_value=""):
+    text = f"{account_g_value} {account_value}"
+    m = re.search(r'\b([SDV]\d+)\b', text, re.IGNORECASE)
+    return m.group(1).upper() if m else ""
+
+
+def clean_text(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
-
-      if raw.endswith(".0") and raw[:-2].isdigit():
-        raw = raw[:-2]
-
-      return raw
-
-    def normalize_report_key(value):
-      """Normalize report JSON field names for tolerant matching."""
-      return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
-
-    def flatten_report_row(value, prefix=""):
-      """Flatten nested report JSON while retaining short and full keys."""
-      flat = {}
-
-      if isinstance(value, dict):
-        for key, child in value.items():
-          normalized_key = normalize_report_key(key)
-          full_key = f"{prefix}{normalized_key}" if prefix else normalized_key
-
-          if isinstance(child, (dict, list)):
-            flat.update(flatten_report_row(child, full_key))
-          else:
-            if normalized_key and normalized_key not in flat:
-              flat[normalized_key] = child
-            if full_key:
-              flat[full_key] = child
-
-      elif isinstance(value, list):
-        for item in value:
-          flat.update(flatten_report_row(item, prefix))
-
-      return flat
-
-    def extract_report_rows(payload):
-      """Extract attendance rows from BioTime report JSON.
-
-      BioTime releases return report data in several shapes. Some are flat DRF
-      lists, while others group daily rows beneath an employee object. Preserve
-      scalar parent fields while walking nested lists so employee/date context is
-      not lost before normalization.
-      """
-      rows = []
-      seen = set()
-
-      row_hint_keys = {
-          "attdate",
-          "attendancedate",
-          "workdate",
-          "date",
-          "clockin",
-          "clockout",
-          "checkin",
-          "checkout",
-          "actualwt",
-          "actualworked",
-          "actualworktime",
-          "totalwt",
-          "totalworked",
-          "totalworktime",
-      }
-
-      def walk(value, inherited=None):
-        inherited = dict(inherited or {})
-
-        if isinstance(value, list):
-          for item in value:
-            walk(item, inherited)
-          return
-
-        if not isinstance(value, dict):
-          return
-
-        scalar_context = dict(inherited)
-        nested_items = []
-
-        for key, child in value.items():
-          if isinstance(child, (dict, list)):
-            nested_items.append((key, child))
-            # Employee/report group metadata is often a nested object sitting
-            # beside the actual daily rows. Carry its scalar fields into sibling
-            # row context using prefixed names such as employee_emp_code.
-            if isinstance(child, dict):
-              for child_key, child_value in child.items():
-                if not isinstance(child_value, (dict, list)):
-                  scalar_context.setdefault(
-                      f"{key}_{child_key}",
-                      child_value,
-                  )
-          else:
-            scalar_context.setdefault(key, child)
-
-        normalized_keys = {normalize_report_key(key) for key in value.keys()}
-        has_row_hint = bool(normalized_keys & row_hint_keys)
-
-        if has_row_hint:
-          merged = dict(inherited)
-          merged.update(value)
-          # Avoid adding the same object twice when several envelope paths point
-          # to the identical dictionary.
-          signature = id(value)
-          if signature not in seen:
-            seen.add(signature)
-            rows.append(merged)
-
-        for _key, child in nested_items:
-          walk(child, scalar_context)
-
-      walk(payload)
-
-      # Flat report lists occasionally contain fields whose names are unknown to
-      # row_hint_keys. Fall back to the conventional envelopes if needed.
-      if rows:
-        return rows
-
-      if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-      if isinstance(payload, dict):
-        for key in ("data", "results", "rows", "items"):
-          candidate = payload.get(key)
-          if isinstance(candidate, list):
-            return [item for item in candidate if isinstance(item, dict)]
-      return []
-
-    def first_report_value(flat_row, candidate_keys):
-      """Return the first non-empty report field, preferring exact keys."""
-      normalized_candidates = [
-          normalize_report_key(candidate_key) for candidate_key in candidate_keys
-      ]
-
-      # Exact keys first. flatten_report_row keeps short child keys, so this
-      # avoids mistaking e.g. total_work_time for the more specific work_time.
-      for normalized_candidate in normalized_candidates:
-        if not normalized_candidate:
-          continue
-        value = flat_row.get(normalized_candidate)
-        if value not in (None, ""):
-          return value, normalized_candidate
-
-      # Fallback for unusual nested serializers that expose only prefixed keys.
-      for normalized_candidate in normalized_candidates:
-        if not normalized_candidate:
-          continue
-        for key, value in flat_row.items():
-          if value in (None, ""):
-            continue
-          if key.endswith(normalized_candidate):
-            return value, key
-      return "", ""
-
-    def parse_report_date(value, fallback_date=None):
-      if isinstance(value, datetime):
-        return value.date()
-      if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-        return value
-      if value not in (None, ""):
-        raw = str(value).strip()
-
-        # BioTime versions may serialize dates as YYYY-MM-DD, full timestamps,
-        # or ISO-8601 strings with a T/Z timezone marker.
-        try:
-          return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
-        except ValueError:
-          pass
-
-        for candidate, fmt in (
-            (raw[:10], "%Y-%m-%d"),
-            (raw[:19], "%Y-%m-%d %H:%M:%S"),
-            (raw[:10], "%d/%m/%Y"),
-            (raw[:10], "%d-%m-%Y"),
-            (raw[:8], "%d/%m/%y"),
-            (raw[:8], "%d-%m-%y"),
-        ):
-          try:
-            return datetime.strptime(candidate, fmt).date()
-          except ValueError:
-            continue
-      return fallback_date
-
-    def duration_to_hhmm(value, source_key=""):
-      """Normalize a BioTime calculated duration to HH:MM."""
-      if value is None or str(value).strip() == "":
-        return ""
-
-      if isinstance(value, timedelta):
-        total_seconds = int(value.total_seconds())
-      elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
-        key = normalize_report_key(source_key)
-        if "second" in key:
-          total_seconds = round(number)
-        elif "minute" in key:
-          total_seconds = round(number * 60)
-        elif 0 <= number <= 1 and not number.is_integer():
-          # Some report serializers return an Excel/day fraction.
-          total_seconds = round(number * 86400)
-        elif 0 <= number <= 24:
-          total_seconds = round(number * 3600)
-        elif 0 <= number <= 1440:
-          total_seconds = round(number * 60)
-        else:
-          total_seconds = round(number)
-      else:
-        raw = str(value).strip()
-
-        day_match = re.match(
-            r"^(?P<days>\d+)\s+day[s]?,\s*(?P<hours>\d+):(?P<minutes>\d{1,2})(?::(?P<seconds>\d{1,2}))?$",
-            raw,
-            re.IGNORECASE,
-        )
-        if day_match:
-          total_seconds = (
-              int(day_match.group("days")) * 86400
-              + int(day_match.group("hours")) * 3600
-              + int(day_match.group("minutes")) * 60
-              + int(day_match.group("seconds") or 0)
-          )
-        else:
-          time_match = re.match(
-              r"^(?P<hours>\d+):(?P<minutes>\d{1,2})(?::(?P<seconds>\d{1,2}))?$",
-              raw,
-          )
-          if time_match:
-            total_seconds = (
-                int(time_match.group("hours")) * 3600
-                + int(time_match.group("minutes")) * 60
-                + int(time_match.group("seconds") or 0)
-            )
-          else:
-            try:
-              number = float(raw.replace(",", "."))
-            except ValueError:
-              return ""
-            total_seconds = round(number * 3600)
-
-      if total_seconds < 0:
-        return ""
-
-      hours, remainder = divmod(total_seconds, 3600)
-      minutes = remainder // 60
-      return f"{hours:02d}:{minutes:02d}"
-
-    def normalize_clock_value(value):
-      """Normalize a report clock value to HH:MM without inventing a punch."""
-      if value in (None, ""):
-        return ""
-      if isinstance(value, datetime):
-        return value.strftime("%H:%M")
-      if hasattr(value, "hour") and hasattr(value, "minute"):
-        try:
-          return f"{int(value.hour):02d}:{int(value.minute):02d}"
-        except Exception:
-          pass
-
-      raw = str(value).strip()
-      if not raw:
-        return ""
-
-      for fmt in (
-          "%Y-%m-%d %H:%M:%S",
-          "%Y-%m-%d %H:%M",
-          "%d-%m-%Y %H:%M:%S",
-          "%d/%m/%Y %H:%M:%S",
-          "%H:%M:%S",
-          "%H:%M",
-          "%I:%M %p",
-      ):
-        try:
-          return datetime.strptime(raw[:19], fmt).strftime("%H:%M")
-        except ValueError:
-          continue
-
-      # Keep an already-recognisable HH:MM prefix.
-      match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?::\d{2})?", raw)
-      if match:
-        try:
-          hour = int(match.group(1))
-          minute = int(match.group(2))
-          if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return f"{hour:02d}:{minute:02d}"
-        except ValueError:
-          pass
-      return raw
-
-    def normalize_calculated_report_row(
-        report_row,
-        start_date,
-        end_date,
-        employee_internal_id_map=None,
-    ):
-      """Convert one BioTime attendance-report row to the app attendance shape.
-
-      The BioTime report APIs are not fully consistent between releases. Some
-      versions return emp_code directly; others return an internal employee id or
-      a nested employee object. The same is true for worked-time field names.
-      """
-      flat = flatten_report_row(report_row)
-      employee_internal_id_map = employee_internal_id_map or {}
-
-      employee_value, _employee_key = first_report_value(
-          flat,
-          (
-              "emp_code",
-              "employee_emp_code",
-              "employee_code",
-              "employee_code_code",
-              "employeecode",
-              "empcode",
-              "staff_code",
-              "staffcode",
-              "employee_number",
-              "employee_no",
-          ),
-      )
-      employee_id = normalize_id(employee_value)
-
-      if not employee_id:
-        internal_value, _internal_key = first_report_value(
-            flat,
-            (
-                "employee_id",
-                "employeeid",
-                "emp_id",
-                "empid",
-                "employee",
-                "emp",
-            ),
-        )
-        internal_id = normalize_id(internal_value)
-        employee_id = employee_internal_id_map.get(internal_id, "")
-
-      if not employee_id:
-        return None
-
-      date_value, _date_key = first_report_value(
-          flat,
-          (
-              "att_date",
-              "attendance_date",
-              "attendance_day",
-              "work_date",
-              "workday",
-              "attdate",
-              "transaction_date",
-              "date",
-          ),
-      )
-      attendance_date = parse_report_date(date_value)
-      if attendance_date is None or not (start_date <= attendance_date <= end_date):
-        return None
-
-      clock_in, _clock_in_key = first_report_value(
-          flat,
-          (
-              "clock_in",
-              "check_in",
-              "checkin",
-              "first_in",
-              "first_punch",
-              "first_punch_time",
-              "checkin_time",
-              "in_time",
-              "punch_in",
-              "first_clock_in",
-          ),
-      )
-      clock_out, _clock_out_key = first_report_value(
-          flat,
-          (
-              "clock_out",
-              "check_out",
-              "checkout",
-              "last_out",
-              "last_punch",
-              "last_punch_time",
-              "checkout_time",
-              "out_time",
-              "punch_out",
-              "last_clock_out",
-          ),
-      )
-
-      # Keep Actual WT and Total WT separate. Generic "working/worked hours"
-      # fields belong to Total WT (the uncapped interval shown by BioTime's
-      # Monthly Attendance Summary), not Actual WT. This distinction is critical:
-      # single-punch days use Actual WT; normal IN/OUT days use Total WT.
-      actual_value, actual_key = first_report_value(
-          flat,
-          (
-              "actual_wt",
-              "actualwt",
-              "actual_work_time",
-              "actual_working_time",
-              "actual_worked_time",
-              "actual_worked_hours",
-              "actual_worked",
-              "actual_work",
-              "actual_time",
-              "actual_duration",
-              "actual_work_duration",
-              "actual_worked_minutes",
-              "actual_worked_seconds",
-          ),
-      )
-      actual_work_time = duration_to_hhmm(actual_value, actual_key)
-
-      total_value, total_key = first_report_value(
-          flat,
-          (
-              "total_wt",
-              "totalwt",
-              "total_worked",
-              "total_work_time",
-              "total_worked_time",
-              "total_worked_hours",
-              "total_duration",
-              "total_hours",
-              "total_hrs",
-              "total_time",
-              "working_hrs",
-              "working_hours",
-              "working_time",
-              "work_hrs",
-              "work_hours",
-              "work_time",
-              "worked_hrs",
-              "worked_hours",
-              "worked_time",
-              "worked_duration",
-              "work_duration",
-              "worked",
-              "duration",
-          ),
-      )
-      total_work_time = duration_to_hhmm(total_value, total_key)
-      calculated_work_time = total_work_time or actual_work_time
-
-      clock_in = normalize_clock_value(clock_in)
-      clock_out = normalize_clock_value(clock_out)
-
-      # Ignore report metadata rows that do not describe attendance.
-      if not calculated_work_time and not clock_in and not clock_out:
-        return None
-
-      if clock_in and not clock_out:
-        status = "Present(P) / Missing OUT"
-      elif clock_out and not clock_in:
-        status = "Present(P) / Missing IN"
-      elif calculated_work_time:
-        status = "Present(P)"
-      else:
-        status = ""
-
-      return {
-          "Employee ID": employee_id,
-          "Attendance Date": attendance_date,
-          "Date": attendance_date.strftime("%Y-%m-%d"),
-          "Clock In": clock_in,
-          "Clock Out": clock_out,
-          "Actual WT": actual_work_time,
-          "Report Total WT": total_work_time,
-          "Calculated WT": calculated_work_time,
-          "Total WT": total_work_time,
-          "Status": status,
-      }
-
-    def report_record_score(record, expected_single_punch=False):
-      """Prefer the report row most useful for single-punch recovery."""
-      score = 0
-      if expected_single_punch:
-        score += 100
-      if record.get("Actual WT"):
-        score += 50
-      if record.get("Report Total WT"):
-        score += 30
-      if record.get("Calculated WT"):
-        score += 20
-      if bool(record.get("Clock In")) != bool(record.get("Clock Out")):
-        score += 10
-      return score
-
-    def fetch_report_pages(session, endpoint, query, request_kwargs):
-      """Fetch one BioTime report query and follow DRF pagination."""
-      payloads = []
-      next_url = endpoint
-      next_params = dict(query)
-      seen_urls = set()
-
-      for _page in range(20):
-        request_key = (next_url, tuple(sorted((next_params or {}).items())))
-        if request_key in seen_urls:
-          break
-        seen_urls.add(request_key)
-
-        try:
-          response = session.get(
-              next_url,
-              params=next_params,
-              timeout=20,
-              **request_kwargs,
-          )
-        except requests.RequestException:
-          return [], None
-
-        if response.status_code != 200:
-          return [], response.status_code
-
-        try:
-          payload = response.json()
-        except ValueError:
-          return [], response.status_code
-
-        payloads.append(payload)
-
-        if not isinstance(payload, dict):
-          break
-        next_link = payload.get("next")
-        if not next_link:
-          break
-        next_link = str(next_link)
-        if next_link.startswith("http://") or next_link.startswith("https://"):
-          next_url = next_link
-        elif next_link.startswith("/"):
-          next_url = BASE_URL + next_link
-        else:
-          next_url = BASE_URL + "/" + next_link.lstrip("/")
-        next_params = None
-
-      return payloads, 200
-
-    @strlit.cache_data(ttl=300, show_spinner=False)
-    def fetch_biotime_calculated_range(
-        start_date,
-        end_date,
-        employee_internal_id_map=None,
-        expected_single_punch_keys=None,
-        expected_attendance_keys=None,
-    ):
-      """Fetch BioTime's own calculated daily values for the whole range.
-
-      The app does not require any BioTime report upload. It calls BioTime's
-      /att/api/*Report/ endpoints directly and merges the best server-calculated
-      value per employee/date. Single-punch records require Actual WT; normal
-      IN/OUT records require Total WT. Missing server values fall back to the
-      local minute-precision calculation already built from raw transactions.
-      """
-      start_text = start_date.strftime("%Y-%m-%d")
-      end_text = end_date.strftime("%Y-%m-%d")
-      employee_internal_id_map = employee_internal_id_map or {}
-      expected_single_punch_keys = set(expected_single_punch_keys or ())
-      expected_attendance_keys = set(expected_attendance_keys or ())
-      token = get_auth_token()
-
-      # dailyActivityReport normally exposes both Actual WT and Total WT. The
-      # time-card reports are compatibility fallbacks and also preserve unusual
-      # BioTime server calculations that cannot be reconstructed from raw punches.
-      report_names = (
-          "monthlyWorkHoursReport",
-          "timeCardReport",
-          "totalTimeCardReportV2",
-          "dailyActivityReport",
-          "monthlyPunchReport",
-          "firstInLastOutReport",
-      )
-      query_variants = (
-          {
-              "start_date": start_text,
-              "end_date": end_text,
-              "page_size": 10000,
-          },
-          {
-              "start_time": f"{start_text} 00:00:00",
-              "end_time": f"{end_text} 23:59:59",
-              "page_size": 10000,
-          },
-          {
-              "from_date": start_text,
-              "to_date": end_text,
-              "page_size": 10000,
-          },
-      )
-
-      # Reports work with HTTP Basic auth on BioTime even when other API routes
-      # are license-gated. Token auth remains a compatibility fallback.
-      auth_attempts = [
-          {
-              "auth": (EMAIL, PASSWORD),
-              "headers": {"Accept": "application/json"},
-          }
-      ]
-      if token:
-        auth_attempts.append(
-            {
-                "headers": {
-                    "Authorization": f"Token {token}",
-                    "Accept": "application/json",
-                }
-            }
-        )
-
-      session = requests.Session()
-      best_records = {}
-      best_scores = {}
-
-      def required_value_present(key, record):
-        if key in expected_single_punch_keys:
-          return bool(str(record.get("Actual WT", "") or "").strip())
-        return bool(str(record.get("Report Total WT", "") or "").strip())
-
-      def score_record(key, record, report_index):
-        actual = str(record.get("Actual WT", "") or "").strip()
-        total = str(record.get("Report Total WT", "") or "").strip()
-        clock_in = str(record.get("Clock In", "") or "").strip()
-        clock_out = str(record.get("Clock Out", "") or "").strip()
-        is_single = key in expected_single_punch_keys
-
-        # The value required by our agreed rule dominates the score. Prefer the
-        # earlier/more specific report only when coverage is otherwise equal.
-        score = 0
-        if is_single:
-          score += 1000 if actual else 0
-          score += 100 if bool(clock_in) != bool(clock_out) else 0
-          score += 20 if total else 0
-        else:
-          score += 1000 if total else 0
-          score += 100 if clock_in and clock_out else 0
-          score += 20 if actual else 0
-        score += max(0, 20 - report_index)
-        return score
-
-      for report_index, report_name in enumerate(report_names):
-        endpoint = f"{BASE_URL}/att/api/{report_name}/"
-        endpoint_missing = False
-        report_had_rows = False
-
-        for query in query_variants:
-          if endpoint_missing or report_had_rows:
+    return str(value).replace("\n", " ").strip()
+
+
+def parse_account_details(account_text, service_id=""):
+    """Best-effort parsing of Ameen account description without assuming a fixed customer position."""
+    text = clean_text(account_text)
+    if not text:
+        return "", "", "", "", ""
+    parts = [p.strip() for p in re.split(r'[-–—]+', text) if p.strip()]
+    if service_id and parts and parts[0].upper() == service_id.upper():
+        parts = parts[1:]
+
+    phone = ""
+    phone_idx = None
+    for i, p in enumerate(parts):
+        digits = re.sub(r'\D', '', p)
+        if 8 <= len(digits) <= 15:
+            phone = digits
+            phone_idx = i
             break
 
-          for authorization in auth_attempts:
-            payloads, status_code = fetch_report_pages(
-                session, endpoint, query, authorization
-            )
-            if status_code == 404:
-              endpoint_missing = True
-              break
-            if not payloads:
-              continue
+    known_code_idx = None
+    for i, p in enumerate(parts):
+        if re.fullmatch(r'[A-Za-z]{2,}\d+[A-Za-z0-9]*', p) or re.fullmatch(r'[A-Za-z0-9]{5,}', p):
+            if re.search(r'[A-Za-z]', p) and re.search(r'\d', p):
+                known_code_idx = i
+                break
 
-            parsed_any = False
-            for payload in payloads:
-              for report_row in extract_report_rows(payload):
-                normalized_record = normalize_calculated_report_row(
-                    report_row,
-                    start_date,
-                    end_date,
-                    employee_internal_id_map,
-                )
-                if not normalized_record:
-                  continue
+    warranty = "ضمن كفالة" if any(k in text for k in ["كفالة", "ضمان", "مجاني"]) else "خارج الكفالة"
 
-                normalized_record["Report Name"] = report_name
-
-                actual_wt = str(
-                    normalized_record.get("Actual WT", "") or ""
-                ).strip()
-                total_wt = str(
-                    normalized_record.get("Report Total WT", "") or ""
-                ).strip()
-                if not actual_wt and not total_wt:
-                  continue
-
-                attendance_date = normalized_record["Attendance Date"]
-                employee_id = normalized_record["Employee ID"]
-                key = (attendance_date, employee_id)
-                score = score_record(key, normalized_record, report_index)
-                if score > best_scores.get(key, -1):
-                  best_scores[key] = score
-                  best_records[key] = normalized_record
-                parsed_any = True
-
-            if parsed_any:
-              report_had_rows = True
-              break
-
-        # Stop as soon as every known attendance day has the exact type of
-        # server-calculated value required by the business rule. This keeps the
-        # common path fast while still filling gaps from fallback reports.
-        if expected_attendance_keys and all(
-            key in best_records and required_value_present(key, best_records[key])
-            for key in expected_attendance_keys
-        ):
-          break
-
-      result = {}
-      for (attendance_date, employee_id), record in best_records.items():
-        result.setdefault(attendance_date, {})[employee_id] = record
-      return result
-
-    def fetch_paginated_api(session, path, params, headers, timeout=20):
-      """Fetch a normal BioTime list endpoint, following pagination."""
-      rows = []
-      next_url = f"{BASE_URL}{path}"
-      next_params = dict(params or {})
-      seen_urls = set()
-
-      for page_number in range(1, 50):
-        request_key = (next_url, tuple(sorted((next_params or {}).items())))
-        if request_key in seen_urls:
-          break
-        seen_urls.add(request_key)
-
-        try:
-          response = session.get(
-              next_url,
-              params=next_params,
-              headers=headers,
-              timeout=timeout,
-          )
-        except requests.RequestException:
-          break
-
-        if response.status_code != 200:
-          break
-        try:
-          payload = response.json()
-        except ValueError:
-          break
-
-        if isinstance(payload, list):
-          rows.extend(item for item in payload if isinstance(item, dict))
-          break
-        if not isinstance(payload, dict):
-          break
-
-        page_rows = payload.get("data")
-        if not isinstance(page_rows, list):
-          page_rows = payload.get("results")
-        if not isinstance(page_rows, list):
-          page_rows = []
-        rows.extend(item for item in page_rows if isinstance(item, dict))
-
-        next_link = payload.get("next")
-        if next_link:
-          next_link = str(next_link)
-          if next_link.startswith("http://") or next_link.startswith("https://"):
-            next_url = next_link
-          elif next_link.startswith("/"):
-            next_url = BASE_URL + next_link
-          else:
-            next_url = BASE_URL + "/" + next_link.lstrip("/")
-          next_params = None
-          continue
-
-        count = payload.get("count")
-        try:
-          count = int(count)
-        except (TypeError, ValueError):
-          count = len(rows)
-
-        if len(rows) >= count or not page_rows:
-          break
-
-        # Some BioTime builds omit `next`; fall back to explicit page numbers.
-        next_url = f"{BASE_URL}{path}"
-        next_params = dict(params or {})
-        next_params["page"] = page_number + 1
-
-      return rows
-
-    @strlit.cache_data(ttl=300, show_spinner=False)
-    def load_monthly_attendance_bulk(start_date, end_date, requested_dates=()):
-      """Load BioTime once for the Excel range, but build rows only for Excel dates.
-
-      `requested_dates` is the exact set of date headers physically present in the
-      uploaded attendance sheet. Data can be fetched in one range for speed, but the
-      app never creates attendance output for dates that are not in the Excel file.
-      """
-      requested_date_set = {
-          attendance_date
-          for attendance_date in requested_dates
-          if start_date <= attendance_date <= end_date
-      }
-      if not requested_date_set:
-        cursor = start_date
-        while cursor <= end_date:
-          requested_date_set.add(cursor)
-          cursor += timedelta(days=1)
-
-      token = get_auth_token()
-      if not token:
-        raise RuntimeError("تعذر المصادقة مع BioTime")
-
-      headers = {
-          "Authorization": f"Token {token}",
-          "Content-Type": "application/json",
-      }
-      session = requests.Session()
-
-      devices = []
-      for endpoint in ("/iclock/api/terminals/", "/iclock/api/devices/"):
-        devices = fetch_paginated_api(
-            session,
-            endpoint,
-            {"page_size": 1000},
-            headers,
-            timeout=15,
-        )
-        if devices:
-          break
-
-      terminal_map = {
-          str(device.get("sn", "")): (
-              device.get("alias")
-              or device.get("terminal_name")
-              or str(device.get("sn", ""))
-          )
-          for device in devices
-          if device.get("sn")
-      }
-
-      all_employees = fetch_paginated_api(
-          session,
-          "/personnel/api/employees/",
-          {"page_size": 1000},
-          headers,
-          timeout=20,
-      )
-
-      active_employees = {}
-      employee_internal_id_map = {}
-
-      for emp in all_employees:
-        raw_code = str(emp.get("emp_code", "")).strip()
-        cleaned_code = normalize_id(raw_code)
-
-        is_active = (
-            str(emp.get("is_active", True)).lower() in ("true", "1", "yes")
-        )
-        emp_status = str(emp.get("status", "0")).upper()
-        enable_att = (
-            str(emp.get("enable_attendance", True)).lower()
-            in ("true", "1", "yes")
-        )
-        if not is_active or emp_status in ("1", "2", "D") or not enable_att:
-          continue
-        if not cleaned_code or cleaned_code in EXCLUDED_MANAGEMENT_CODES:
-          continue
-
-        first_name = str(emp.get("first_name", "") or "").strip()
-        last_name = str(emp.get("last_name", "") or "").strip()
-        if first_name.lower() == "none":
-          first_name = ""
-        if last_name.lower() == "none":
-          last_name = ""
-        full_name = f"{first_name} {last_name}".strip()
-
-        dept_data = emp.get("department", {})
-        dept_name = (
-            dept_data.get("dept_name")
-            if isinstance(dept_data, dict)
-            else str(emp.get("department", "") or "")
-        )
-        if not dept_name or str(dept_name).lower() == "none":
-          dept_name = "غير محدد"
-
-        active_employees[cleaned_code] = {
-            "name": clean_txt(full_name or f"موظف {cleaned_code}"),
-            "dept": clean_txt(dept_name),
-        }
-
-        internal_id = normalize_id(emp.get("id"))
-        if internal_id:
-          employee_internal_id_map[internal_id] = cleaned_code
-
-      employee_catalog = {
-          employee_id: employee_data["name"]
-          for employee_id, employee_data in active_employees.items()
-      }
-
-      leave_records = fetch_paginated_api(
-          session,
-          "/att/api/leave/",
-          {"page_size": 5000},
-          headers,
-          timeout=15,
-      )
-      if not leave_records:
-        leave_records = fetch_paginated_api(
-            session,
-            "/iclock/api/leave/",
-            {"page_size": 5000},
-            headers,
-            timeout=15,
-        )
-
-      leave_by_date = {}
-      for leave in leave_records:
-        raw_code = (
-            leave.get("emp_code")
-            or leave.get("employee_code")
-            or leave.get("employee_emp_code")
-            or ""
-        )
-        cleaned_code = normalize_id(raw_code)
-        if not cleaned_code:
-          internal_employee = normalize_id(
-              leave.get("employee_id") or leave.get("employee") or leave.get("emp")
-          )
-          cleaned_code = employee_internal_id_map.get(internal_employee, "")
-        if cleaned_code not in active_employees:
-          continue
-
-        start_value = (
-            leave.get("start_time")
-            or leave.get("start_date")
-            or leave.get("start_datetime")
-        )
-        end_value = (
-            leave.get("end_time")
-            or leave.get("end_date")
-            or leave.get("end_datetime")
-        )
-        if not start_value or not end_value:
-          continue
-
-        try:
-          leave_start = datetime.strptime(str(start_value)[:10], "%Y-%m-%d").date()
-          leave_end = datetime.strptime(str(end_value)[:10], "%Y-%m-%d").date()
-        except ValueError:
-          continue
-
-        leave_name = "إجازة"
-        leave_type = leave.get("leave_type")
-        if isinstance(leave_type, dict):
-          leave_name = leave_type.get("leave_name") or leave_name
-        elif leave_type not in (None, ""):
-          leave_name = str(leave_type)
-        elif leave.get("leave_name"):
-          leave_name = str(leave.get("leave_name"))
-
-        cursor = max(start_date, leave_start)
-        last_date = min(end_date, leave_end)
-        while cursor <= last_date:
-          leave_by_date.setdefault(cursor, {})[cleaned_code] = clean_txt(leave_name)
-          cursor += timedelta(days=1)
-
-      raw_logs = fetch_paginated_api(
-          session,
-          "/iclock/api/transactions/",
-          {
-              "start_time": start_date.strftime("%Y-%m-%d") + " 00:00:00",
-              "end_time": (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
-              + " 05:00:00",
-              "page_size": 5000,
-          },
-          headers,
-          timeout=30,
-      )
-
-      punches_by_emp_date = {}
-      for log in raw_logs:
-        cleaned_code = normalize_id(log.get("emp_code"))
-        if not cleaned_code:
-          internal_emp = normalize_id(log.get("emp"))
-          cleaned_code = employee_internal_id_map.get(internal_emp, "")
-        if cleaned_code not in active_employees:
-          continue
-
-        punch_value = log.get("punch_time")
-        if not punch_value:
-          continue
-        try:
-          punch_time = datetime.strptime(
-              str(punch_value)[:19],
-              "%Y-%m-%d %H:%M:%S",
-          )
-        except ValueError:
-          continue
-
-        device_sn = str(log.get("terminal_sn", "") or "")
-        device_name = (
-            log.get("terminal_alias")
-            or log.get("terminal_name")
-            or terminal_map.get(device_sn, device_sn or "جهاز رئيسي")
-        )
-        punch_kind = classify_transaction_punch(log, punch_time)
-        punches_by_emp_date.setdefault(
-            (cleaned_code, punch_time.date()), []
-        ).append(
-            {
-                "time": punch_time,
-                "device": device_name,
-                "kind": punch_kind,
-            }
-        )
-
-      # Remove duplicate punches within 60 seconds once for the whole month.
-      # Keep the punch-state classification because it is essential for avoiding
-      # false pairings of two IN punches or two OUT punches.
-      for key, punches in list(punches_by_emp_date.items()):
-        punches = sorted(punches, key=lambda item: item["time"])
-        filtered = []
-        for punch in punches:
-          if (
-              not filtered
-              or abs(
-                  (punch["time"] - filtered[-1]["time"]).total_seconds()
-              ) > 60
-              or punch["kind"] != filtered[-1]["kind"]
-          ):
-            filtered.append(punch)
-        punches_by_emp_date[key] = filtered
-
-      all_attendance = {}
-      today = datetime.now(SYRIA_TZ).date()
-
-      for cursor in sorted(requested_date_set):
-        date_map = {}
-        leave_map = leave_by_date.get(cursor, {})
-
-        for code, emp_data in active_employees.items():
-          name = emp_data["name"]
-          dept = emp_data["dept"]
-
-          day_punches = [
-              punch
-              for punch in punches_by_emp_date.get((code, cursor), [])
-              if punch["time"].hour >= 5
-          ]
-          next_morning = [
-              punch
-              for punch in punches_by_emp_date.get(
-                  (code, cursor + timedelta(days=1)), []
-              )
-              if punch["time"].hour < 5
-          ]
-
-          if not day_punches and not next_morning:
-            if code in leave_map:
-              date_map[code] = {
-                  "Employee ID": code,
-                  "First Name": name,
-                  "Department": dept,
-                  "Date": cursor.strftime("%Y-%m-%d"),
-                  "Clock In": "",
-                  "Clock Out": "",
-                  "Actual WT": "",
-                  "Calculated WT": "",
-                  "Total WT": "",
-                  "Status": f"Leave - {leave_map[code]}",
-              }
+    item = ""
+    customer = ""
+    issue = ""
+    if known_code_idx is not None:
+        item_parts = parts[:known_code_idx]
+        if item_parts:
+            if len(item_parts) >= 2:
+                customer = item_parts[-1]
+                item = " - ".join(item_parts[:-1])
             else:
-              date_map[code] = {
-                  "Employee ID": code,
-                  "First Name": name,
-                  "Department": dept,
-                  "Date": cursor.strftime("%Y-%m-%d"),
-                  "Clock In": "",
-                  "Clock Out": "",
-                  "Actual WT": "",
-                  "Calculated WT": "",
-                  "Total WT": "",
-                  "Status": "Absence(A)",
-              }
-            continue
+                item = item_parts[0]
+        tail_start = known_code_idx + 1
+        tail = parts[tail_start:]
+        if phone_idx is not None and phone_idx >= tail_start:
+            if phone_idx + 1 < len(parts):
+                issue = " - ".join(parts[phone_idx + 1:])
+        elif tail:
+            issue = " - ".join(tail)
+    else:
+        pre = parts[:phone_idx] if phone_idx is not None else parts
+        if len(pre) >= 2:
+            item = pre[0]
+            customer = " - ".join(pre[1:])
+        elif len(pre) == 1:
+            item = pre[0]
+        if phone_idx is not None and phone_idx + 1 < len(parts):
+            issue = " - ".join(parts[phone_idx + 1:])
 
-          all_candidates = sorted(
-              day_punches + next_morning,
-              key=lambda punch: punch["time"],
-          )
-          punch_count_for_day = len(all_candidates)
-          odd_even_multi_punch = (
-              punch_count_for_day > 2 and punch_count_for_day % 2 == 0
-          )
-          odd_even_total_wt = (
-              calculate_odd_even_punch_total(
-                  [punch["time"] for punch in all_candidates]
-              )
-              if odd_even_multi_punch
-              else ""
-          )
+    issue = issue or text
+    return item or "غير محدد", customer or "غير محدد", phone, warranty, issue
 
-          explicit_in = [p for p in day_punches if p["kind"] == "in"]
-          explicit_out = [p for p in all_candidates if p["kind"] == "out"]
-          # BioTime's day-change rule associates punches before 05:00 with the
-          # previous work day. Treat those as OUT candidates even if a terminal
-          # labelled the punch ambiguously.
-          for next_punch in next_morning:
-            if next_punch not in explicit_out:
-              explicit_out.append(next_punch)
-          unknown_day = [p for p in day_punches if p["kind"] == "unknown"]
-          unknown_next = [p for p in next_morning if p["kind"] == "unknown"]
 
-          # When a transaction carries a real punch state, trust it. Unknown
-          # punches are used only to fill a side that BioTime did not label.
-          in_candidates = list(explicit_in)
-          out_candidates = list(explicit_out)
+def special_case_from_remarks(text):
+    t = normalize_doc_string(text)
+    if any(k in t for k in ["رفض الإصلاح", "رفض الاصلاح", "الزبون رفض", "رفض الصيانة", "رفض التصليح", "لم يوافق على الإصلاح", "لم يوافق على الاصلاح"]):
+        return "الزبون رفض الإصلاح"
+    if any(k in t for k in ["يعمل من المصدر", "يعمل على المصدر"]):
+        return "يعمل من المصدر"
+    if "مكلف" in t:
+        return "مكلف"
+    if any(k in t for k in ["كفالة", "ضمان"]) and not any(k in t for k in ["خارج الكفالة", "خارج كفالة", "خارج الضمان"]):
+        return "كفالة"
+    if any(k in t for k in ["غير قابل للإصلاح", "غير قابل للاصلاح", "غير قابل للصيانة", "لاتصلح", "لا تصلح", "لا يمكن إصلاح", "لا يمكن اصلاح"]):
+        return "غير قابل للإصلاح"
+    if "لايوجد عطل" in t or "لا يوجد عطل" in t:
+        return "لا يوجد عطل"
+    return ""
 
-          for punch in unknown_day:
-            if punch["time"].hour < SINGLE_PUNCH_OUT_HOUR:
-              if not explicit_in:
-                in_candidates.append(punch)
-            else:
-              if not explicit_out:
-                out_candidates.append(punch)
 
-          if unknown_next and not explicit_out:
-            out_candidates.extend(unknown_next)
+def is_no_charge_special_case(value):
+    return normalize_doc_string(value) in NO_CHARGE_SPECIAL_CASES
 
-          # Final fallback for devices that send no punch state at all: classify
-          # all morning punches as IN candidates and all afternoon/evening punches
-          # as OUT candidates. Never pair two morning-only punches together.
-          if not in_candidates and not out_candidates:
-            in_candidates = [
-                p for p in day_punches
-                if p["time"].hour < SINGLE_PUNCH_OUT_HOUR
-            ]
-            out_candidates = [
-                p for p in day_punches
-                if p["time"].hour >= SINGLE_PUNCH_OUT_HOUR
-            ] + list(next_morning)
 
-          if odd_even_multi_punch and odd_even_total_wt:
-            # User-adjusted BioTime punches follow sequential odd/even pairing:
-            # 1->2, 3->4, ... . Keep first/last only for display; the duty value
-            # is the SUM of every completed pair, not first-to-last.
-            clock_in_punch = all_candidates[0]
-            clock_out_punch = all_candidates[-1]
-          else:
-            clock_in_punch = (
-                min(in_candidates, key=lambda p: p["time"])
-                if in_candidates
-                else None
-            )
-            clock_out_punch = (
-                max(out_candidates, key=lambda p: p["time"])
-                if out_candidates
-                else None
-            )
+def is_zero_amount(value, tolerance=0.000001):
+    """True only for a numeric value that was explicitly parsed as zero."""
+    try:
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        return pd.notna(number) and abs(float(number)) <= tolerance
+    except Exception:
+        return False
 
-          clock_in_dt = clock_in_punch["time"] if clock_in_punch else None
-          clock_out_dt = clock_out_punch["time"] if clock_out_punch else None
 
-          # If both sides somehow resolve in reverse order on the same work date,
-          # keep the side that is credible instead of manufacturing a tiny shift.
-          if (
-              clock_in_dt is not None
-              and clock_out_dt is not None
-              and clock_out_dt <= clock_in_dt
-              and clock_out_dt.date() == clock_in_dt.date()
-          ):
-            if clock_in_dt.hour < SINGLE_PUNCH_OUT_HOUR <= clock_out_dt.hour:
-              pass
-            elif clock_in_dt.hour < SINGLE_PUNCH_OUT_HOUR:
-              clock_out_dt = None
-              clock_out_punch = None
-            else:
-              clock_in_dt = None
-              clock_in_punch = None
+def normalize_ameen_dataframe(raw_excel):
+    """Turn Ameen's A:L ledger into one row per service ticket while retaining document history."""
+    df = raw_excel.copy()
+    if df.empty:
+        return pd.DataFrame()
 
-          is_single_punch = bool(clock_in_dt) != bool(clock_out_dt)
-          if odd_even_multi_punch and odd_even_total_wt:
-            selected_work_time = odd_even_total_wt
-          else:
-            selected_work_time = calculate_monthly_working_hours(
-                cursor,
-                clock_in_dt,
-                clock_out_dt,
-            )
-          actual_wt = selected_work_time if is_single_punch else ""
-          total_wt = selected_work_time if not is_single_punch else ""
+    # Ameen export is fixed A:L. Headers are not unique ("مدين"/"دائن" repeat),
+    # therefore we deliberately map by position rather than by header text.
+    expected = ["account", "prev_balance", "debit", "credit", "uncolllected", "current_balance", "account_name", "date", "origin", "debit_line", "credit_line", "statement"]
+    if df.shape[1] >= 12:
+        df = df.iloc[:, :12].copy()
+        df.columns = expected
+    else:
+        return pd.DataFrame()
 
-          # A transaction exists, so this is attendance even if only one side is
-          # present. Actual WT is schedule-aware and never raw first-last duration.
-          is_late = bool(
-              clock_in_dt
-              and (
-                  clock_in_dt.hour > 9
-                  or (clock_in_dt.hour == 9 and clock_in_dt.minute > 15)
-              )
-          )
+    # Drop header rows repeated inside an export.
+    df = df[df["origin"].astype(str).str.strip().str.lower() != "أصل السند"].copy()
+    df["service_id"] = [extract_service_id(a, g) for a, g in zip(df["account"], df["account_name"])]
+    df = df[df["service_id"].str.strip() != ""].copy()
+    if df.empty:
+        return pd.DataFrame()
 
-          if clock_in_dt and not clock_out_dt:
-            status = "Late(LT) / Missing OUT" if is_late else "Present(P) / Missing OUT"
-          elif clock_out_dt and not clock_in_dt:
-            status = "Present(P) / Missing IN"
-          else:
-            status = "Late(LT)" if is_late else "Present(P)"
+    df["date_parsed"] = df["date"].apply(parse_excel_date)
+    for c in ["debit_line", "credit_line", "debit", "credit"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    df["origin_clean"] = df["origin"].apply(normalize_doc_string)
+    df["statement_clean"] = df["statement"].apply(clean_text)
+    df["source_account"] = df["account"].apply(clean_text)
+    df["source_account_g"] = df["account_name"].apply(clean_text)
 
-          date_map[code] = {
-              "Employee ID": code,
-              "First Name": name,
-              "Department": dept,
-              "Date": cursor.strftime("%Y-%m-%d"),
-              "Clock In": clock_in_dt.strftime("%H:%M") if clock_in_dt else "",
-              "Clock Out": clock_out_dt.strftime("%H:%M") if clock_out_dt else "",
-              "Actual WT": actual_wt,
-              "Calculated WT": selected_work_time,
-              "Total WT": total_wt,
-              "Punch Count": punch_count_for_day,
-              "Odd Even Paired": odd_even_multi_punch,
-              "Status": status,
-          }
+    records = []
+    for sid, grp in df.groupby("service_id", sort=False):
+        # Preserve source order, then use dates to identify the latest row.
+        grp = grp.copy()
+        grp["sort_date"] = pd.to_datetime(grp["date_parsed"], errors="coerce")
+        grp["origin_rank"] = grp["origin_clean"].apply(get_status_rank)
+        grp = grp.sort_values(["sort_date", "origin_rank"]).reset_index(drop=True)
 
-        all_attendance[cursor] = date_map
+        header_text = next((x for x in grp["source_account_g"] if x), "") or next((x for x in grp["source_account"] if x), "")
+        item, customer, phone, warranty, issue = parse_account_details(header_text, sid)
+        all_statements = [x for x in grp["statement_clean"].tolist() if x and x not in ("13", "nan")]
+        special_cases = [special_case_from_remarks(x) for x in all_statements]
+        special_case = next((x for x in special_cases if x), "")
+        has_entry = grp["origin_clean"].str.contains("اد خ ص", na=False).any()
+        has_sale = grp["origin_clean"].str.contains("مبيع خ ص", na=False).any()
+        has_collect = grp["origin_clean"].str.contains("قبض", na=False).any()
+        has_partner_claim = grp["origin_clean"].str.contains("خ صيانة", na=False).any()
+        is_partner = sid.upper().startswith("V")
 
-      return (
-          all_attendance,
-          employee_catalog,
-          employee_internal_id_map,
-          active_employees,
-      )
+        sale_mask = grp["origin_clean"].str.contains("مبيع خ ص", na=False)
+        cost_debit = float(grp.loc[sale_mask, "debit_line"].sum())
+        payment_credit = float(grp.loc[grp["origin_clean"].str.contains("قبض", na=False), "credit_line"].sum())
+        partner_claim_amount = float(grp.loc[grp["origin_clean"].str.contains("خ صيانة", na=False), "credit_line"].sum())
 
-    def detect_month_sheet(workbook):
-      preferred = [
-          sheet_name
-          for sheet_name in workbook.sheetnames
-          if any(
-              key in sheet_name
-              for key in [
-                  "مجموع ساعات الدوام",
-                  "دوام",
-                  "ساعات",
-                  "حضور",
-                  "August",
-                  "اغسطس",
-                  "أغسطس",
-              ]
-          )
-      ]
-      return workbook[
-          preferred[0] if preferred else workbook.sheetnames[0]
-      ]
-
-    def detect_date_columns(ws):
-      """The attendance template has its dates in row 1."""
-      date_columns = {}
-
-      for column in range(1, ws.max_column + 1):
-        value = ws.cell(row=1, column=column).value
-        parsed = None
-
-        if isinstance(value, datetime):
-          parsed = value.date()
-        elif hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-          parsed = value
-        elif isinstance(value, str):
-          raw = value.strip()
-          for fmt in (
-              "%Y-%m-%d",
-              "%d/%m/%Y",
-              "%d-%m-%Y",
-              "%d/%m/%y",
-              "%d-%m-%y",
-          ):
-            try:
-              parsed = datetime.strptime(raw, fmt).date()
-              break
-            except ValueError:
-              continue
-
-        if parsed:
-          date_columns[column] = parsed
-
-      return date_columns
-
-    def detect_employee_total_row(ws):
-      """Return the summary/totals row that ends the employee roster.
-
-      The Golden Palace template normally labels this row `الإجمالي الكلي`. If the
-      label changes, use an Excel table totals row as a safe fallback.
-      """
-      for row_number in range(2, ws.max_row + 1):
-        label = clean_txt(ws.cell(row=row_number, column=3).value)
-        if label and ("الإجمالي" in label or "المجموع" in label):
-          return row_number
-
-      for table_name in ws.tables:
-        try:
-          table = ws.tables[table_name]
-          if int(table.totalsRowCount or 0) > 0:
-            match = re.match(r"^[A-Z]+(\d+):[A-Z]+(\d+)$", str(table.ref))
-            if match:
-              return int(match.group(2))
-        except Exception:
-          continue
-
-      return ws.max_row + 1
-
-    def find_available_employee_rows(ws, total_row):
-      """Find reserved blank staff rows before totals without overwriting anyone.
-
-      A row is available only when BOTH BioTime ID (column B) and employee name
-      (column C) are empty. Existing named rows are never reused, even when B is blank.
-      """
-      rows = []
-      for row_number in range(2, total_row):
-        biotime_id = normalize_id(ws.cell(row=row_number, column=2).value)
-        employee_name = clean_txt(ws.cell(row=row_number, column=3).value)
-        if not biotime_id and not employee_name:
-          rows.append(row_number)
-      return rows
-
-    def excel_employee_id_value(employee_id):
-      """Write numeric BioTime IDs as numbers while preserving non-numeric IDs."""
-      normalized = normalize_id(employee_id)
-      return int(normalized) if normalized.isdigit() else normalized
-
-    def time_to_excel_value(value):
-      """Convert HH:MM to a real Excel time fraction."""
-      if value is None or str(value).strip() == "":
-        return None
-
-      raw = str(value).strip()
-      parts = raw.split(":")
-      if len(parts) < 2:
-        return None
-
-      try:
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        seconds = int(parts[2]) if len(parts) > 2 else 0
-        return (hours * 3600 + minutes * 60 + seconds) / 86400
-      except (TypeError, ValueError):
-        return None
-
-    def excel_col_letter(column_number):
-      return get_column_letter(column_number)
-
-    def find_existing_duration_style_id(ws, date_columns):
-      """Reuse an existing raw OOXML [h]:mm style id from the template."""
-      # Never rebuild styles.xml. openpyxl may expose duplicate/generated style ids,
-      # so resolve the cell style back to the FIRST style already stored in the
-      # uploaded workbook. That index is the safe worksheet s= style id.
-      workbook_styles = list(getattr(ws.parent, "_cell_styles", []))
-      for row_number in range(2, ws.max_row + 1):
-        for column_number in date_columns:
-          cell = ws.cell(row=row_number, column=column_number)
-          if str(cell.number_format or "").strip().lower() != "[h]:mm":
-            continue
-          for style_index, existing_style in enumerate(workbook_styles):
-            if existing_style == cell._style:
-              return int(style_index)
-      return None
-
-    def find_existing_cell_style_id(ws, row_number, column_number):
-      """Resolve a cell's style to the original raw worksheet style index."""
-      cell = ws.cell(row=row_number, column=column_number)
-      workbook_styles = list(getattr(ws.parent, "_cell_styles", []))
-      for style_index, existing_style in enumerate(workbook_styles):
-        if existing_style == cell._style:
-          return int(style_index)
-      return None
-
-    def _xml_cell_fragment(coordinate, value, attrs="", tag_prefix="", style_id=None):
-      """Build one worksheet cell while preserving the sheet namespace prefix."""
-      attrs = attrs or f' r="{coordinate}"'
-      if not re.search(r'\br="[^"]+"', attrs):
-        attrs = f' r="{coordinate}"' + attrs
-      attrs = re.sub(r'\s+t="[^"]*"', '', attrs)
-      if style_id is not None:
-        attrs = re.sub(r'\s+s="\d+"', '', attrs)
-        attrs += f' s="{int(style_id)}"'
-
-      cell_tag = f"{tag_prefix}c"
-      value_tag = f"{tag_prefix}v"
-      is_tag = f"{tag_prefix}is"
-      text_tag = f"{tag_prefix}t"
-
-      if value is None or value == "":
-        return f"<{cell_tag}{attrs}/>"
-      if isinstance(value, str):
-        safe_text = (
-            value.replace("&", "&amp;").replace("<", "&lt;")
-                 .replace(">", "&gt;").replace('"', "&quot;")
+        # New temporary business rule (2026-09):
+        # For customer S/D cases, a real Ameen sales invoice (مبيع خ ص) whose
+        # total amount is exactly zero is terminal. No separate collection
+        # confirmation is required. V partner cases still follow partner-claim rules.
+        zero_value_customer_sale = (
+            not is_partner
+            and has_sale
+            and is_zero_amount(cost_debit)
         )
-        return (
-            f'<{cell_tag}{attrs} t="inlineStr"><{is_tag}><{text_tag}>'
-            f'{safe_text}</{text_tag}></{is_tag}></{cell_tag}>'
-        )
-      return f"<{cell_tag}{attrs}><{value_tag}>{value}</{value_tag}></{cell_tag}>"
 
-    def patch_cell_value_xml(xml_text, row_number, column_number, value, style_id=None):
-      """Overwrite/create one worksheet cell without rebuilding the workbook package."""
-      coordinate = f"{get_column_letter(column_number)}{row_number}"
-      cell_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?c'
-      pattern = re.compile(
-          rf'<(?P<tag>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
-          rf'(?P<attrs>[^>]*)/>'
-          rf'|<(?P<tag2>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
-          rf'(?P<attrs2>[^>]*)>.*?</(?P=tag2)>',
-          re.DOTALL,
-      )
-      match = pattern.search(xml_text)
-      if match:
-        tag_name = match.group("tag") or match.group("tag2") or "c"
-        tag_prefix = tag_name[:-1]
-        attrs = match.group("attrs") if match.group("attrs") is not None else match.group("attrs2")
-        replacement = _xml_cell_fragment(
-            coordinate, value, attrs=attrs, tag_prefix=tag_prefix, style_id=style_id
-        )
-        return xml_text[:match.start()] + replacement + xml_text[match.end():]
+        auto_close_reason = ""
+        if has_collect:
+            # Business rule: a قبض entry means the customer physically collected the tool.
+            auto_close_reason = "قبض في كشف الأمين - تم الاستلام"
+        elif zero_value_customer_sale:
+            auto_close_reason = "فاتورة مبيع خ ص بقيمة صفر - إغلاق تلقائي"
+        elif is_partner and has_partner_claim:
+            auto_close_reason = "إغلاق شريك - خ صيانة"
+        elif is_partner and is_no_charge_special_case(special_case):
+            auto_close_reason = f"إغلاق شريك - حالة خاصة: {special_case}"
 
-      # Some templates omit physically empty cells from the worksheet XML. Create
-      # the cell inside its existing row, preserving the row's namespace prefix and
-      # inserting it before the next higher column when possible.
-      row_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?row'
-      row_pattern = re.compile(
-          rf'<(?P<rowtag>{row_tag_pattern})\b(?=[^>]*\br="{row_number}")'
-          rf'(?P<rowattrs>[^>]*)>(?P<body>.*?)</(?P=rowtag)>',
-          re.DOTALL,
-      )
-      row_match = row_pattern.search(xml_text)
-      if not row_match:
-        raise RuntimeError(f"Excel row {row_number} was not found in worksheet XML")
+        case_status = CASE_STATUS_CLOSED if auto_close_reason else CASE_STATUS_OPEN
 
-      row_tag = row_match.group("rowtag")
-      tag_prefix = row_tag[:-3]
-      body = row_match.group("body")
-      new_cell = _xml_cell_fragment(
-          coordinate, value, tag_prefix=tag_prefix, style_id=style_id
-      )
-
-      target_column = column_number
-      insert_at = len(body)
-      existing_cell_pattern = re.compile(
-          rf'<(?:[A-Za-z_][\w.\-]*:)?c\b[^>]*\br="([A-Z]+){row_number}"',
-          re.DOTALL,
-      )
-      for existing_match in existing_cell_pattern.finditer(body):
-        letters = existing_match.group(1)
-        existing_column = 0
-        for letter in letters:
-          existing_column = existing_column * 26 + (ord(letter) - 64)
-        if existing_column > target_column:
-          insert_at = existing_match.start()
-          break
-
-      new_body = body[:insert_at] + new_cell + body[insert_at:]
-      replacement_row = (
-          f'<{row_tag}{row_match.group("rowattrs")}>{new_body}</{row_tag}>'
-      )
-      return (
-          xml_text[:row_match.start()] + replacement_row + xml_text[row_match.end():]
-      )
-
-    def patch_cell_formula_xml(xml_text, row_number, column_number, formula):
-      """Replace a formula and remove its stale cached result, with namespace support."""
-      coordinate = f"{get_column_letter(column_number)}{row_number}"
-      cell_tag_pattern = r'(?:[A-Za-z_][\w.\-]*:)?c'
-      pattern = re.compile(
-          rf'<(?P<tag>{cell_tag_pattern})\b(?=[^>]*\br="{re.escape(coordinate)}")'
-          rf'(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>',
-          re.DOTALL,
-      )
-      match = pattern.search(xml_text)
-      if not match:
-        raise RuntimeError(f"Excel formula cell {coordinate} was not found")
-      tag_name = match.group("tag")
-      tag_prefix = tag_name[:-1]
-      attrs = match.group("attrs")
-      body = match.group("body")
-      formula_text = str(formula or "")
-      if formula_text.startswith("="):
-        formula_text = formula_text[1:]
-      safe_formula = formula_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-      escaped_prefix = re.escape(tag_prefix)
-      formula_pattern = rf'<{escaped_prefix}f(?:\s[^>]*)?>.*?</{escaped_prefix}f>'
-      value_pattern = rf'<{escaped_prefix}v>.*?</{escaped_prefix}v>'
-      if re.search(formula_pattern, body, re.DOTALL):
-        body = re.sub(
-            formula_pattern,
-            f'<{tag_prefix}f>{safe_formula}</{tag_prefix}f>',
-            body, count=1, flags=re.DOTALL,
-        )
-      else:
-        body = f'<{tag_prefix}f>{safe_formula}</{tag_prefix}f>' + body
-      body = re.sub(value_pattern, '', body, flags=re.DOTALL)
-      replacement = f"<{tag_name}{attrs}>{body}</{tag_name}>"
-      return xml_text[:match.start()] + replacement + xml_text[match.end():]
-
-    def build_total_formula_updates(ws, employee_matches, date_columns, today_date):
-      """Keep today's attendance visible, but exclude today/future dates from totals."""
-      prior_dates = [
-          (column, attendance_date)
-          for column, attendance_date in date_columns.items()
-          if attendance_date < today_date
-      ]
-      if not prior_dates:
-        return []
-      cutoff_column, cutoff_date = max(prior_dates, key=lambda item: item[1])
-      cutoff_raw = ws.cell(row=1, column=cutoff_column).value
-      if isinstance(cutoff_raw, datetime) or hasattr(cutoff_raw, "strftime"):
-        cutoff_header = cutoff_raw.strftime("%d/%m/%Y")
-      else:
-        cutoff_header = str(cutoff_raw).strip() or cutoff_date.strftime("%d/%m/%Y")
-
-      end_pattern = re.compile(r':\[([0-3]?\d/[01]?\d/\d{4})\]')
-      updates = []
-      for match in employee_matches:
-        row_number = match["row"]
-        for column in range(1, ws.max_column + 1):
-          raw_formula = ws.cell(row=row_number, column=column).value
-          if not (isinstance(raw_formula, str) and raw_formula.startswith("=")):
-            continue
-          changed = False
-          def replace_end_date(regex_match):
-            nonlocal changed
-            raw_date = regex_match.group(1)
-            try:
-              parsed_date = datetime.strptime(raw_date, "%d/%m/%Y").date()
-            except ValueError:
-              return regex_match.group(0)
-            if parsed_date >= today_date:
-              changed = True
-              return f":[{cutoff_header}]"
-            return regex_match.group(0)
-          new_formula = end_pattern.sub(replace_end_date, raw_formula)
-          if changed and new_formula != raw_formula:
-            updates.append({"row": row_number, "column": column, "formula": new_formula})
-      return updates
-
-    def find_sheet_xml_path(zip_file, sheet_name):
-      """Resolve a workbook sheet name to its worksheet XML path."""
-      main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-      rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-      pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
-
-      workbook_xml = zip_file.read("xl/workbook.xml").decode("utf-8")
-      rels_xml = zip_file.read("xl/_rels/workbook.xml.rels").decode("utf-8")
-
-      workbook_root = ET.fromstring(workbook_xml)
-      rel_root = ET.fromstring(rels_xml)
-
-      rel_targets = {}
-      for rel in rel_root.findall(f"{{{pkg_rel_ns}}}Relationship"):
-        rel_targets[rel.get("Id")] = rel.get("Target")
-
-      for sheet in workbook_root.findall(f"{{{main_ns}}}sheets/{{{main_ns}}}sheet"):
-        if sheet.get("name") == sheet_name:
-          rel_id = sheet.get(f"{{{rel_ns}}}id")
-          target = rel_targets.get(rel_id)
-          if not target:
-            raise RuntimeError(f"Could not resolve worksheet relationship for {sheet_name}")
-          target = target.lstrip("/")
-          if not target.startswith("xl/"):
-            target = "xl/" + target
-          return target
-
-      raise RuntimeError(f"Worksheet not found: {sheet_name}")
-
-    def export_template_preserving_package(
-        original_bytes, sheet_name, cell_updates, formula_updates=None, duration_style_id=None
-    ):
-      """Patch values/formulas into the original OOXML package without rebuilding it.
-
-      IMPORTANT: xl/styles.xml is copied byte-for-byte. Numeric attendance cells may
-      reuse an EXISTING [h]:mm style id from the uploaded template, but no style
-      definitions or workbook metadata are regenerated.
-      """
-      input_buffer = io.BytesIO(original_bytes)
-      output_buffer = io.BytesIO()
-      formula_updates = formula_updates or []
-      with zipfile.ZipFile(input_buffer, "r") as zin:
-        sheet_xml_path = find_sheet_xml_path(zin, sheet_name)
-        sheet_xml_text = zin.read(sheet_xml_path).decode("utf-8")
-
-        for update in cell_updates:
-          value = update["value"]
-          explicit_style_id = update.get("style_id")
-          # Approved BioTime ID/name cells may provide their existing row style.
-          # Otherwise only real numeric attendance durations use [h]:mm.
-          use_cell_style = explicit_style_id
-          if use_cell_style is None:
-            use_cell_style = (
-                duration_style_id
-                if duration_style_id is not None
-                and value not in (None, "")
-                and not isinstance(value, str)
-                else None
-            )
-          sheet_xml_text = patch_cell_value_xml(
-              sheet_xml_text,
-              update["row"], update["column"], value,
-              style_id=use_cell_style,
-          )
-
-        for formula_update in formula_updates:
-          sheet_xml_text = patch_cell_formula_xml(
-              sheet_xml_text,
-              formula_update["row"], formula_update["column"], formula_update["formula"],
-          )
-        patched_sheet_xml = sheet_xml_text.encode("utf-8")
-
-        workbook_xml_text = zin.read("xl/workbook.xml").decode("utf-8")
-        calc_pattern = re.compile(r"<calcPr\b([^>]*)/>")
-        calc_match = calc_pattern.search(workbook_xml_text)
-        if calc_match:
-          calc_attrs = re.sub(
-              r'\s+(?:calcMode|calcOnSave|fullCalcOnLoad|forceFullCalc)="[^"]*"',
-              "", calc_match.group(1),
-          )
-          calc_replacement = (
-              f'<calcPr{calc_attrs} calcMode="auto" calcOnSave="1" '
-              'fullCalcOnLoad="1" forceFullCalc="1"/>'
-          )
-          workbook_xml_text = (
-              workbook_xml_text[:calc_match.start()] + calc_replacement
-              + workbook_xml_text[calc_match.end():]
-          )
+        if case_status == CASE_STATUS_CLOSED:
+            collection_status = COLLECTION_CLOSED
+        elif special_case:
+            collection_status = COLLECTION_SPECIAL_AWAITING
+        elif has_sale:
+            collection_status = COLLECTION_AWAITING
         else:
-          workbook_xml_text = workbook_xml_text.replace(
-              "</workbook>",
-              '<calcPr calcMode="auto" calcOnSave="1" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>',
-          )
-        patched_workbook_xml = workbook_xml_text.encode("utf-8")
+            collection_status = COLLECTION_NOT_READY
 
-        with zipfile.ZipFile(output_buffer, "w") as zout:
-          for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == sheet_xml_path:
-              data = patched_sheet_xml
-            elif item.filename == "xl/workbook.xml":
-              data = patched_workbook_xml
-            # Everything else, especially xl/styles.xml, is copied exactly.
-            zout.writestr(item, data)
-      output_buffer.seek(0)
-      return output_buffer.getvalue()
+        if not is_partner:
+            partner_claim_status = "غير منطبق"
+        elif has_partner_claim:
+            partner_claim_status = "تمت مطالبة الشريك / تم التحصيل"
+        elif is_no_charge_special_case(special_case):
+            partner_claim_status = "لا مطالبة - حالة خاصة"
+        elif has_sale or has_entry:
+            partner_claim_status = "بانتظار مطالبة الشريك"
+        else:
+            partner_claim_status = "غير محدد"
 
-    @strlit.cache_data(ttl=300, show_spinner=False)
-    def fetch_month_date(attendance_date):
-      date_str = attendance_date.strftime("%Y-%m-%d")
-      is_date_today = attendance_date == now_syria.date()
-      return load_attendance_data_from_api(
-          date_str,
-          attendance_date,
-          is_date_today,
-      )
+        if case_status == CASE_STATUS_CLOSED:
+            repair_stage = CASE_STATUS_CLOSED
+        elif special_case:
+            repair_stage = "جاهز للتسليم"
+        elif has_sale:
+            repair_stage = "جاهز للتسليم"
+        elif has_entry:
+            repair_stage = "قيد المعالجة"
+        else:
+            repair_stage = "قيد الانتظار"
 
-    if uploaded_template is not None:
-      monthly_loading_overlay = show_loading_overlay(
-          "جاري تحميل ومعالجة بيانات الدوام..."
-      )
-      export_loading_overlay = None
-      try:
-        # Keep the exact original XLSX/XLSM bytes. The final export will patch
-        # only the attendance cells into this original package.
-        original_template_bytes = uploaded_template.getvalue()
-        keep_vba = uploaded_template.name.lower().endswith(".xlsm")
+        latest = grp.iloc[-1]
+        date_logged = next((x for x in grp["date_parsed"].tolist() if x), datetime.now().strftime("%Y-%m-%d"))
 
-        template_wb = openpyxl.load_workbook(
-            io.BytesIO(original_template_bytes),
-            keep_vba=keep_vba,
-            data_only=False,
+        def latest_event_date(mask=None):
+            date_values = grp.loc[mask, "date_parsed"].tolist() if mask is not None else grp["date_parsed"].tolist()
+            valid_dates = [x for x in date_values if x]
+            return valid_dates[-1] if valid_dates else datetime.now().strftime("%Y-%m-%d")
+
+        closure_date = ""
+        if auto_close_reason:
+            if has_collect:
+                closure_date = latest_event_date(grp["origin_clean"].str.contains("قبض", na=False))
+            elif zero_value_customer_sale:
+                closure_date = latest_event_date(sale_mask)
+            elif is_partner and has_partner_claim:
+                closure_date = latest_event_date(grp["origin_clean"].str.contains("خ صيانة", na=False))
+            else:
+                closure_date = latest_event_date()
+        date_resolved = closure_date
+
+        # The source remarks are preserved verbatim; don't assign meanings to unconfirmed document types.
+        doc_history = " | ".join(f"{d} :: {o}" for d, o in zip(grp["date_parsed"], grp["origin_clean"]) if o)
+        remarks = " | ".join(dict.fromkeys(all_statements))
+        latest_origin = latest["origin_clean"]
+        status = map_document_to_status(latest_origin, cost_debit, collection_status, special_case, partner_claim_status, case_status)
+
+        records.append({
+            "service_id": sid, "tool_name": item, "customer_name": customer, "phone_number": phone,
+            "warranty_status": warranty, "document_origin": latest_origin, "reported_issue": issue,
+            "technician": "Ameen Import", "status": status, "cost_debit": cost_debit, "payment_credit": payment_credit,
+            "balance": max(cost_debit - payment_credit, 0.0), "spare_parts": "لا حاجة / متوفرة", "resolution_notes": "",
+            "remarks": remarks, "date_logged": date_logged, "date_resolved": date_resolved,
+            "accessories": "", "loaner_item": "", "priority": "عادي", "tool_photo_link": "",
+            "source_account": next((x for x in grp["source_account"] if x), ""),
+            "source_account_g": next((x for x in grp["source_account_g"] if x), ""),
+            "source_document_count": int(len(grp)), "document_history": doc_history,
+            "repair_stage": repair_stage, "collection_status": collection_status,
+            "special_case": special_case, "partner_claim_status": partner_claim_status,
+            "partner_claim_amount": partner_claim_amount,
+            "case_status": case_status,
+            "closed_at": closure_date,
+            "closed_by": "Ameen Import" if auto_close_reason else "",
+            "close_note": auto_close_reason,
+        })
+    return pd.DataFrame(records)
+
+
+def apply_workflow_columns(df):
+    """Backfill and enforce workflow rules for existing Google Sheet rows."""
+    if df.empty:
+        return df
+    for c, default in {
+        "source_account": "", "source_account_g": "", "source_document_count": 1, "document_history": "",
+        "repair_stage": "", "collection_status": "", "special_case": "", "partner_claim_status": "غير منطبق", "partner_claim_amount": 0.0,
+        "case_status": CASE_STATUS_OPEN, "closed_at": "", "closed_by": "", "close_note": ""
+    }.items():
+        if c not in df.columns:
+            df[c] = default
+    df["source_document_count"] = pd.to_numeric(df["source_document_count"], errors="coerce").fillna(1).astype(int)
+    df["partner_claim_amount"] = pd.to_numeric(df["partner_claim_amount"], errors="coerce").fillna(0.0)
+
+    for idx, r in df.iterrows():
+        doc = normalize_doc_string(r.get("document_origin", ""))
+        history = normalize_doc_string(r.get("document_history", ""))
+        sid = str(r.get("service_id", ""))
+        is_partner = sid.upper().startswith("V")
+        case_status = normalize_doc_string(r.get("case_status", "")) or CASE_STATUS_OPEN
+
+        legacy_closed = (
+            normalize_doc_string(r.get("collection_status", "")) == "تم التحصيل والتسليم"
+            or "تم التحصيل والتسليم" in normalize_doc_string(r.get("status", ""))
         )
-        ws_target = detect_month_sheet(template_wb)
+        if legacy_closed:
+            case_status = CASE_STATUS_CLOSED
+            if not r.get("closed_at"):
+                df.at[idx, "closed_at"] = str(r.get("date_resolved", "") or r.get("date_logged", ""))
+            if not r.get("closed_by"):
+                df.at[idx, "closed_by"] = "ترحيل النظام"
 
-        date_columns = detect_date_columns(ws_target)
-        if not date_columns:
-          strlit.error("لم يتم العثور على أعمدة التواريخ في الصف الأول من ملف الدوام.")
-          raise RuntimeError("No monthly date columns detected")
+        special = normalize_doc_string(r.get("special_case", "")) or special_case_from_remarks(r.get("remarks", ""))
+        df.at[idx, "special_case"] = special
 
-        # Use the template's own existing [h]:mm attendance style.
-        # This fixes General-formatted blank cells without modifying styles.xml.
-        duration_style_id = find_existing_duration_style_id(ws_target, date_columns)
+        has_collect_signal = "قبض" in doc or "قبض" in history
+        has_sale_signal = "مبيع خ ص" in doc or "مبيع خ ص" in history
+        has_entry_signal = "اد خ ص" in doc or "اد خ ص" in history
+        has_partner_claim_signal = is_partner and ("خ صيانة" in doc or "خ صيانة" in history)
 
-        # IMPORTANT:
-        # Excel Column B is the BioTime ID.
-        # Excel Column A is NOT used for employee matching.
-        # Employee names are NOT used for automatic matching.
-        # New BioTime staff are added only after explicit user approval.
-        employee_total_row = detect_employee_total_row(ws_target)
-        available_new_staff_rows = find_available_employee_rows(
-            ws_target, employee_total_row
+        # Guard the zero-invoice rule so a manually-created Ready row with a blank/zero
+        # cost does not get closed by mistake. It applies only to Ameen-imported rows.
+        is_ameen_import = normalize_doc_string(r.get("technician", "")) == "Ameen Import"
+        zero_value_customer_sale = (
+            not is_partner
+            and is_ameen_import
+            and has_sale_signal
+            and is_zero_amount(r.get("cost_debit", None))
         )
 
-        excel_employees = []
-        for row in range(2, employee_total_row):
-          biotime_id = normalize_id(ws_target.cell(row=row, column=2).value)
-          employee_name = clean_txt(ws_target.cell(row=row, column=3).value)
+        auto_close_reason = ""
+        if case_status != CASE_STATUS_CLOSED:
+            if has_collect_signal:
+                auto_close_reason = "قبض في كشف الأمين - تم الاستلام"
+            elif zero_value_customer_sale:
+                auto_close_reason = "فاتورة مبيع خ ص بقيمة صفر - إغلاق تلقائي"
+            elif has_partner_claim_signal:
+                auto_close_reason = "إغلاق شريك - خ صيانة"
+            elif is_partner and is_no_charge_special_case(special):
+                auto_close_reason = f"إغلاق شريك - حالة خاصة: {special}"
 
-          if not biotime_id and not employee_name:
+        if auto_close_reason:
+            case_status = CASE_STATUS_CLOSED
+            if not normalize_doc_string(r.get("closed_at", "")):
+                df.at[idx, "closed_at"] = str(r.get("date_resolved", "") or r.get("date_logged", "") or datetime.now().strftime("%Y-%m-%d"))
+            if not normalize_doc_string(r.get("closed_by", "")):
+                df.at[idx, "closed_by"] = "Ameen Import"
+            if not normalize_doc_string(r.get("close_note", "")):
+                df.at[idx, "close_note"] = auto_close_reason
+            if not normalize_doc_string(r.get("date_resolved", "")):
+                df.at[idx, "date_resolved"] = str(df.at[idx, "closed_at"]).split(" ")[0]
+
+        df.at[idx, "case_status"] = case_status
+
+        if case_status == CASE_STATUS_CLOSED:
+            df.at[idx, "collection_status"] = COLLECTION_CLOSED
+            df.at[idx, "repair_stage"] = CASE_STATUS_CLOSED
+        else:
+            if special:
+                df.at[idx, "collection_status"] = COLLECTION_SPECIAL_AWAITING
+                df.at[idx, "repair_stage"] = "جاهز للتسليم"
+            elif has_sale_signal:
+                df.at[idx, "collection_status"] = COLLECTION_AWAITING
+                df.at[idx, "repair_stage"] = "جاهز للتسليم"
+            elif has_entry_signal:
+                df.at[idx, "collection_status"] = COLLECTION_NOT_READY
+                df.at[idx, "repair_stage"] = "قيد المعالجة"
+            elif not normalize_doc_string(r.get("collection_status", "")):
+                df.at[idx, "collection_status"] = COLLECTION_NOT_READY
+                df.at[idx, "repair_stage"] = "قيد الانتظار"
+
+        if is_partner:
+            if has_partner_claim_signal:
+                df.at[idx, "partner_claim_status"] = "تمت مطالبة الشريك / تم التحصيل"
+            elif is_no_charge_special_case(special):
+                df.at[idx, "partner_claim_status"] = "لا مطالبة - حالة خاصة"
+            elif not normalize_doc_string(r.get("partner_claim_status", "")) or normalize_doc_string(r.get("partner_claim_status", "")) == "غير منطبق":
+                df.at[idx, "partner_claim_status"] = "بانتظار مطالبة الشريك"
+        else:
+            df.at[idx, "partner_claim_status"] = "غير منطبق"
+
+        df.at[idx, "status"] = map_document_to_status(
+            doc,
+            float(r.get("cost_debit", 0) or 0),
+            df.at[idx, "collection_status"],
+            df.at[idx, "special_case"],
+            df.at[idx, "partner_claim_status"],
+            case_status,
+        )
+    return df
+
+
+def preserve_manual_closures(imported_df, existing_df):
+    """Keep app-managed closure fields when a later Ameen statement is imported."""
+    if imported_df is None or imported_df.empty or existing_df is None or existing_df.empty:
+        return imported_df
+
+    result = imported_df.copy()
+    existing = existing_df.copy()
+    for col, default in {
+        "case_status": CASE_STATUS_OPEN, "closed_at": "", "closed_by": "", "close_note": ""
+    }.items():
+        if col not in existing.columns:
+            existing[col] = default
+        if col not in result.columns:
+            result[col] = default
+
+    closed = existing[existing["case_status"].astype(str).eq(CASE_STATUS_CLOSED)].copy()
+    if closed.empty:
+        return result
+    closed = closed.drop_duplicates("service_id", keep="last").set_index("service_id")
+
+    for idx, row in result.iterrows():
+        sid = str(row.get("service_id", ""))
+        if sid not in closed.index:
             continue
+        previous = closed.loc[sid]
+        for col in ("case_status", "closed_at", "closed_by", "close_note"):
+            result.at[idx, col] = previous.get(col, "")
+        result.at[idx, "collection_status"] = COLLECTION_CLOSED
+        result.at[idx, "repair_stage"] = CASE_STATUS_CLOSED
+        result.at[idx, "status"] = "مغلق - تم الاستلام (Closed)"
+        if previous.get("closed_at", ""):
+            result.at[idx, "date_resolved"] = str(previous.get("closed_at", "")).split(" ")[0]
+    return result
 
-          excel_employees.append(
-              {
-                  "row": row,
-                  "biotime_id": biotime_id,
-                  "name": employee_name,
-              }
-          )
 
-        if not excel_employees:
-          strlit.error(
-              "لم يتم العثور على موظفين في الملف. تأكد من أن BioTime ID موجود في العمود B."
-          )
-          raise RuntimeError("No employee rows detected")
+def deduplicate_ledger(df):
+    """Keep one row per service case while preserving the furthest known workflow stage."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
 
-        # FAST MONTHLY LOAD:
-        # Employees, devices, leave and transactions are fetched once for the
-        # entire Excel date range. BioTime calculated report values are requested
-        # once in bulk. Single-punch days use Actual WT; normal days use Total WT.
-        # If the report endpoint is unavailable, local values use the exact
-        # minute precision shown by BioTime Clock In / Clock Out.
-        sorted_dates = sorted(set(date_columns.values()))
-        dates_list = [
-            (column, attendance_date)
-            for column, attendance_date in date_columns.items()
-            if attendance_date <= now_syria.date()
-        ]
+    work = df.copy()
+    if "service_id" not in work.columns:
+        return work
 
-        if not dates_list:
-          strlit.error("لا توجد تواريخ حالية قابلة للمعالجة في ملف الدوام.")
-          raise RuntimeError("No current attendance dates to process")
+    work["service_id"] = work["service_id"].astype(str).replace({"nan": "", "None": ""})
+    work = work[work["service_id"].str.strip() != ""].copy()
+    if work.empty:
+        return work
 
-        range_start = min(attendance_date for _column, attendance_date in dates_list)
-        range_end = max(attendance_date for _column, attendance_date in dates_list)
-
-        progress = strlit.progress(
-            0,
-            text="المرحلة 1/4 — تحميل بيانات BioTime الشهرية...",
-        )
-
-        requested_dates_for_load = tuple(
-            sorted({attendance_date for _column, attendance_date in dates_list})
-        )
-        (
-            all_attendance,
-            employee_catalog,
-            employee_internal_id_map,
-            active_employee_details,
-        ) = load_monthly_attendance_bulk(
-            range_start,
-            range_end,
-            requested_dates=requested_dates_for_load,
-        )
-
-        # Find ACTIVE BioTime employees whose BioTime ID does not exist in Excel B.
-        # This is an ID comparison only. Names/departments are shown for review but
-        # are never used to auto-match an existing Excel employee.
-        excel_biotime_ids = {
-            employee["biotime_id"]
-            for employee in excel_employees
-            if employee["biotime_id"]
+    # A repeated service reference represents the same repair case.
+    # Prefer the highest workflow stage, then the newest known date.
+    if "document_origin" in work.columns:
+        work["_workflow_rank"] = work["document_origin"].apply(get_status_rank)
+    elif "repair_stage" in work.columns:
+        stage_rank = {
+            "قيد الانتظار": 0,
+            "قيد المعالجة": 1,
+            "جاهز للتسليم": 2,
+            "تم التحصيل والتسليم": 4,
         }
-        missing_active_ids = [
-            employee_id
-            for employee_id in active_employee_details
-            if employee_id not in excel_biotime_ids
-        ]
-        missing_active_ids.sort(
-            key=lambda value: (0, int(value)) if str(value).isdigit() else (1, str(value))
-        )
+        work["_workflow_rank"] = work["repair_stage"].map(stage_rank).fillna(0)
+    else:
+        work["_workflow_rank"] = 0
+    if "case_status" in work.columns:
+        work.loc[work["case_status"].astype(str).eq(CASE_STATUS_CLOSED), "_workflow_rank"] = 5
 
-        template_signature = hashlib.sha256(original_template_bytes).hexdigest()[:16]
-        candidate_signature = hashlib.sha256(
-            "|".join(missing_active_ids).encode("utf-8")
-        ).hexdigest()[:10]
-        approval_state_key = (
-            f"approved_missing_biotime_staff_{template_signature}_{candidate_signature}"
-        )
-        approved_new_staff_ids = strlit.session_state.get(approval_state_key)
+    date_series = pd.Series(pd.NaT, index=work.index, dtype="datetime64[ns]")
+    for col in ("date_resolved", "date_logged"):
+        if col in work.columns:
+            parsed = pd.to_datetime(work[col], dayfirst=True, errors="coerce")
+            date_series = date_series.fillna(parsed)
+    work["_workflow_date"] = date_series
 
-        if missing_active_ids and approved_new_staff_ids is None:
-          # Stop before Excel modification. The user must explicitly review and approve.
-          hide_loading_overlay(monthly_loading_overlay)
-          monthly_loading_overlay = None
-          progress.empty()
+    work = work.sort_values(
+        ["service_id", "_workflow_rank", "_workflow_date"],
+        ascending=[True, True, True],
+        kind="stable",
+        na_position="first",
+    )
+    work = work.groupby("service_id", as_index=False, sort=False).tail(1)
+    return work.drop(columns=["_workflow_rank", "_workflow_date"], errors="ignore").reset_index(drop=True)
 
-          strlit.markdown(
-              '<div class="gp-section-title">👤 موظفون موجودون في BioTime وغير موجودين في Excel</div>'
-              '<div class="gp-file-note">راجع القائمة واختر فقط من تريد إضافته إلى ملف Excel. '
-              'لن يتم إضافة أي موظف بدون موافقتك، والمطابقة هنا حسب BioTime ID فقط.</div>',
-              unsafe_allow_html=True,
-          )
 
-          review_rows = []
-          for employee_id in missing_active_ids:
-            employee_info = active_employee_details.get(employee_id, {})
-            review_rows.append(
-                {
-                    "BioTime ID": employee_id,
-                    "الاسم": employee_info.get("name", ""),
-                    "القسم": employee_info.get("dept", "غير محدد"),
+def get_doctype(doctype_name):
+    try:
+        df = conn.read(worksheet=doctype_name, ttl=0)
+        df = df.dropna(how='all')
+
+        for col in SCHEMA[doctype_name]:
+            if col not in df.columns: df[col] = ""
+
+        if doctype_name == "Ledger":
+            df['service_id'] = df['service_id'].astype(str).replace({'nan': '', 'None': ''})
+            df = df[df['service_id'].str.strip() != ""]
+
+            for col in SCHEMA["Ledger"]:
+                if col not in ['cost_debit', 'payment_credit', 'balance']:
+                    df[col] = df[col].fillna("").astype(str).replace({'nan': '', 'None': ''})
+
+            for col in ['cost_debit', 'payment_credit', 'balance']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+            df.loc[df['spare_parts'] == "", 'spare_parts'] = "لا حاجة / متوفرة"
+            df = apply_workflow_columns(df)
+            return deduplicate_ledger(df)
+
+        return df
+    except Exception as e:
+        error_msg = str(e).strip()
+        if error_msg != doctype_name and "not found" not in error_msg.lower() and "HTTPError" in error_msg:
+            st.error(f"⚠️ خطأ في الاتصال (Connection Error): {error_msg}")
+        return pd.DataFrame(columns=SCHEMA[doctype_name])
+
+
+def save_doctype(doctype_name, df):
+    if doctype_name == "Ledger":
+        df = apply_workflow_columns(df)
+        df = deduplicate_ledger(df)
+        df = df[df['service_id'].astype(str).str.strip() != ""]
+    conn.update(worksheet=doctype_name, data=df)
+
+
+def convert_df_to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='Export')
+    return output.getvalue()
+
+
+def upload_to_cloud(file_buffer):
+    if not IMGBB_API_KEY:
+        st.warning("⚠️ رفع الصور متوقف حتى يتم ضبط IMGBB_API_KEY في إعدادات التطبيق الآمنة.")
+        return ""
+    try:
+        b64_img = base64.b64encode(file_buffer.getvalue()).decode("utf-8")
+        res = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}", data={"image": b64_img})
+        if res.status_code == 200: return res.json()["data"]["url"]
+    except: return ""
+    return ""
+
+
+def generate_next_id(branch_code, df):
+    if df.empty: return f"{branch_code}1"
+    branch_records = df[df['service_id'].astype(str).str.startswith(branch_code, na=False)]
+    if branch_records.empty: return f"{branch_code}1"
+
+    max_num = 0
+    for sid in branch_records['service_id']:
+        num_part = re.sub(r'\D', '', str(sid))
+        if num_part: max_num = max(max_num, int(num_part))
+    return f"{branch_code}{max_num + 1}"
+
+# ==========================================
+# AUTHENTICATION & WORKSPACE ROUTING
+# ==========================================
+if 'logged_in_user' not in st.session_state: st.session_state['logged_in_user'] = None
+if 'current_module' not in st.session_state: st.session_state['current_module'] = 'Workspace'
+
+if is_tv_mode:
+    st.session_state['logged_in_user'] = "TV_Guest"
+    st.session_state['current_module'] = 'TV_Display'
+
+USERS = {}
+admin_password = get_runtime_secret("APP_ADMIN_PASSWORD")
+tech_password = get_runtime_secret("APP_TECH_PASSWORD")
+if admin_password:
+    USERS["admin"] = {"pass": admin_password, "role": "System Administrator"}
+if tech_password:
+    USERS["tech"] = {"pass": tech_password, "role": "Support Agent"}
+
+if not is_tv_mode and not USERS:
+    st.error("⚠️ يجب ضبط APP_ADMIN_PASSWORD أو APP_TECH_PASSWORD في إعدادات التطبيق الآمنة قبل تسجيل الدخول.")
+    st.stop()
+
+if st.session_state['logged_in_user'] is None:
+    st.markdown("<div class='erp-card' style='max-width: 400px; margin: 100px auto; text-align: center;'>", unsafe_allow_html=True)
+    st.title("🏢 ERP Login")
+    st.subheader("القصر الذهبي للمعدات")
+    with st.form("login_form"):
+        u_in = st.text_input("اسم المستخدم (Username)")
+        p_in = st.text_input("كلمة المرور (Password)", type="password")
+        if st.form_submit_button("تسجيل الدخول", use_container_width=True):
+            if u_in in USERS and USERS[u_in]["pass"] == p_in:
+                st.session_state['logged_in_user'] = u_in
+                st.rerun()
+            else: st.error("بيانات الدخول غير صحيحة.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
+current_user = st.session_state['logged_in_user']
+is_admin = current_user in USERS and "Administrator" in USERS[current_user]["role"]
+
+ledger_df = get_doctype("Ledger")
+stock_df = get_doctype("Stock")
+hawara_df = get_doctype("Hawara")
+dispatch_df = get_doctype("Dispatch")
+
+stock_list = stock_df['item_name'].dropna().unique().tolist() if not stock_df.empty else []
+
+if not is_tv_mode:
+    with st.sidebar:
+        st.title("🏢 ERPNext Workspace")
+        st.markdown(f"**المستخدم:** {current_user} <br> **الدور:** {USERS.get(current_user, {}).get('role', 'Viewer')}", unsafe_allow_html=True)
+        st.divider()
+
+        st.caption("العمليات الأساسية (CORE MODULES)")
+        if st.button("🏠 مساحة العمل (Workspace)", use_container_width=True): st.session_state['current_module'] = 'Workspace'
+        if st.button("📺 شاشة الورشة (TV Display)", use_container_width=True): st.session_state['current_module'] = 'TV_Display'
+        if st.button("🛠️ الدعم والصيانة (Support)", use_container_width=True): st.session_state['current_module'] = 'Support'
+        if st.button("📦 المخزون (Stock)", use_container_width=True): st.session_state['current_module'] = 'Stock'
+        if st.button("🚚 اللوجستيات (Logistics)", use_container_width=True): st.session_state['current_module'] = 'Logistics'
+
+        st.caption("المالية والتقارير (ACCOUNTING)")
+        if st.button("💰 المحاسبة (Accounting)", use_container_width=True): st.session_state['current_module'] = 'Accounting'
+
+        st.divider()
+        if st.button("🚪 تسجيل الخروج (Logout)", use_container_width=True):
+            st.session_state['logged_in_user'] = None
+            st.rerun()
+
+if st.session_state['current_module'] == 'Workspace':
+    st.title("مساحة العمل الموحدة (Workspace)")
+    active_count = len(ledger_df[~ledger_df['case_status'].astype(str).eq(CASE_STATUS_CLOSED)]) if not ledger_df.empty else 0
+    ready_count = len(ledger_df[ledger_df['status'].str.contains('جاهز', na=False)]) if not ledger_df.empty else 0
+    total_rev = float(ledger_df['cost_debit'].sum()) if not ledger_df.empty else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    with col1: st.markdown(f"<div class='erp-card'><h3>🛠️ صيانة مفتوحة</h3><h1>{active_count}</h1></div>", unsafe_allow_html=True)
+    with col2: st.markdown(f"<div class='erp-card'><h3>✅ أجهزة جاهزة للتسليم</h3><h1>{ready_count}</h1></div>", unsafe_allow_html=True)
+    with col3: st.markdown(f"<div class='erp-card'><h3>💰 إجمالي المبيعات</h3><h1>${total_rev:,.2f}</h1></div>", unsafe_allow_html=True)
+
+# ==========================================
+# MODULE 2: TV WORKSHOP DISPLAY (KIOSK MODE)
+# ==========================================
+elif st.session_state['current_module'] == 'TV_Display':
+
+    if is_tv_mode:
+        # Smooth auto-scrolling engine (Voice completely removed)
+        html_injection = """
+        <script>
+            let goingDown = true;
+            const scrollSpeed = 1;
+            const intervalTime = 30;
+
+            let scrollInterval = setInterval(() => {
+                if (goingDown) {
+                    window.parent.scrollBy(0, scrollSpeed);
+                    if ((window.parent.innerHeight + window.parent.scrollY) >= window.parent.document.body.offsetHeight - 5) {
+                        goingDown = false;
+                        setTimeout(() => {}, 2000);
+                    }
+                } else {
+                    window.parent.scrollBy(0, -scrollSpeed);
+                    if (window.parent.scrollY <= 0) {
+                        goingDown = true;
+                        setTimeout(() => {}, 2000);
+                    }
                 }
-            )
-          strlit.dataframe(
-              pd.DataFrame(review_rows),
-              use_container_width=True,
-              hide_index=True,
-          )
+            }, intervalTime);
 
-          strlit.caption(
-              f"صفوف Excel الفارغة المتاحة للإضافة: {len(available_new_staff_rows)}"
-          )
+            setInterval(() => {
+                fetch(window.parent.location.href)
+                    .then(res => res.text())
+                    .then(html => {}).catch(err => {});
+            }, 30000);
+        </script>
+        """
+        st.components.v1.html(html_injection, height=0)
 
-          def missing_staff_option_label(employee_id):
-            employee_info = active_employee_details.get(employee_id, {})
-            return (
-                f"{employee_info.get('name', '')} — BioTime ID {employee_id}"
-                f" — {employee_info.get('dept', 'غير محدد')}"
-            )
+    st.markdown("""
+        <style>
+            .tv-card-urgent { background: #ffe5e5; border-right: 15px solid #e53e3e; padding: 25px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .tv-card-delayed { background: #fffaf0; border-right: 15px solid #dd6b20; padding: 25px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .tv-card-normal { background: #ebf8ff; border-right: 15px solid #3182ce; padding: 25px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .tv-title { font-size: 32px; font-weight: bold; color: #1a202c; margin-bottom: 10px; }
+            .tv-details { font-size: 24px; color: #4a5568; }
+            .tv-days { font-size: 35px; font-weight: bold; float: left; margin-top: -10px; text-align: center; }
+        </style>
+    """, unsafe_allow_html=True)
 
-          selected_new_staff = strlit.multiselect(
-              "اختر الموظفين الذين توافق على إضافتهم",
-              options=missing_active_ids,
-              default=[],
-              format_func=missing_staff_option_label,
-              key=f"missing_staff_review_{template_signature}_{candidate_signature}",
-          )
+    st.markdown("<h1 style='text-align: center; font-size: 60px; margin-bottom: 40px;'>شاشة متابعة الورشة (Live Queue)</h1>", unsafe_allow_html=True)
 
-          too_many_selected = len(selected_new_staff) > len(available_new_staff_rows)
-          if too_many_selected:
-            strlit.error(
-                "عدد الموظفين المختارين أكبر من عدد الصفوف الفارغة المتاحة في ملف Excel. "
-                "خفّض الاختيار أو أضف صفوف موظفين فارغة إلى القالب أولاً."
-            )
+    if not ledger_df.empty:
+        open_jobs = ledger_df[~ledger_df['case_status'].astype(str).eq(CASE_STATUS_CLOSED)]
+        waiting_collection_df = ledger_df[ledger_df['collection_status'].isin([COLLECTION_AWAITING, COLLECTION_SPECIAL_AWAITING])] if not ledger_df.empty else pd.DataFrame()
+        partner_claim_df = ledger_df[ledger_df['partner_claim_status'].eq('بانتظار مطالبة الشريك')] if not ledger_df.empty else pd.DataFrame()
+        special_df = ledger_df[ledger_df['special_case'].astype(str).str.strip() != ''] if not ledger_df.empty else pd.DataFrame()
 
-          if strlit.button(
-              "✅ تأكيد الاختيار ومتابعة معالجة الملف",
-              use_container_width=True,
-              disabled=too_many_selected,
-              key=f"confirm_missing_staff_{template_signature}_{candidate_signature}",
-          ):
-            strlit.session_state[approval_state_key] = tuple(selected_new_staff)
-            strlit.rerun()
+        display_items = []
+        for _, r in open_jobs.iterrows():
+            try:
+                logged_dt = pd.to_datetime(str(r['date_logged']).split(' ')[0])
+                if logged_dt > datetime.now(): logged_dt = datetime.now() - pd.Timedelta(days=2)
+                days = (datetime.now() - logged_dt).days
+                if days < 0: days = 0
+            except:
+                days = 0
 
-          strlit.stop()
+            is_urgent = "عاجل" in str(r.get('priority', ''))
 
-        approved_new_staff_ids = [
-            normalize_id(employee_id)
-            for employee_id in (approved_new_staff_ids or ())
-            if normalize_id(employee_id) in active_employee_details
-            and normalize_id(employee_id) in missing_active_ids
-        ]
-        if len(approved_new_staff_ids) > len(available_new_staff_rows):
-          raise RuntimeError(
-              "The approved BioTime staff exceed the empty employee rows available in Excel."
-          )
+            display_items.append({
+                "days": days,
+                "urgent": is_urgent,
+                "sid": r['service_id'],
+                "tool": r['tool_name'],
+                "issue": r['reported_issue'],
+                "status": r['status'],
+                "remarks": r.get('remarks', ''),
+                "collection_status": r.get('collection_status', ''),
+                "partner_claim_status": r.get('partner_claim_status', ''),
+                "special_case": r.get('special_case', '')
+            })
 
-        approved_new_staff_rows = []
-        for row_number, employee_id in zip(
-            available_new_staff_rows, approved_new_staff_ids
-        ):
-          employee_info = active_employee_details[employee_id]
-          approved_new_staff_rows.append(
-              {
-                  "row": row_number,
-                  "employee_id": employee_id,
-                  "name": employee_info.get("name", f"موظف {employee_id}"),
-                  "dept": employee_info.get("dept", "غير محدد"),
-              }
-          )
+        display_items = sorted(display_items, key=lambda x: (not x['urgent'], -x['days']))
 
-        target_employee_ids = (
-            set(excel_biotime_ids) | set(approved_new_staff_ids)
-        ) & set(active_employee_details.keys())
+        if display_items:
+            for item in display_items:
+                if item['urgent']:
+                    card_class = "tv-card-urgent"
+                    tag = "🔥 عاجل جداً"
+                    color = "#e53e3e"
+                elif item['days'] >= 3:
+                    card_class = "tv-card-delayed"
+                    tag = "⚠️ متأخر"
+                    color = "#dd6b20"
+                else:
+                    card_class = "tv-card-normal"
+                    tag = "⚙️ قيد العمل"
+                    color = "#3182ce"
 
-        progress.progress(
-            0.62,
-            text="المرحلة 2/4 — تحميل قيم Actual WT / Total WT من BioTime...",
-        )
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <div class="tv-days" style="color: {color};">{item['days']}<br><span style="font-size:16px;">أيام</span></div>
+                    <div class="tv-title">{tag} | {item['sid']} - {item['tool']}</div>
+                    <div class="tv-details"><b>العطل:</b> {item['issue']} <br> <b>الحالة:</b> {item['status']} <br> <b>الاستلام:</b> {item['collection_status']} <br> <b>ملاحظة خاصة:</b> {item['special_case']} <br> <b>مطالبة الشريك:</b> {item['partner_claim_status']} <br> <b>ملاحظات:</b> {item['remarks']}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # Tell the report fetcher exactly which type of value each employee/day
-        # needs. This lets it stop early when BioTime coverage is complete while
-        # still trying fallback report endpoints only for missing values.
-        expected_attendance_keys = set()
-        expected_single_punch_keys = set()
-        for attendance_date, date_map in all_attendance.items():
-          for employee_id, attendance in date_map.items():
-            if employee_id not in target_employee_ids:
-              continue
-            status = str(attendance.get("Status", "") or "")
-            if "Leave" in status or "Absence" in status:
-              continue
-            key = (attendance_date, employee_id)
-            expected_attendance_keys.add(key)
-            clock_in = str(attendance.get("Clock In", "") or "").strip()
-            clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            if bool(clock_in) != bool(clock_out):
-              expected_single_punch_keys.add(key)
+                # Interactive Workshop Quick-Update Form
+                with st.expander(f"⚡ تحديث سريع للسند ({item['sid']})"):
+                    with st.form(f"quick_form_{item['sid']}"):
+                        q_action = st.selectbox("الإجراء:", ["تحديث الملاحظات فقط", "إنجاز وجاهز للتسليم (Ready)"], key=f"act_{item['sid']}")
+                        q_remark = st.text_input("إضافة ملاحظة ورشة:", value=item['remarks'], key=f"rem_{item['sid']}")
 
-        # Authoritative overlay: single-punch days use BioTime Actual WT; normal
-        # attendance days use BioTime Total WT so uncapped/overtime hours remain visible.
-        report_actual = fetch_biotime_calculated_range(
-            range_start,
-            range_end,
-            employee_internal_id_map,
-            expected_single_punch_keys,
-            expected_attendance_keys,
-        )
-        report_actual_count = 0
-        for attendance_date, report_date_map in report_actual.items():
-          date_map = all_attendance.get(attendance_date, {})
-          for employee_id, report_record in report_date_map.items():
-            attendance = date_map.get(employee_id)
-            if attendance is None:
-              continue
+                        if st.form_submit_button("حفظ التحديث (Save)", use_container_width=True):
+                            idx = ledger_df.index[ledger_df['service_id'] == item['sid']][0]
+                            ledger_df.at[idx, 'remarks'] = q_remark
+                            if "إنجاز" in q_action:
+                                ledger_df.at[idx, 'document_origin'] = "مبيع خ ص: (جاهز ومفوتر)"
+                                ledger_df.at[idx, 'status'] = "جاهز للتسليم (Ready)"
+                                ledger_df.at[idx, 'date_resolved'] = datetime.now().strftime("%Y-%m-%d")
+                            save_doctype("Ledger", ledger_df)
+                            st.success("✅ تم التحديث بنجاح!")
+                            st.rerun()
 
-            actual_wt = str(report_record.get("Actual WT", "") or "").strip()
-            report_total_wt = str(
-                report_record.get("Report Total WT", "") or ""
-            ).strip()
+        st.divider()
+        c1, c2, c3 = st.columns(3)
+        with c1: st.metric("📦 بانتظار تأكيد الاستلام", len(waiting_collection_df))
+        with c2: st.metric("💼 مطالبات شركاء معلقة", len(partner_claim_df))
+        with c3: st.metric("⚠️ حالات خاصة", len(special_df))
+        if not partner_claim_df.empty:
+            st.warning("💼 توجد حالات V لم تُسجّل لها خ صيانة بعد — راجع مطالبة الشريك.")
+        if not special_df.empty:
+            st.info("ℹ️ الحالات الخاصة مثل كفالة/رفض/مكلف/يعمل من المصدر لا تنتظر قبضاً؛ حالات العملاء تنتظر تأكيد الاستلام من الشاشة، وحالات الشريك تغلق تلقائياً.")
+        else:
+            st.markdown("<h1 style='text-align: center; color: #38a169; margin-top: 100px;'>✅ لا توجد أجهزة قيد الصيانة. الورشة خالية!</h1>", unsafe_allow_html=True)
+    else:
+        st.markdown("<h1 style='text-align: center; color: #38a169; margin-top: 100px;'>✅ العمل ممتاز! لا توجد مهام حالياً.</h1>", unsafe_allow_html=True)
 
-            report_clock_in = str(
-                report_record.get("Clock In", "") or ""
-            ).strip()
-            report_clock_out = str(
-                report_record.get("Clock Out", "") or ""
-            ).strip()
+# ==========================================
+# MODULE 3: SUPPORT & MAINTENANCE
+# ==========================================
+elif st.session_state['current_module'] == 'Support':
+    st.title("🛠️ وحدة الدعم والصيانة (Support Desk)")
+    tab1, tab2, tab3 = st.tabs(["➕ بطاقة صيانة جديدة (New Ticket)", "🔄 تحديث الملف (Update & View)", "⚠️ قائمة المهام (SLA / Queue)"])
 
-            report_name = str(report_record.get("Report Name", "") or "")
-            local_work_time = str(
-                attendance.get("Calculated WT", "") or ""
-            ).strip()
+    with tab1:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        with st.form("intake_form", clear_on_submit=True):
+            st.subheader("تفاصيل استلام جهاز (Intake Form)")
 
-            # Keep the raw-transaction punch shape when local data is complete.
-            # A report endpoint may expose a different punch presentation even
-            # though its hours are valid. Trust report clocks only for the exact
-            # Monthly Worked Hrs source or when local transactions had no value.
-            if (
-                report_clock_in or report_clock_out
-            ) and (
-                report_name == "monthlyWorkHoursReport" or not local_work_time
-            ):
-              attendance["Clock In"] = report_clock_in
-              attendance["Clock Out"] = report_clock_out
+            c_amn1, c_amn2, c_amn3 = st.columns(3)
+            with c_amn1:
+                warranty = st.selectbox("حالة الكفالة (Warranty)", ["خارج الكفالة", "ضمن كفالة"])
+            with c_amn2:
+                priority = st.selectbox("أولوية العمل (Priority)", ["عادي (Normal)", "عاجل 🔥 (Rush Job)"])
+            with c_amn3:
+                loaner = st.text_input("جهاز بديل معار للزبون (Loaner Item S/N - اختياري)")
 
-            final_clock_in = str(attendance.get("Clock In", "") or "").strip()
-            final_clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            is_single_punch = bool(final_clock_in) != bool(final_clock_out)
+            st.divider()
 
-            if is_single_punch:
-              report_work_time = actual_wt or report_total_wt
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                branch_select = st.selectbox("الفرع (Branch Prefix)", ["صيدا (S)", "درعا (D)", "وكيل / شريك (V)"])
+                c_name = st.text_input("اسم الزبون (Customer Name)")
+            with c2:
+                c_phone = st.text_input("رقم الهاتف (Phone)")
+                t_name_dropdown = st.selectbox("الجهاز (Item Lookup)", options=["أخرى (إدخال يدوي)"] + stock_list)
+                t_name_manual = st.text_input("اسم الجهاز اليدوي (Manual Entry)")
+            with c3:
+                doc_origin = st.selectbox("الحالة المحاسبية (Origin)", ["اد خ ص: (استلام للصيانة)", "مبيع خ ص: (جاهز ومفوتر)", "خ صيانة: (تحميل على الوكيل)"])
+                accessories = st.text_input("الملحقات المستلمة (Accessories) ⚠️ إلزامي", placeholder="مثال: بطارية، شاحن، حقيبة أو 'لا يوجد'")
+
+            issue = st.text_area("العطل المرصود (Reported Issue)")
+
+            st.markdown("📷 **التوثيق البصري (Media Documentation)**")
+            photo_buffer = st.camera_input("التقاط صورة للجهاز أو الملحقات كإثبات حالة (Take Photo)")
+
+            if st.form_submit_button("إنشاء السند (Create Document)", use_container_width=True):
+                final_t_name = t_name_manual if t_name_dropdown == "أخرى (إدخال يدوي)" and t_name_manual else t_name_dropdown
+
+                if not accessories.strip():
+                    st.error("❌ حقل 'الملحقات المستلمة' إلزامي لمنع فقدان الأغراض. (اكتب 'لا يوجد' إن لم يسلمك شيء).")
+                elif c_name and final_t_name and final_t_name != "أخرى (إدخال يدوي)":
+                    branch_code = "S" if "S" in branch_select else "D" if "D" in branch_select else "V"
+                    auto_id = generate_next_id(branch_code, ledger_df)
+                    date_now = datetime.now().strftime("%Y-%m-%d")
+
+                    photo_url = upload_to_cloud(photo_buffer) if photo_buffer else ""
+
+                    new_row = {
+                        "service_id": auto_id, "tool_name": final_t_name, "customer_name": c_name, "phone_number": c_phone,
+                        "warranty_status": warranty, "document_origin": doc_origin, "reported_issue": issue,
+                        "technician": current_user, "status": map_document_to_status(doc_origin, 0.0), "cost_debit": 0.0, "payment_credit": 0.0,
+                        "balance": 0.0, "spare_parts": "لا حاجة / متوفرة", "resolution_notes": "", "remarks": "",
+                        "date_logged": date_now, "date_resolved": "",
+                        "accessories": accessories, "loaner_item": loaner, "priority": priority, "tool_photo_link": photo_url,
+                        "source_account": "", "source_account_g": "", "source_document_count": 1, "document_history": doc_origin,
+                        "repair_stage": "قيد المعالجة", "collection_status": COLLECTION_NOT_READY, "special_case": "", "partner_claim_status": "غير منطبق", "partner_claim_amount": 0.0,
+                        "case_status": CASE_STATUS_OPEN, "closed_at": "", "closed_by": "", "close_note": ""
+                    }
+                    save_doctype("Ledger", pd.concat([ledger_df, pd.DataFrame([new_row])], ignore_index=True))
+                    st.success(f"✅ تم إنشاء السند بنجاح برقم: {auto_id}")
+                else:
+                    st.error("❌ يرجى تعبئة اسم الزبون واسم الجهاز.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tab2:
+        if not ledger_df.empty:
+            opts = {f"{r.get('priority', '')} {r['service_id']} - {r['customer_name']}": r['service_id'] for _, r in ledger_df.iterrows()}
+            sel_id = opts[st.selectbox("ابحث عن السند (Search Document):", list(opts.keys()))]
+            row_data = ledger_df[ledger_df['service_id'] == sel_id].iloc[0]
+
+            is_locked = str(row_data.get('case_status', CASE_STATUS_OPEN)) == CASE_STATUS_CLOSED
+            is_warranty = "ضمن" in str(row_data.get('warranty_status', ''))
+            is_partner_ticket = str(sel_id).upper().startswith("V")
+
+            if is_locked:
+                st.markdown("<div class='locked-card'>", unsafe_allow_html=True)
+                st.markdown(f"### 🔒 مستند مغلق (Submitted/Locked)")
+                st.write(f"**رقم السند:** {sel_id} | **الزبون:** {row_data['customer_name']}")
+                st.write(f"**حالة الملف:** {row_data['status']}")
+                st.write(f"**أغلق بواسطة:** {row_data.get('closed_by', 'غير مسجل')} في {row_data.get('closed_at', row_data.get('date_resolved', ''))}")
+                if row_data.get('close_note'): st.write(f"**ملاحظة الإغلاق:** {row_data.get('close_note')}")
+                st.write(f"**التكلفة النهائية:** ${float(row_data['cost_debit']):.2f}")
+                if row_data.get('tool_photo_link'): st.markdown(f"[📸 عرض صورة الجهاز عند الاستلام]({row_data['tool_photo_link']})")
+                st.write("هذا الملف مغلق نهائياً لحماية القيود المالية. للطباعة يرجى التوجه لقسم المحاسبة.")
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
-              report_work_time = report_total_wt or actual_wt
+                st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
 
-            # For 4/6/8... punches, the user's BioTime setup is explicitly
-            # adjusted as odd/even pairs (1->2, 3->4, ...). Keep the locally
-            # calculated SUM of those pairs. Some report endpoints expose only
-            # the first pair (for example 00:08) and must not overwrite it.
-            if attendance.get("Odd Even Paired") and local_work_time:
-              selected_work_time = local_work_time
-            elif report_name == "monthlyWorkHoursReport" and report_work_time:
-              selected_work_time = report_work_time
+                c_info1, c_info2 = st.columns(2)
+                with c_info1:
+                    st.caption("الملحقات المستلمة (Accessories):")
+                    st.write(f"🎒 {row_data.get('accessories', 'غير مسجل')}")
+                with c_info2:
+                    if row_data.get('tool_photo_link'): st.markdown(f"📸 [عرض الصورة المرفقة للصيانة]({row_data['tool_photo_link']})")
+
+                with st.form("update_form"):
+                    doc_options = ["اد خ ص: (استلام للصيانة)", "مبيع خ ص: (جاهز ومفوتر)", "قبض د: (مدفوع ومسلم)", "قبض م: (مدفوع ومسلم)", "خ صيانة: (تحميل على الوكيل)"]
+                    try: curr_i = [i for i, o in enumerate(doc_options) if str(row_data['document_origin']) in o][0]
+                    except: curr_i = 0
+
+                    c_a, c_b = st.columns(2)
+                    with c_a: new_doc = st.selectbox("تحديث الحالة المحاسبية:", doc_options, index=curr_i)
+                    with c_b:
+                        sp_opts = ["لا حاجة / متوفرة", "بانتظار شحن مجاني", "بانتظار شحن عادي"]
+                        try: sp_i = sp_opts.index(str(row_data['spare_parts']))
+                        except: sp_i = 0
+                        new_spare = st.selectbox("حالة قطع الغيار:", sp_opts, index=sp_i)
+
+                    if is_warranty:
+                        st.info("🛡️ هذا الجهاز ضمن الكفالة، تم تصفير التكلفة تلقائياً.")
+                        cost = 0.0
+                        pay = 0.0
+                    else:
+                        col1, col2, col3 = st.columns(3)
+                        with col1: cost = st.number_input("التكلفة (Debit)", value=float(row_data['cost_debit'] or 0), step=1.0)
+                        with col2: pay = st.number_input("الدفعة (Credit)", value=float(row_data['payment_credit'] or 0), step=1.0)
+                        with col3: st.metric("الرصيد المتبقي (Balance)", f"${cost - pay:.2f}")
+
+                    current_collection = str(row_data.get("collection_status", ""))
+                    st.info(f"📄 حالة كشف الأمين: {current_collection or COLLECTION_NOT_READY}")
+                    special_options = ["", "يعمل من المصدر", "الزبون رفض الإصلاح", "مكلف", "كفالة", "غير قابل للإصلاح", "لا يوجد عطل"]
+                    current_special = str(row_data.get("special_case", ""))
+                    try: special_i = special_options.index(current_special)
+                    except: special_i = 0
+                    new_special = st.selectbox("حالة خاصة (Special Case):", special_options, index=special_i)
+                    partner_options = ["غير منطبق", "بانتظار مطالبة الشريك", "تمت مطالبة الشريك / تم التحصيل", "لا مطالبة - حالة خاصة"]
+                    current_partner = str(row_data.get("partner_claim_status", "غير منطبق"))
+                    try: partner_i = partner_options.index(current_partner)
+                    except: partner_i = 0
+                    new_partner_claim = st.selectbox("حالة مطالبة الشريك (Partner Claim):", partner_options, index=partner_i)
+
+                    if "قبض" in new_doc:
+                        new_collection = COLLECTION_CLOSED
+                    elif new_special:
+                        new_collection = COLLECTION_SPECIAL_AWAITING
+                    elif "مبيع خ ص" in new_doc:
+                        new_collection = COLLECTION_AWAITING
+                    else:
+                        new_collection = current_collection or COLLECTION_NOT_READY
+
+                    new_status = map_document_to_status(new_doc, cost, new_collection, new_special, new_partner_claim, CASE_STATUS_OPEN)
+                    c_n1, c_n2 = st.columns(2)
+                    with c_n1: notes = st.text_area("ملاحظات الإصلاح (Resolution)", value=str(row_data.get('resolution_notes', '')))
+                    with c_n2: remarks_update = st.text_area("تحديثات إضافية (Remarks)", value=str(row_data.get('remarks', '')))
+
+                    if st.form_submit_button("تحديث السجل (Update Document)", use_container_width=True):
+                        idx = ledger_df.index[ledger_df['service_id'] == sel_id][0]
+                        ledger_df.at[idx, 'cost_debit'] = cost
+                        ledger_df.at[idx, 'payment_credit'] = pay
+                        ledger_df.at[idx, 'balance'] = cost - pay
+                        ledger_df.at[idx, 'resolution_notes'] = notes
+                        ledger_df.at[idx, 'remarks'] = remarks_update
+                        ledger_df.at[idx, 'document_origin'] = new_doc
+                        ledger_df.at[idx, 'status'] = new_status
+                        ledger_df.at[idx, 'spare_parts'] = new_spare
+                        ledger_df.at[idx, 'collection_status'] = new_collection
+                        ledger_df.at[idx, 'special_case'] = new_special
+                        ledger_df.at[idx, 'partner_claim_status'] = new_partner_claim
+                        ledger_df.at[idx, 'repair_stage'] = 'جاهز للتسليم' if 'مبيع خ ص' in new_doc or 'قبض' in new_doc or new_special else 'قيد المعالجة'
+                        save_doctype("Ledger", ledger_df)
+                        st.success("✅ تم التحديث بنجاح!")
+                        st.rerun()
+
+                # Normal S/D cases are closed by قبض in Ameen. Ameen zero-value
+                # sales invoices now close automatically as well. Manual closure is
+                # reserved for special/no-charge customer cases where neither signal exists.
+                special_collection_eligible = (
+                    not is_partner_ticket
+                    and (bool(normalize_doc_string(row_data.get('special_case', ''))) or is_warranty)
+                )
+                if special_collection_eligible:
+                    st.markdown("### ✅ تأكيد استلام الحالة الخاصة")
+                    st.caption("هذه الحالة لا تنتظر قبضاً في الأمين. أغلقها هنا فقط بعد أن يستلم الزبون الجهاز فعلياً.")
+                    with st.form("close_case_form"):
+                        close_note = st.text_input("ملاحظة الإغلاق (اختياري)")
+                        if st.form_submit_button("تم الاستلام — إغلاق الحالة", use_container_width=True):
+                            idx = ledger_df.index[ledger_df['service_id'] == sel_id][0]
+                            closed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            ledger_df.at[idx, 'case_status'] = CASE_STATUS_CLOSED
+                            ledger_df.at[idx, 'closed_at'] = closed_at
+                            ledger_df.at[idx, 'closed_by'] = current_user
+                            ledger_df.at[idx, 'close_note'] = close_note or f"استلام يدوي - {row_data.get('special_case', 'كفالة')}"
+                            ledger_df.at[idx, 'collection_status'] = COLLECTION_CLOSED
+                            ledger_df.at[idx, 'repair_stage'] = CASE_STATUS_CLOSED
+                            ledger_df.at[idx, 'status'] = "مغلق - تم الاستلام (Closed)"
+                            ledger_df.at[idx, 'date_resolved'] = closed_at.split(" ")[0]
+                            save_doctype("Ledger", ledger_df)
+                            st.success("✅ تم إغلاق الحالة نهائياً بعد تأكيد الاستلام.")
+                            st.rerun()
+                elif not is_partner_ticket:
+                    st.info("ℹ️ الحالات العادية تغلق تلقائياً عند ظهور قبض في كشف الأمين. كما أن فاتورة مبيع خ ص بقيمة صفر تغلق تلقائياً حسب القاعدة الحالية.")
+
+                if row_data['phone_number']:
+                    phone_clean = re.sub(r'\D', '', str(row_data['phone_number']))
+                    wa_msg = f"مرحباً {row_data['customer_name']}, جهازك ({row_data['tool_name']}) جاهز للاستلام من القصر الذهبي."
+                    wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(wa_msg)}"
+                    st.markdown(f"<a href='{wa_link}' target='_blank'><button style='background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; width:100%; font-size:16px; font-weight:bold;'>💬 إرسال إشعار للزبون (WhatsApp)</button></a>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+        else: st.info("لا توجد ملفات حالياً. يرجى إنشاء سند صيانة جديد.")
+
+    with tab3:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        if not ledger_df.empty:
+            open_jobs = ledger_df[~ledger_df['case_status'].astype(str).eq(CASE_STATUS_CLOSED)]
+            alerts = []
+            for _, r in open_jobs.iterrows():
+                try:
+                    logged_dt = pd.to_datetime(str(r['date_logged']).split(' ')[0])
+                    if logged_dt > datetime.now(): logged_dt = datetime.now() - pd.Timedelta(days=2)
+                    days = (datetime.now() - logged_dt).days
+                    if days < 0: days = 0
+                except:
+                    days = 0
+
+                is_urgent = "عاجل" in str(r.get('priority', ''))
+
+                alert = "✅ طبيعي"
+                if "المعالجة" in str(r['status']) or "الانتظار" in str(r['status']):
+                    if days > 5: alert = "🔴 متأخر جداً"
+                    elif days > 3: alert = "🟠 متأخر"
+                elif "جاهز" in str(r['status']) and days > 7: alert = "🔴 تأخر بالاستلام"
+
+                alerts.append({
+                    "أولوية": "عاجل 🔥" if is_urgent else "عادي",
+                    "الحالة (SLA)": alert,
+                    "أيام التوقف": days,
+                    "السند": r['service_id'],
+                    "الزبون": r['customer_name'],
+                    "الجهاز": r['tool_name'],
+                    "الوضع": r['status']
+                })
+
+            df_alerts = pd.DataFrame(alerts)
+            if not df_alerts.empty:
+                c_filt1, c_filt2 = st.columns([3, 1])
+                with c_filt1:
+                    all_statuses = df_alerts['الوضع'].unique().tolist()
+                    selected_statuses = st.multiselect("🔍 تصفية حسب الوضع (Filter by Status):", options=all_statuses, default=all_statuses)
+
+                filtered_alerts = df_alerts[df_alerts['الوضع'].isin(selected_statuses)]
+
+                with c_filt2:
+                    st.metric("العدد (Count)", len(filtered_alerts))
+
+                filtered_alerts = filtered_alerts.sort_values(by=["أولوية", "أيام التوقف"], ascending=[False, False])
+                st.dataframe(filtered_alerts, use_container_width=True)
             else:
-              selected_work_time = local_work_time or report_work_time
+                st.success("✅ ممتاز! جميع الأجهزة جاهزة أو تم تسليمها، ولا توجد مهام متأخرة أو قيد المعالجة.")
+        else:
+            st.info("📂 قاعدة البيانات فارغة. يرجى إنشاء سند جديد أو استيراد ملف الأمين.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            if not selected_work_time:
-              continue
+# ==========================================
+# MODULE 4: STOCK & INVENTORY
+# ==========================================
+elif st.session_state['current_module'] == 'Stock':
+    st.title("📦 وحدة المستودعات والمخزون (Stock Module)")
+    st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+    if not stock_df.empty:
+        stock_df['quantity'] = pd.to_numeric(stock_df['quantity'], errors='coerce').fillna(0)
+        low_stock = stock_df[stock_df['quantity'] <= 2]
+        if not low_stock.empty:
+            st.error(f"⚠️ يوجد {len(low_stock)} أصناف تتطلب إعادة طلب (Reorder Alert).")
 
-            if is_single_punch:
-              attendance["Actual WT"] = selected_work_time
+    c1, c2 = st.columns(2)
+    with c1: st.download_button("📥 تصدير السجل (Export)", data=convert_df_to_excel(stock_df) if not stock_df.empty else b"", file_name="Stock_Master.xlsx", use_container_width=True)
+    with c2:
+        with st.expander("📤 استيراد لائحة الأسعار (Import List)"):
+            uploaded_stock = st.file_uploader("رفع ملف Excel", type=["xlsx"])
+            if uploaded_stock and st.button("استيراد (Import)"):
+                raw = pd.read_excel(uploaded_stock)
+                if 'MtCode' in raw.columns and 'اسم المادة' in raw.columns:
+                    p_col = 'الجملة' if 'الجملة' in raw.columns else raw.columns[-1]
+                    new_items = raw[['MtCode', 'اسم المادة', p_col]].copy()
+                    new_items.columns = ['item_code', 'item_name', 'price']
+                    new_items = new_items.dropna(subset=['item_code'])
+                    new_items['price'] = pd.to_numeric(new_items['price'], errors='coerce').fillna(0.0)
+                    new_items['quantity'] = 0
+                    if not stock_df.empty:
+                        q_dict = dict(zip(stock_df['item_code'], stock_df['quantity']))
+                        new_items['quantity'] = new_items['item_code'].map(q_dict).fillna(0)
+                    save_doctype("Stock", new_items[STOCK_COLUMNS])
+                    st.success("✅ اكتمل الاستيراد.")
+                    st.rerun()
+
+    if not stock_df.empty:
+        edited_stock = st.data_editor(stock_df, num_rows="dynamic", use_container_width=True)
+        if st.button("💾 حفظ التعديلات (Save Stock)", use_container_width=True):
+            save_doctype("Stock", edited_stock)
+            st.success("تم الحفظ!")
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ==========================================
+# MODULE 5: LOGISTICS (HAWARA & DISPATCH)
+# ==========================================
+elif st.session_state['current_module'] == 'Logistics':
+    st.title("🚚 وحدة الشحن واللوجستيات (Logistics)")
+    tab1, tab2 = st.tabs(["📑 مشتريات وشحن حوارة (Supplier Orders)", "📦 التوصيل المحلي (Local Dispatch)"])
+
+    with tab1:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        with st.form("hawara_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                h_id = st.text_input("معرف الطلب (Order ID)")
+                h_type = st.selectbox("نوع العملية (Type)", ["طلب قطع غيار", "إرسال للصيانة", "استرجاع بضاعة"])
+                linked_sid = st.selectbox("ارتباط بسند (Link to Ticket)", options=["بدون ربط"] + ledger_df['service_id'].tolist() if not ledger_df.empty else ["بدون ربط"])
+            with c2:
+                courier = st.selectbox("شركة الشحن (Courier)", ["شركة أرامكس", "نقل قدموس", "ساعي داخلي", "شركة حوارة"])
+                h_note = st.text_input("بوليصة الشحن (Delivery Note)")
+            with c3:
+                h_status = st.selectbox("الحالة (Status)", ["قيد الطلب", "في الطريق", "تم الاستلام"])
+                uploaded_doc = st.file_uploader("مرفق الفاتورة (Invoice Image)", type=["png", "jpg", "jpeg"])
+
+            if st.form_submit_button("حفظ الطلبية (Submit Order)", use_container_width=True):
+                if h_id:
+                    file_url = upload_to_cloud(uploaded_doc) if uploaded_doc else ""
+                    new_hawara = {
+                        "order_id": h_id, "order_type": h_type, "linked_service_id": linked_sid if linked_sid != "بدون ربط" else "",
+                        "courier": courier, "delivery_note": h_note, "document_link": file_url, "status": h_status, "date_logged": datetime.now().strftime("%Y-%m-%d")
+                    }
+                    save_doctype("Hawara", pd.concat([hawara_df, pd.DataFrame([new_hawara])], ignore_index=True))
+                    st.success("✅ تم حفظ طلبية حوارة بنجاح!")
+                else: st.error("يرجى إدخال معرف الطلب.")
+
+        if not hawara_df.empty:
+            st.subheader("سجل الطلبيات (Order Log)")
+            edited_hawara = st.data_editor(hawara_df, num_rows="dynamic", use_container_width=True, column_config={"document_link": st.column_config.LinkColumn("المرفق", display_text="🔗 عرض")})
+            if st.button("حفظ التعديلات (Save Edits)"): save_doctype("Hawara", edited_hawara); st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tab2:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        with st.form("dispatch_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                disp_id = st.text_input("رقم الإرسالية (Dispatch ID)")
+                ready_list = ledger_df[ledger_df['status'].str.contains('جاهز', na=False) & ~ledger_df['case_status'].astype(str).eq(CASE_STATUS_CLOSED)] if not ledger_df.empty else pd.DataFrame()
+                sel_service = st.selectbox("الجهاز (Ready Tool)", options=ready_list['service_id'].tolist() if not ready_list.empty else [])
+            with c2:
+                disp_courier = st.selectbox("شركة النقل (Courier)", ["شركة أرامكس", "نقل قدموس", "ساعي داخلي"])
+                disp_note = st.text_input("رقم البوليصة (Tracking No)")
+            with c3:
+                disp_file = st.file_uploader("مرفق البوليصة (Receipt Image)", type=["png", "jpg", "jpeg"])
+
+            if st.form_submit_button("حفظ الإرسالية (Submit Dispatch)", use_container_width=True):
+                if disp_id and sel_service:
+                    file_url = upload_to_cloud(disp_file) if disp_file else ""
+                    cust = ledger_df[ledger_df['service_id'] == sel_service].iloc[0]['customer_name'] if not ledger_df.empty else ''
+                    new_disp = {
+                        "dispatch_id": disp_id, "service_id": sel_service, "customer_name": cust,
+                        "courier": disp_courier, "delivery_note": disp_note, "document_link": file_url, "date": datetime.now().strftime("%Y-%m-%d")
+                    }
+                    save_doctype("Dispatch", pd.concat([dispatch_df, pd.DataFrame([new_disp])], ignore_index=True))
+                    st.success("✅ تم تسجيل الإرسالية وحفظ المرفق بنجاح!")
+                else: st.error("يرجى إدخال رقم الإرسالية وسند الصيانة.")
+
+        if not dispatch_df.empty:
+            st.data_editor(dispatch_df, num_rows="dynamic", use_container_width=True, column_config={"document_link": st.column_config.LinkColumn("الإيصال", display_text="🔗 عرض")})
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ==========================================
+# MODULE 6: ACCOUNTING & INVOICING
+# ==========================================
+elif st.session_state['current_module'] == 'Accounting':
+    st.title("💰 الإدارة المالية والمحاسبة (Accounting)")
+
+    tab1, tab2, tab3 = st.tabs(["🧾 طباعة الفواتير (Print Invoices)", "📊 التقارير ودفتر الأستاذ (General Ledger)", "⚙️ استيراد البيانات (Data Import)"])
+
+    with tab1:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        if not ledger_df.empty:
+            inv_opts = ledger_df['service_id'].unique().tolist()
+            sel_inv = st.selectbox("اختر رقم السند لتوليد الفاتورة (Select Ticket for Invoice):", options=inv_opts)
+
+            if st.button("🖨️ توليد الفاتورة (Generate Invoice)", use_container_width=True):
+                inv_data = ledger_df[ledger_df['service_id'] == sel_inv].iloc[0]
+
+                invoice_html = f"""
+                <div class="invoice-box">
+                    <div class="invoice-header">
+                        <h2>القصر الذهبي للمعدات الصناعية</h2>
+                        <p>Al-Qasr Al-Zahabi | صيانة - بيع - تأجير</p>
+                    </div>
+                    <table style="width:100%; margin-bottom:20px; text-align:right; direction:rtl;">
+                        <tr>
+                            <td><b>رقم السند:</b> {inv_data['service_id']}</td>
+                            <td><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d")}</td>
+                        </tr>
+                        <tr>
+                            <td><b>الزبون:</b> {inv_data['customer_name']}</td>
+                            <td><b>الهاتف:</b> {inv_data['phone_number']}</td>
+                        </tr>
+                    </table>
+                    <hr>
+                    <table style="width:100%; text-align:right; direction:rtl; border-collapse: collapse; margin-top:20px;">
+                        <tr style="background:#f7fafc; border-bottom:1px solid #cbd5e0;">
+                            <th style="padding:10px;">البيان (Description)</th>
+                            <th style="padding:10px;">المبلغ (Amount)</th>
+                        </tr>
+                        <tr style="border-bottom:1px solid #edf2f7;">
+                            <td style="padding:10px;">صيانة أداة: {inv_data['tool_name']}<br><small>ملاحظات: {inv_data['resolution_notes']}</small></td>
+                            <td style="padding:10px;">${float(inv_data['cost_debit']):.2f}</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #edf2f7;">
+                            <td style="padding:10px;">الدفعة المقدمة (Credit)</td>
+                            <td style="padding:10px;">${float(inv_data['payment_credit']):.2f}</td>
+                        </tr>
+                        <tr style="font-weight:bold; background:#ebf8ff;">
+                            <td style="padding:10px;">الرصيد المتبقي (Total Due)</td>
+                            <td style="padding:10px;">${float(inv_data['balance']):.2f}</td>
+                        </tr>
+                    </table>
+                    <div style="text-align:center; margin-top:40px; font-size:12px; color:#718096;">
+                        شكراً لتعاملكم معنا. (Thank you for your business.)<br>
+                        <i>يمكن طباعة هذه الصفحة باستخدام (Ctrl + P)</i>
+                    </div>
+                </div>
+                """
+                st.components.v1.html(invoice_html, height=600, scrolling=True)
+                st.info("💡 اضغط `Ctrl + P` أو `Cmd + P` في المتصفح لطباعة الفاتورة أو حفظها كـ PDF.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tab2:
+        st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+        if not ledger_df.empty:
+            view_type = st.radio("نوع العرض (View Type)", ["دفتر الأستاذ العام (General Ledger)", "حسابات الشركاء والوكلاء (Partner Ledger)"])
+
+            if view_type == "دفتر الأستاذ العام (General Ledger)":
+                st.dataframe(ledger_df, use_container_width=True)
+                st.download_button("📥 تصدير الدفتر (Export Ledger)", data=convert_df_to_excel(ledger_df), file_name="General_Ledger.xlsx")
             else:
-              attendance["Total WT"] = selected_work_time
-            attendance["Calculated WT"] = selected_work_time
+                partners_df = ledger_df[ledger_df['service_id'].str.startswith('V', na=False) | ledger_df['document_origin'].str.contains('خ صيانة', na=False)]
+                st.dataframe(partners_df[['service_id', 'customer_name', 'tool_name', 'cost_debit', 'balance']], use_container_width=True)
+                st.metric("مجموع ذمم الوكلاء", f"${partners_df['balance'].astype(float).sum():.2f}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            # A valid BioTime work-time row is attendance even if one punch is missing.
-            if "Leave" not in str(attendance.get("Status", "")):
-              clock_in = str(attendance.get("Clock In", "") or "").strip()
-              clock_out = str(attendance.get("Clock Out", "") or "").strip()
-              if clock_in and not clock_out:
-                attendance["Status"] = "Present(P) / Missing OUT"
-              elif clock_out and not clock_in:
-                attendance["Status"] = "Present(P) / Missing IN"
-              elif "Absence" in str(attendance.get("Status", "")):
-                attendance["Status"] = "Present(P)"
+    with tab3:
+        if is_admin:
+            st.markdown("<div class='erp-card'>", unsafe_allow_html=True)
+            st.subheader("📥 استيراد كشوفات الأمين (Legacy Import Tool)")
+            uploaded_legacy = st.file_uploader("رفع ملف Excel", type=["xlsx"])
+            if uploaded_legacy and st.button("تنفيذ الاستيراد (Run Import)"):
+                with st.spinner("Processing Ameen repair ledger..."):
+                    raw_excel = pd.read_excel(uploaded_legacy, sheet_name=0, header=0)
+                    imported_df = normalize_ameen_dataframe(raw_excel)
 
-            report_actual_count += 1
+                    if imported_df.empty:
+                        st.error("❌ لم يتم العثور على سجلات صيانة صالحة في أعمدة A:L.")
+                    else:
+                        # Merge by service_id so repeated Ameen lines become one repair case.
+                        existing = ledger_df.copy()
+                        if not existing.empty:
+                            existing = apply_workflow_columns(existing)
+                            imported_df = preserve_manual_closures(imported_df, existing)
+                            existing = existing[~existing["service_id"].astype(str).isin(imported_df["service_id"].astype(str))]
+                        merged = pd.concat([existing, imported_df], ignore_index=True)
+                        merged = apply_workflow_columns(merged)
+                        save_doctype("Ledger", merged)
 
-        progress.progress(
-            0.88,
-            text="المرحلة 3/4 — مطابقة الموظفين وتجهيز القيم...",
-        )
-
-        recovered_single_punch = 0
-        for attendance_date, date_map in all_attendance.items():
-          for employee_id, attendance in date_map.items():
-            if employee_id not in target_employee_ids:
-              continue
-            status = str(attendance.get("Status", "") or "")
-            if "Leave" in status or "Absence" in status:
-              continue
-            clock_in = str(attendance.get("Clock In", "") or "").strip()
-            clock_out = str(attendance.get("Clock Out", "") or "").strip()
-            total_work = str(
-                attendance.get("Calculated WT", "")
-                or attendance.get("Actual WT", "")
-                or ""
-            ).strip()
-            if bool(clock_in) != bool(clock_out) and total_work:
-              recovered_single_punch += 1
-
-        progress.progress(
-            1.0,
-            text="المرحلة 4/4 — البيانات جاهزة للتصدير.",
-        )
-        progress.empty()
-        hide_loading_overlay(monthly_loading_overlay)
-        monthly_loading_overlay = None
-
-        # EXACT MATCH ONLY:
-        # Excel Column B (BioTime ID) == app/BioTime ID (emp_code).
-        # No name fallback and no fuzzy matching.
-        employee_matches = []
-        unmatched_employees = []
-        duplicate_excel_ids = set()
-        seen_excel_ids = set()
-
-        for excel_employee in excel_employees:
-          excel_id = excel_employee["biotime_id"]
-
-          if not excel_id:
-            unmatched_employees.append(
-                {
-                    "row": excel_employee["row"],
-                    "biotime_id": "",
-                    "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID is empty",
-                }
-            )
-            continue
-
-          if excel_id in seen_excel_ids:
-            duplicate_excel_ids.add(excel_id)
-          seen_excel_ids.add(excel_id)
-
-          if excel_id in employee_catalog:
-            employee_matches.append(
-                {
-                    "row": excel_employee["row"],
-                    "excel_name": excel_employee["name"],
-                    "employee_id": excel_id,
-                    "api_name": employee_catalog[excel_id],
-                    "score": 100,
-                    "match_type": "Exact ID",
-                }
-            )
-          else:
-            unmatched_employees.append(
-                {
-                    "row": excel_employee["row"],
-                    "biotime_id": excel_id,
-                    "excel_name": excel_employee["name"],
-                    "reason": "BioTime ID not found in app/BioTime ID list",
-                }
-            )
-
-        # Add only the BioTime employees explicitly approved by the user. They are
-        # placed in reserved blank roster rows and then processed exactly like every
-        # other employee. Existing named Excel rows are never overwritten.
-        for approved_employee in approved_new_staff_rows:
-          employee_matches.append(
-              {
-                  "row": approved_employee["row"],
-                  "excel_name": approved_employee["name"],
-                  "employee_id": approved_employee["employee_id"],
-                  "api_name": approved_employee["name"],
-                  "score": 100,
-                  "match_type": "Approved New BioTime Staff",
-              }
-          )
-
-        # Automatically generate the completed attendance file immediately after upload.
-        export_loading_overlay = show_loading_overlay(
-            "جاري تحديث القيم وتجهيز ملف Excel النهائي..."
-        )
-        filled_cells = 0
-        cell_updates = []
-        import_log = []
-
-        # Write the approved employee's BioTime ID and name into the reserved blank
-        # Excel row. Column A is deliberately left exactly as the template provided it.
-        for approved_employee in approved_new_staff_rows:
-          cell_updates.append(
-              {
-                  "row": approved_employee["row"],
-                  "column": 2,
-                  "value": excel_employee_id_value(approved_employee["employee_id"]),
-                  "style_id": find_existing_cell_style_id(
-                      ws_target, approved_employee["row"], 2
-                  ),
-              }
-          )
-          cell_updates.append(
-              {
-                  "row": approved_employee["row"],
-                  "column": 3,
-                  "value": approved_employee["name"],
-                  "style_id": find_existing_cell_style_id(
-                      ws_target, approved_employee["row"], 3
-                  ),
-              }
-          )
-
-        # Process every date column. Existing exact-ID staff and approved new staff
-        # use the same attendance calculation and the same Excel date columns.
-        for match in employee_matches:
-          employee_id = match["employee_id"]
-          excel_row = match["row"]
-
-          for date_column, attendance_date in date_columns.items():
-            # Future dates stay unchanged/blank.
-            if attendance_date > now_syria.date():
-              continue
-
-            attendance = all_attendance.get(
-                attendance_date,
-                {},
-            ).get(employee_id)
-
-            if attendance is None:
-              cell_value = "A"
-              status = "Absence(A)"
-              clock_in = ""
-              clock_out = ""
-              total_work = ""
-            else:
-              status = str(attendance.get("Status", ""))
-              clock_in = str(attendance.get("Clock In", "") or "")
-              clock_out = str(attendance.get("Clock Out", "") or "")
-              total_work = str(
-                  attendance.get("Calculated WT", "")
-                  or attendance.get("Actual WT", "")
-                  or ""
-              ).strip()
-
-              if "Leave" in status:
-                cell_value = "L"
-              elif "Absence" in status:
-                cell_value = "A"
-              else:
-                excel_time = time_to_excel_value(total_work)
-                cell_value = excel_time if excel_time is not None else None
-
-            cell_updates.append(
-                {
-                    "row": excel_row,
-                    "column": date_column,
-                    "value": cell_value,
-                }
-            )
-            filled_cells += 1
-
-            import_log.append(
-                [
-                    employee_id,
-                    match["excel_name"],
-                    match["api_name"],
-                    match.get("match_type", "Exact ID"),
-                    attendance_date,
-                    clock_in,
-                    clock_out,
-                    total_work,
-                    status,
-                ]
-            )
-
-        total_formula_updates = build_total_formula_updates(
-            ws_target, employee_matches, date_columns, now_syria.date()
-        )
-
-        try:
-          export_bytes = export_template_preserving_package(
-              original_template_bytes,
-              ws_target.title,
-              cell_updates,
-              formula_updates=total_formula_updates,
-              duration_style_id=duration_style_id,
-          )
-        except Exception as export_error:
-          raise RuntimeError(
-              "تعذر إنشاء ملف Excel النهائي مع الحفاظ على بنية الملف الأصلية: "
-              + str(export_error)
-          ) from export_error
-
-        strlit.session_state["monthly_attendance_export"] = export_bytes
-        output_extension = ".xlsm" if keep_vba else ".xlsx"
-        strlit.session_state["monthly_attendance_filename"] = (
-            "Attendance_Completed_"
-            f"{sorted_dates[0].strftime('%Y_%m_%d')}"
-            "_to_"
-            f"{sorted_dates[-1].strftime('%Y_%m_%d')}"
-            f"{output_extension}"
-        )
-        strlit.session_state["monthly_attendance_mime"] = (
-            "application/vnd.ms-excel.sheet.macroEnabled.12"
-            if keep_vba
-            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        strlit.session_state["monthly_attendance_import_summary"] = {
-            "matched": len(employee_matches),
-            "unmatched": len(unmatched_employees),
-            "filled": filled_cells,
-            "dates": len(dates_list),
-            "single_punch": recovered_single_punch,
-            "biotime_report_rows": report_actual_count,
-            "added_staff": len(approved_new_staff_rows),
-            "total_cutoff": (now_syria.date() - timedelta(days=1)).strftime("%d/%m/%Y"),
-        }
-
-        hide_loading_overlay(export_loading_overlay)
-        export_loading_overlay = None
-
-        strlit.success(
-            f"✅ تمت تعبئة جميع التواريخ حتى {now_syria.date().strftime('%d/%m/%Y')} "
-            f"({filled_cells} خانة). تم تصدير الملف مع الحفاظ على بنية Excel الأصلية."
-        )
-
-        if "monthly_attendance_export" in strlit.session_state:
-          summary = strlit.session_state.get("monthly_attendance_import_summary", {})
-          if summary:
-            strlit.markdown(
-                '<div class="gp-section-title">✅ ملخص معالجة الشهر</div>',
-                unsafe_allow_html=True,
-            )
-            render_kpi_cards([
-                ("📅", "تواريخ معالجة", summary.get("dates", 0)),
-                ("☝️", "بصمة واحدة", summary.get("single_punch", 0)),
-                ("🧮", "خانات تم تجهيزها", summary.get("filled", 0)),
-                ("📡", "قيم تقرير BioTime", summary.get("biotime_report_rows", 0)),
-                ("➕", "موظفون تمت إضافتهم", summary.get("added_staff", 0)),
-            ])
-
-          strlit.markdown(
-              '<div class="gp-download-ready">📥 ملف الدوام النهائي جاهز للتحميل</div>',
-              unsafe_allow_html=True,
-          )
-          strlit.download_button(
-              label="📥 تحميل ملف الدوام النهائي",
-              data=strlit.session_state["monthly_attendance_export"],
-              file_name=strlit.session_state["monthly_attendance_filename"],
-              mime=strlit.session_state.get(
-                  "monthly_attendance_mime",
-                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-              ),
-              use_container_width=True,
-              key="download_monthly_attendance",
-          )
-
-      except Exception as template_error:
-        hide_loading_overlay(monthly_loading_overlay)
-        hide_loading_overlay(export_loading_overlay)
-        strlit.error("تعذر معالجة ملف الدوام. افتح التفاصيل الفنية عند الحاجة.")
-        with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
-          strlit.code(str(template_error))
-  # Attendance details are intentionally not rendered inline below the monthly
-  # section. Click one of the six summary cards above to open a clean popup.
-
-
-except Exception as e:
-  hide_loading_overlay(main_loading_overlay)
-  strlit.error("تعذر تحميل بيانات BioTime حالياً. حاول التحديث مرة أخرى.")
-  with strlit.expander("🛠️ التفاصيل الفنية", expanded=False):
-    strlit.code(TEXT_CONFIG["err_api"].format(str(e)))
+                        st.success(f"✅ تم استيراد {len(imported_df)} حالات صيانة من كشف الأمين.")
+                        c1, c2, c3, c4, c5 = st.columns(5)
+                        c1.metric("قيد المعالجة", int((imported_df["repair_stage"] == "قيد المعالجة").sum()))
+                        c2.metric("جاهزة للتسليم", int((imported_df["repair_stage"] == "جاهز للتسليم").sum()))
+                        c3.metric("بانتظار الاستلام", int(imported_df["collection_status"].isin([COLLECTION_AWAITING, COLLECTION_SPECIAL_AWAITING]).sum()))
+                        c4.metric("مطالبات الشركاء", int((imported_df["partner_claim_status"] == "بانتظار مطالبة الشريك").sum()))
+                        c5.metric("حالات مغلقة", int((imported_df["case_status"] == CASE_STATUS_CLOSED).sum()))
+                        st.dataframe(imported_df[["service_id", "customer_name", "tool_name", "document_origin", "repair_stage", "collection_status", "case_status", "closed_at", "closed_by", "close_note", "special_case", "partner_claim_status", "remarks"]], use_container_width=True)
+                        st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
