@@ -22,7 +22,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-MONTHLY-REPORT-MOBILE-2026-09-05"
+APP_VERSION = "BIO-ATTENDANCE-MOBILE-LAYOUT-FIX-2026-09-05"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -453,6 +453,93 @@ strlit.markdown(
         div[data-testid="stDateInput"] input { min-height: 40px !important; }
     }
 
+
+    /* Scoped layout fixes for the native Streamlit widgets. */
+    .gp-summary-marker, .gp-controls-marker { display: none; }
+    div[data-testid="stElementContainer"]:has(.gp-summary-marker),
+    div[data-testid="stElementContainer"]:has(.gp-controls-marker) { display: none; }
+    div[data-testid="stDateInput"] input {
+        color: #1e293b !important;
+        -webkit-text-fill-color: #1e293b !important;
+        opacity: 1 !important;
+        direction: ltr;
+        text-align: center;
+        font-size: 16px !important;
+        color-scheme: light;
+    }
+    /* Use the semantic tab roles, including newer Streamlit markup. */
+    div[data-testid="stTabs"] [role="tablist"] {
+        display: flex !important;
+        gap: 4px !important;
+        width: 100%;
+        background: #ffffff;
+        border: 1px solid #dbe4ef;
+        border-radius: 14px;
+        padding: 4px;
+        box-sizing: border-box;
+    }
+    div[data-testid="stTabs"] [role="tab"] {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        height: auto !important;
+        min-height: 48px;
+        padding: 8px 5px !important;
+        white-space: normal !important;
+        border-radius: 10px;
+    }
+    div[data-testid="stTabs"] [role="tab"] p {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        text-align: center;
+        line-height: 1.5;
+    }
+    div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+        background: #eff6ff;
+        color: #1d4ed8;
+    }
+    @media (max-width: 700px) {
+        div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 9px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) > div[data-testid="stColumn"]:first-child {
+            grid-column: 1 / -1;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div[data-testid="stColumn"],
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) > div[data-testid="stColumn"] {
+            min-width: 0 !important;
+            width: 100% !important;
+            flex: none !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) button {
+            min-height: 92px !important;
+            margin-bottom: 0 !important;
+            padding: 10px 5px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) button {
+            min-height: 44px !important;
+            margin-bottom: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) div[data-testid="stVerticalBlock"] {
+            gap: 4px !important;
+        }
+        .gp-live-card, .gp-archive-card {
+            min-height: 44px;
+            white-space: normal;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .gp-control-caption { text-align: right; margin-bottom: 0; }
+        div[data-testid="stTabs"] [role="tab"] p { font-size: 12px !important; }
+    }
+
     </style>
 """,
     unsafe_allow_html=True,
@@ -613,6 +700,8 @@ def render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s):
   ]
 
   cols = strlit.columns(6)
+  with cols[0]:
+    strlit.markdown('<span class="gp-summary-marker"></span>', unsafe_allow_html=True)
   for column, (key, icon, label, value, rows) in zip(cols, specs):
     with column:
       clicked = strlit.button(
@@ -2148,9 +2237,10 @@ strlit.markdown(
 strlit.markdown('<div class="gp-top-controls"></div>', unsafe_allow_html=True)
 c_date, c_status, c_ref = strlit.columns([1.35, 0.90, 1.00], gap="small")
 with c_date:
+  strlit.markdown('<span class="gp-controls-marker"></span>', unsafe_allow_html=True)
   strlit.markdown('<div class="gp-control-caption">📅 تاريخ العرض</div>', unsafe_allow_html=True)
   selected_date_obj_input = strlit.date_input(
-      "", value=now_syria.date(), label_visibility="collapsed"
+      "تاريخ العرض", value=now_syria.date(), label_visibility="collapsed"
   )
   selected_date_str = selected_date_obj_input.strftime("%Y-%m-%d")
 
