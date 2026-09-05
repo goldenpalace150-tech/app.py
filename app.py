@@ -373,6 +373,86 @@ strlit.markdown(
         .gp-report-panel { padding: 10px; border-radius: 13px; }
     }
 
+
+    /* ===== Compact responsive top controls ===== */
+    .gp-top-controls {
+        margin: 0 0 10px 0;
+    }
+    .gp-control-caption {
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 800;
+        margin: 0 2px 5px 2px;
+        min-height: 15px;
+        line-height: 15px;
+    }
+    .gp-live-card,
+    .gp-archive-card {
+        min-height: 42px;
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid #dbe4ef;
+        background: #ffffff;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 7px 12px;
+        box-sizing: border-box;
+        white-space: nowrap;
+    }
+    .gp-live-card {
+        color: #166534;
+        background: linear-gradient(135deg, #f0fdf4, #ffffff);
+        border-color: #bbf7d0;
+    }
+    .gp-archive-card {
+        color: #475569;
+        background: linear-gradient(135deg, #f8fafc, #ffffff);
+        border-color: #cbd5e1;
+    }
+    .gp-live-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55);
+        animation: pulse-green 1.5s infinite;
+        flex: 0 0 auto;
+    }
+    .gp-live-main { font-size: 13px; font-weight: 900; }
+    .gp-live-sub { font-size: 10px; font-weight: 750; opacity: 0.72; }
+
+    /* Make the native date control and refresh button look like one control family. */
+    div[data-testid="stDateInput"] > div > div,
+    div[data-testid="stDateInput"] input {
+        min-height: 42px !important;
+    }
+    div[data-testid="stDateInput"] > div > div {
+        border-radius: 12px !important;
+        border-color: #dbe4ef !important;
+        background: #ffffff !important;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04) !important;
+    }
+    .gp-refresh-wrap + div button,
+    div[data-testid="stColumn"] button[kind="secondary"] {
+        min-height: 42px !important;
+    }
+
+    @media (min-width: 701px) {
+        .gp-top-controls-desktop-spacer { display: block; height: 1px; }
+    }
+    @media (max-width: 700px) {
+        .gp-top-controls { margin-bottom: 7px; }
+        .gp-control-caption { font-size: 9px; margin-bottom: 3px; }
+        .gp-live-card, .gp-archive-card { min-height: 40px; border-radius: 11px; padding: 6px 10px; }
+        .gp-live-main { font-size: 12px; }
+        .gp-live-sub { font-size: 9px; }
+        div[data-testid="stDateInput"] > div > div,
+        div[data-testid="stDateInput"] input { min-height: 40px !important; }
+    }
+
     </style>
 """,
     unsafe_allow_html=True,
@@ -2057,26 +2137,50 @@ def build_monthly_attendance_workbook(all_attendance, employee_details, start_da
 now_syria = datetime.now(SYRIA_TZ)
 today_str = now_syria.strftime("%Y-%m-%d")
 
-dish_img_tag = ""
-try:
-  with open("image_632b3d.jpg", "rb") as img_file:
-    encoded_string = base64.b64encode(img_file.read()).decode()
-    dish_img_tag = f'<img src="data:image/jpeg;base64,{encoded_string}" class="animated-dish" />'
-except Exception:
-  dish_img_tag = '<div class="animated-dish" style="font-size: 24px;">📡</div>'
+strlit.markdown(
+    '<div class="gp-app-hero">'
+    '<div class="gp-app-hero-title">📡 Golden Palace • BioTime</div>'
+    '<div class="gp-app-hero-subtitle">حضور يومي • تقرير شهري • نسخة احتياطية</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
-c_date, c_ref = strlit.columns(2)
+strlit.markdown('<div class="gp-top-controls"></div>', unsafe_allow_html=True)
+c_date, c_status, c_ref = strlit.columns([1.35, 0.90, 1.00], gap="small")
 with c_date:
+  strlit.markdown('<div class="gp-control-caption">📅 تاريخ العرض</div>', unsafe_allow_html=True)
   selected_date_obj_input = strlit.date_input(
       "", value=now_syria.date(), label_visibility="collapsed"
   )
   selected_date_str = selected_date_obj_input.strftime("%Y-%m-%d")
-with c_ref:
-  if strlit.button("🔄 تحديث البيانات", use_container_width=True):
-    strlit.cache_data.clear()
-    strlit.rerun()
 
 is_today = selected_date_str == today_str
+
+with c_status:
+  strlit.markdown('<div class="gp-control-caption">📡 حالة الاتصال</div>', unsafe_allow_html=True)
+  if is_today:
+    strlit.markdown(
+        '<div class="gp-live-card">'
+        '<span class="gp-live-dot"></span>'
+        '<span class="gp-live-main">Online</span>'
+        '<span class="gp-live-sub">مباشر</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+  else:
+    strlit.markdown(
+        f'<div class="gp-archive-card">'
+        f'<span>🗂️</span><span class="gp-live-main">أرشيف</span>'
+        f'<span class="gp-live-sub">{selected_date_obj_input.strftime("%d/%m/%Y")}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+with c_ref:
+  strlit.markdown('<div class="gp-control-caption">⚡ البيانات</div>', unsafe_allow_html=True)
+  if strlit.button("🔄 تحديث الآن", use_container_width=True, key="top_refresh_button"):
+    strlit.cache_data.clear()
+    strlit.rerun()
 
 if "last_selected_date" not in strlit.session_state:
   strlit.session_state["last_selected_date"] = selected_date_str
@@ -2084,32 +2188,6 @@ if "last_selected_date" not in strlit.session_state:
 if strlit.session_state["last_selected_date"] != selected_date_str:
   strlit.session_state["last_selected_date"] = selected_date_str
   strlit.session_state["selected_view"] = "present" if is_today else "all"
-
-if is_today:
-  strlit.markdown(
-      f"""
-        <div class="status-badge">
-            {dish_img_tag}
-            <div class="status-indicator">
-                <span class="blinking-dot"></span>
-                <span class="online-text">Online (مباشر)</span>
-            </div>
-        </div>
-        """,
-      unsafe_allow_html=True,
-  )
-else:
-  strlit.markdown(
-      f"""
-        <div class="status-badge" style="border-color: #94a3b8; background: #e2e8f0;">
-            {dish_img_tag}
-            <div class="status-indicator">
-                <span style="font-weight: 800; color: #475569; font-size: 14px;">أرشيف تاريخي ({selected_date_str})</span>
-            </div>
-        </div>
-        """,
-      unsafe_allow_html=True,
-  )
 
 main_loading_overlay = show_loading_overlay("جاري تحديث بيانات BioTime...")
 try:
@@ -2119,13 +2197,6 @@ try:
   hide_loading_overlay(main_loading_overlay)
   main_loading_overlay = None
 
-  strlit.markdown(
-      '<div class="gp-app-hero">'
-      '<div class="gp-app-hero-title">📡 Golden Palace • BioTime</div>'
-      '<div class="gp-app-hero-subtitle">حضور يومي • تقرير شهري • نسخة احتياطية</div>'
-      '</div>',
-      unsafe_allow_html=True,
-  )
   daily_tab, monthly_tab, backup_tab = strlit.tabs([
       "📅 الحضور اليومي",
       "📊 التقرير الشهري",
