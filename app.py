@@ -2,6 +2,9 @@ import base64
 import hashlib
 from datetime import datetime, timedelta
 import io
+import json
+import sqlite3
+import tempfile
 import unicodedata
 import re
 import zoneinfo
@@ -17,7 +20,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-APPROVE-MISSING-STAFF-2026-08-31"
+APP_VERSION = "BIO-ATTENDANCE-WITH-BIOTIME-BACKUP-2026-09-05"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -696,6 +699,501 @@ def get_auth_token():
     return None
 
 
+
+# ==========================================
+# 2B. BIOTIME BACKUP (READ-ONLY)
+# ==========================================
+# Core endpoints documented by BioTime and already used by this app. Extra API
+# routes are discovered read-only from API roots when BioTime exposes a route map.
+BIOTIME_BACKUP_ENDPOINTS = (
+    ("employees", ("/personnel/api/employees/",)),
+    ("departments", ("/personnel/api/departments/",)),
+    ("areas", ("/personnel/api/areas/",)),
+    ("terminals", ("/iclock/api/terminals/", "/iclock/api/devices/")),
+    ("transactions", ("/iclock/api/transactions/",)),
+    ("leave", ("/att/api/leave/", "/iclock/api/leave/")),
+)
+
+BIOTIME_OPTIONAL_BACKUP_ENDPOINTS = (
+    ("positions", ("/personnel/api/positions/",)),
+    ("holidays", ("/att/api/holidays/",)),
+    ("timetables", ("/att/api/timetables/",)),
+    ("shifts", ("/att/api/shifts/",)),
+    ("schedules", ("/att/api/schedules/", "/att/api/employee-schedules/")),
+)
+
+
+def _backup_json_default(value):
+  if isinstance(value, (datetime,)):
+    return value.isoformat()
+  if hasattr(value, "isoformat"):
+    try:
+      return value.isoformat()
+    except Exception:
+      pass
+  return str(value)
+
+
+def _backup_extract_rows(payload):
+  if isinstance(payload, list):
+    return [item for item in payload if isinstance(item, dict)]
+  if not isinstance(payload, dict):
+    return []
+  for key in ("data", "results", "items", "rows"):
+    rows = payload.get(key)
+    if isinstance(rows, list):
+      return [item for item in rows if isinstance(item, dict)]
+  # An object-info endpoint can legitimately return one record instead of a list.
+  if payload and not any(key in payload for key in ("count", "next", "previous")):
+    scalar_or_nested = any(not isinstance(value, str) or value for value in payload.values())
+    if scalar_or_nested:
+      return [payload]
+  return []
+
+
+def _backup_resolve_url(path_or_url):
+  raw = str(path_or_url or "").strip()
+  if raw.startswith("http://") or raw.startswith("https://"):
+    return raw
+  if not raw.startswith("/"):
+    raw = "/" + raw
+  return BASE_URL + raw
+
+
+def _backup_fetch_pages(session, path_or_url, headers, page_size=5000, max_pages=10000):
+  """Read a BioTime list endpoint completely without modifying server data."""
+  url = _backup_resolve_url(path_or_url)
+  params = {"page_size": page_size}
+  pages = []
+  rows = []
+  seen_requests = set()
+  status_code = None
+  error = ""
+
+  for page_number in range(1, max_pages + 1):
+    request_key = (url, tuple(sorted((params or {}).items())))
+    if request_key in seen_requests:
+      break
+    seen_requests.add(request_key)
+
+    try:
+      response = session.get(url, headers=headers, params=params, timeout=45)
+    except requests.RequestException as exc:
+      error = str(exc)
+      break
+
+    status_code = response.status_code
+    if response.status_code != 200:
+      error = f"HTTP {response.status_code}: {response.text[:500]}"
+      break
+
+    try:
+      payload = response.json()
+    except ValueError:
+      error = "Response was not JSON"
+      break
+
+    pages.append(payload)
+    page_rows = _backup_extract_rows(payload)
+    rows.extend(page_rows)
+
+    if isinstance(payload, dict):
+      next_link = payload.get("next")
+      if next_link:
+        url = _backup_resolve_url(next_link)
+        params = None
+        continue
+
+      count_value = payload.get("count")
+      try:
+        count_value = int(count_value)
+      except (TypeError, ValueError):
+        count_value = None
+
+      if count_value is not None and len(rows) < count_value and page_rows:
+        url = _backup_resolve_url(path_or_url)
+        params = {"page_size": page_size, "page": page_number + 1}
+        continue
+
+    # No next link and no remaining count means the endpoint is complete.
+    break
+
+  return {
+      "url": _backup_resolve_url(path_or_url),
+      "status_code": status_code,
+      "error": error,
+      "pages": pages,
+      "rows": rows,
+  }
+
+
+def _backup_try_endpoint_group(session, endpoint_paths, headers):
+  attempts = []
+  for endpoint in endpoint_paths:
+    result = _backup_fetch_pages(session, endpoint, headers)
+    attempts.append({
+        "endpoint": endpoint,
+        "status_code": result.get("status_code"),
+        "error": result.get("error", ""),
+    })
+    if result.get("status_code") == 200:
+      result["selected_endpoint"] = endpoint
+      result["attempts"] = attempts
+      return result
+  return {
+      "url": _backup_resolve_url(endpoint_paths[0]),
+      "selected_endpoint": "",
+      "status_code": attempts[-1]["status_code"] if attempts else None,
+      "error": attempts[-1]["error"] if attempts else "No endpoint configured",
+      "pages": [],
+      "rows": [],
+      "attempts": attempts,
+  }
+
+
+def _backup_safe_name(value):
+  safe = re.sub(r"[^A-Za-z0-9_]+", "_", str(value or "").strip()).strip("_")
+  return safe[:80] or "dataset"
+
+
+def _backup_csv_bytes(rows):
+  if not rows:
+    return b""
+  columns = []
+  seen = set()
+  for row in rows:
+    for key in row.keys():
+      key = str(key)
+      if key not in seen:
+        seen.add(key)
+        columns.append(key)
+  output = io.StringIO()
+  import csv
+  writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+  writer.writeheader()
+  for row in rows:
+    flat = {}
+    for column in columns:
+      value = row.get(column)
+      if isinstance(value, (dict, list, tuple)):
+        value = json.dumps(value, ensure_ascii=False, default=_backup_json_default)
+      elif value is None:
+        value = ""
+      flat[column] = value
+    writer.writerow(flat)
+  return output.getvalue().encode("utf-8-sig")
+
+
+def _backup_sqlite_identifier(value, used):
+  base = _backup_safe_name(value).lower()
+  if base and base[0].isdigit():
+    base = "c_" + base
+  candidate = base or "column"
+  suffix = 2
+  while candidate in used:
+    candidate = f"{base}_{suffix}"
+    suffix += 1
+  used.add(candidate)
+  return candidate
+
+
+def _backup_write_sqlite(db_path, datasets, manifest):
+  conn = sqlite3.connect(db_path)
+  try:
+    conn.execute(
+        "CREATE TABLE backup_manifest (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    for key, value in manifest.items():
+      conn.execute(
+          "INSERT OR REPLACE INTO backup_manifest(key, value) VALUES (?, ?)",
+          (str(key), json.dumps(value, ensure_ascii=False, default=_backup_json_default)),
+      )
+
+    used_tables = set()
+    for dataset_name, dataset in datasets.items():
+      rows = dataset.get("rows", [])
+      table_name = _backup_sqlite_identifier(dataset_name, used_tables)
+      if not rows:
+        conn.execute(
+            f'CREATE TABLE "{table_name}" (_record_json TEXT NOT NULL)'
+        )
+        continue
+
+      original_columns = []
+      seen_original = set()
+      for row in rows:
+        for key in row.keys():
+          key = str(key)
+          if key not in seen_original:
+            seen_original.add(key)
+            original_columns.append(key)
+
+      used_columns = {"_record_json"}
+      column_map = {}
+      for original in original_columns:
+        column_map[original] = _backup_sqlite_identifier(original, used_columns)
+
+      definitions = [f'"{column_map[column]}" TEXT' for column in original_columns]
+      definitions.append('"_record_json" TEXT NOT NULL')
+      conn.execute(f'CREATE TABLE "{table_name}" ({", ".join(definitions)})')
+
+      insert_columns = [column_map[column] for column in original_columns] + ["_record_json"]
+      placeholders = ",".join("?" for _ in insert_columns)
+      quoted_columns = ",".join(f'"{column}"' for column in insert_columns)
+      sql = f'INSERT INTO "{table_name}" ({quoted_columns}) VALUES ({placeholders})'
+
+      values_to_insert = []
+      for row in rows:
+        values = []
+        for original in original_columns:
+          value = row.get(original)
+          if isinstance(value, (dict, list, tuple)):
+            value = json.dumps(value, ensure_ascii=False, default=_backup_json_default)
+          elif value is None:
+            value = None
+          else:
+            value = str(value)
+          values.append(value)
+        values.append(json.dumps(row, ensure_ascii=False, default=_backup_json_default))
+        values_to_insert.append(values)
+      conn.executemany(sql, values_to_insert)
+    conn.commit()
+  finally:
+    conn.close()
+
+
+def _backup_discover_routes(session, headers):
+  """Read API root maps when BioTime exposes them; never performs POST/PATCH/DELETE."""
+  catalogs = {}
+  discovered = {}
+  base_host = re.sub(r"^https?://", "", BASE_URL).split("/", 1)[0]
+
+  for root in ("/personnel/api/", "/iclock/api/", "/att/api/"):
+    url = _backup_resolve_url(root)
+    try:
+      response = session.get(url, headers=headers, timeout=20)
+      status = response.status_code
+      payload = response.json() if status == 200 else {"error": response.text[:500]}
+    except Exception as exc:
+      status = None
+      payload = {"error": str(exc)}
+    catalogs[root] = {"status_code": status, "payload": payload}
+
+    if status != 200 or not isinstance(payload, dict):
+      continue
+    for key, value in payload.items():
+      if not isinstance(value, str):
+        continue
+      candidate = value.strip()
+      if not (candidate.startswith("http://") or candidate.startswith("https://") or candidate.startswith("/")):
+        continue
+      absolute = _backup_resolve_url(candidate)
+      candidate_host = re.sub(r"^https?://", "", absolute).split("/", 1)[0]
+      if candidate_host != base_host or "/api/" not in absolute:
+        continue
+      dataset_key = f"discovered_{_backup_safe_name(root)}_{_backup_safe_name(key)}"
+      discovered[dataset_key] = absolute
+  return catalogs, discovered
+
+
+def _backup_collect_media_urls(value, found, key_hint=""):
+  if isinstance(value, dict):
+    for key, child in value.items():
+      _backup_collect_media_urls(child, found, str(key))
+    return
+  if isinstance(value, list):
+    for child in value:
+      _backup_collect_media_urls(child, found, key_hint)
+    return
+  if not isinstance(value, str):
+    return
+
+  key_lower = str(key_hint or "").lower()
+  if not any(marker in key_lower for marker in ("photo", "image", "avatar", "picture")):
+    return
+  raw = value.strip()
+  if not raw or raw.startswith("data:"):
+    return
+  if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("/media/"):
+    found.add(_backup_resolve_url(raw))
+
+
+def _backup_download_media(session, headers, datasets, zip_handle, manifest):
+  urls = set()
+  for dataset in datasets.values():
+    for row in dataset.get("rows", []):
+      _backup_collect_media_urls(row, urls)
+
+  base_host = re.sub(r"^https?://", "", BASE_URL).split("/", 1)[0]
+  downloaded = 0
+  failed = []
+  for index, url in enumerate(sorted(urls), start=1):
+    host = re.sub(r"^https?://", "", url).split("/", 1)[0]
+    if host != base_host:
+      failed.append({"url": url, "reason": "external host skipped"})
+      continue
+    try:
+      response = session.get(url, headers=headers, timeout=30)
+      if response.status_code != 200:
+        failed.append({"url": url, "reason": f"HTTP {response.status_code}"})
+        continue
+      content_type = response.headers.get("Content-Type", "application/octet-stream")
+      extension = ".bin"
+      if "jpeg" in content_type or "jpg" in content_type:
+        extension = ".jpg"
+      elif "png" in content_type:
+        extension = ".png"
+      elif "webp" in content_type:
+        extension = ".webp"
+      elif "gif" in content_type:
+        extension = ".gif"
+      zip_handle.writestr(f"media/media_{index:05d}{extension}", response.content)
+      downloaded += 1
+    except requests.RequestException as exc:
+      failed.append({"url": url, "reason": str(exc)})
+
+  manifest["media"] = {
+      "urls_found": len(urls),
+      "downloaded": downloaded,
+      "failed": failed,
+  }
+
+
+def build_biotime_backup(progress_callback=None):
+  """Create a read-only BioTime snapshot: raw JSON + CSV + SQLite + manifest."""
+  token = get_auth_token()
+  if not token:
+    raise RuntimeError("تعذر المصادقة مع BioTime")
+
+  headers = {
+      "Authorization": f"Token {token}",
+      "Accept": "application/json",
+  }
+  session = requests.Session()
+  datasets = {}
+  manifest = {
+      "backup_format_version": 1,
+      "created_at": datetime.now(SYRIA_TZ).isoformat(),
+      "source_base_url": BASE_URL,
+      "company": COMPANY,
+      "app_version": APP_VERSION,
+      "read_only": True,
+      "datasets": {},
+      "restore_note": (
+          "Raw JSON is the authoritative copy. BioTime Cloud restore capability depends "
+          "on which write/import APIs ZKTeco exposes to this tenant; this ZIP is not a "
+          "server/database image."
+      ),
+  }
+
+  endpoint_groups = list(BIOTIME_BACKUP_ENDPOINTS) + list(BIOTIME_OPTIONAL_BACKUP_ENDPOINTS)
+  total_steps = len(endpoint_groups) + 2
+  completed_steps = 0
+
+  for dataset_name, endpoint_paths in endpoint_groups:
+    if progress_callback:
+      progress_callback(completed_steps / total_steps, f"جاري نسخ {dataset_name}...")
+    result = _backup_try_endpoint_group(session, endpoint_paths, headers)
+    datasets[dataset_name] = result
+    manifest["datasets"][dataset_name] = {
+        "endpoint": result.get("selected_endpoint", ""),
+        "status_code": result.get("status_code"),
+        "rows": len(result.get("rows", [])),
+        "pages": len(result.get("pages", [])),
+        "error": result.get("error", ""),
+        "attempts": result.get("attempts", []),
+    }
+    completed_steps += 1
+
+  if progress_callback:
+    progress_callback(completed_steps / total_steps, "جاري اكتشاف بيانات API إضافية...")
+  api_catalogs, discovered_routes = _backup_discover_routes(session, headers)
+  manifest["api_catalogs"] = {
+      root: {"status_code": info.get("status_code")}
+      for root, info in api_catalogs.items()
+  }
+
+  known_urls = {
+      _backup_resolve_url(path)
+      for _name, paths in endpoint_groups
+      for path in paths
+  }
+  # Back up additional list endpoints advertised by BioTime, up to a generous
+  # limit. Failures are recorded rather than aborting the whole snapshot.
+  for dataset_name, endpoint_url in list(discovered_routes.items())[:100]:
+    if endpoint_url in known_urls:
+      continue
+    result = _backup_fetch_pages(session, endpoint_url, headers)
+    if result.get("status_code") == 200:
+      datasets[dataset_name] = result
+      manifest["datasets"][dataset_name] = {
+          "endpoint": endpoint_url,
+          "status_code": result.get("status_code"),
+          "rows": len(result.get("rows", [])),
+          "pages": len(result.get("pages", [])),
+          "error": result.get("error", ""),
+      }
+
+  completed_steps += 1
+  if progress_callback:
+    progress_callback(completed_steps / total_steps, "جاري إنشاء JSON / CSV / SQLite...")
+
+  output = io.BytesIO()
+  with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
+    for dataset_name, dataset in datasets.items():
+      safe_name = _backup_safe_name(dataset_name)
+      raw_payload = {
+          "source_url": dataset.get("url"),
+          "status_code": dataset.get("status_code"),
+          "error": dataset.get("error", ""),
+          "pages": dataset.get("pages", []),
+      }
+      zout.writestr(
+          f"raw/{safe_name}.json",
+          json.dumps(raw_payload, ensure_ascii=False, indent=2, default=_backup_json_default),
+      )
+      csv_bytes = _backup_csv_bytes(dataset.get("rows", []))
+      zout.writestr(f"csv/{safe_name}.csv", csv_bytes)
+
+    zout.writestr(
+        "raw/api_catalogs.json",
+        json.dumps(api_catalogs, ensure_ascii=False, indent=2, default=_backup_json_default),
+    )
+
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as temp_db:
+      temp_db_path = temp_db.name
+    try:
+      _backup_write_sqlite(temp_db_path, datasets, manifest)
+      with open(temp_db_path, "rb") as db_file:
+        zout.writestr("sqlite/biotime_backup.sqlite", db_file.read())
+    finally:
+      try:
+        import os
+        os.remove(temp_db_path)
+      except OSError:
+        pass
+
+    _backup_download_media(session, headers, datasets, zout, manifest)
+
+    restore_readme = "BioTime Cloud backup package\n\n"
+    restore_readme += "1. raw/*.json contains the authoritative API responses page-by-page.\n"
+    restore_readme += "2. csv/*.csv is provided for inspection and spreadsheet recovery.\n"
+    restore_readme += "3. sqlite/biotime_backup.sqlite contains a queryable snapshot.\n"
+    restore_readme += "4. media/ contains same-host photos/images that were exposed as downloadable URLs.\n"
+    restore_readme += "5. Restore into BioTime must be tested on a safe tenant first. Master data (departments/areas) should be restored before employees, followed by schedules/configuration and then transactions.\n"
+    restore_readme += "6. This package cannot contain server-only database tables, biometric templates, or configuration that BioTime Cloud does not expose to the account/API.\n"
+    zout.writestr("RESTORE_README.txt", restore_readme)
+    zout.writestr(
+        "manifest.json",
+        json.dumps(manifest, ensure_ascii=False, indent=2, default=_backup_json_default),
+    )
+
+  output.seek(0)
+  if progress_callback:
+    progress_callback(1.0, "اكتملت النسخة الاحتياطية.")
+  return output.getvalue(), manifest
+
+
 def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
   token = get_auth_token()
   if not token:
@@ -1175,6 +1673,73 @@ try:
   main_loading_overlay = None
 
   render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
+
+  # 🛡️ INDEPENDENT BIOTIME BACKUP
+  with strlit.expander("🛡️ نسخة احتياطية مستقلة من BioTime", expanded=False):
+    strlit.caption(
+        "ينشئ ملف ZIP للتحميل يحتوي على Raw JSON + CSV + SQLite + الصور/الوسائط "
+        "التي يسمح BioTime Cloud بقراءتها. العملية للقراءة فقط ولا تعدّل أي بيانات."
+    )
+    strlit.warning(
+        "ملف النسخة الاحتياطية يحتوي على بيانات موظفين حساسة. احفظه في مكان خاص وآمن."
+    )
+
+    if strlit.button(
+        "🛡️ إنشاء نسخة احتياطية الآن",
+        use_container_width=True,
+        key="create_biotime_backup",
+    ):
+      backup_overlay = show_loading_overlay("جاري إنشاء نسخة BioTime الاحتياطية...")
+      backup_progress = strlit.progress(0, text="بدء النسخ الاحتياطي...")
+      try:
+        def update_backup_progress(value, message):
+          backup_progress.progress(min(max(float(value), 0.0), 1.0), text=message)
+
+        backup_bytes, backup_manifest = build_biotime_backup(update_backup_progress)
+        timestamp = datetime.now(SYRIA_TZ).strftime("%Y-%m-%d_%H%M")
+        strlit.session_state["biotime_backup_bytes"] = backup_bytes
+        strlit.session_state["biotime_backup_filename"] = f"BioTime_Backup_{timestamp}.zip"
+        strlit.session_state["biotime_backup_manifest"] = backup_manifest
+        backup_progress.empty()
+        hide_loading_overlay(backup_overlay)
+        backup_overlay = None
+      except Exception as backup_error:
+        backup_progress.empty()
+        hide_loading_overlay(backup_overlay)
+        backup_overlay = None
+        strlit.error("تعذر إنشاء النسخة الاحتياطية.")
+        with strlit.expander("🛠️ تفاصيل خطأ النسخ الاحتياطي", expanded=False):
+          strlit.code(str(backup_error))
+
+    if "biotime_backup_bytes" in strlit.session_state:
+      backup_manifest = strlit.session_state.get("biotime_backup_manifest", {})
+      dataset_summary = backup_manifest.get("datasets", {})
+      successful_sets = sum(
+          1 for info in dataset_summary.values() if info.get("status_code") == 200
+      )
+      total_rows = sum(
+          int(info.get("rows", 0) or 0) for info in dataset_summary.values()
+      )
+      strlit.success(
+          f"النسخة جاهزة: {successful_sets} مجموعات بيانات، {total_rows:,} سجل محفوظ."
+      )
+      strlit.download_button(
+          "📥 تحميل نسخة BioTime الاحتياطية",
+          data=strlit.session_state["biotime_backup_bytes"],
+          file_name=strlit.session_state["biotime_backup_filename"],
+          mime="application/zip",
+          use_container_width=True,
+          key="download_biotime_backup",
+      )
+      failed_sets = [
+          name for name, info in dataset_summary.items()
+          if info.get("status_code") != 200
+      ]
+      if failed_sets:
+        strlit.caption(
+            "ملاحظة: بعض واجهات BioTime غير متاحة لهذا الاشتراك/الإصدار: "
+            + ", ".join(failed_sets)
+        )
 
   # 📥 UPLOAD TEMPLATE & FILL ATTENDANCE VALUES OR GENERATE DEFAULT REPORT
   col_gen, col_up = strlit.columns(2)
