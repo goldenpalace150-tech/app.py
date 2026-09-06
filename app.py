@@ -1031,6 +1031,16 @@ strlit.markdown(
         color: #172033 !important;
         background: #f8fafc !important;
     }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) div[data-baseweb="select"],
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) div[data-baseweb="select"] * {
+        color: #172033 !important;
+        -webkit-text-fill-color: #172033 !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) div[data-baseweb="select"] {
+        direction: rtl !important;
+        unicode-bidi: plaintext !important;
+    }
     div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) label p {
         color: #66758b !important;
         font-size: 13px !important;
@@ -1093,10 +1103,10 @@ TOKEN_URL = strlit.secrets["biotime"]["token_url"]
 EMAIL = strlit.secrets["biotime"]["email"]
 PASSWORD = strlit.secrets["biotime"]["password"]
 COMPANY = strlit.secrets["biotime"]["company"]
-# Manual Log writes are opt-in. Set manual_punch_write_enabled=true in the
-# [biotime] Streamlit Secrets section only after rotating the exposed password.
+# Manual Log is enabled after the captured add/approve payload was verified.
+# Set manual_punch_write_enabled=false in [biotime] for an emergency kill switch.
 BIOTIME_MANUAL_WRITE_ENABLED = str(
-    strlit.secrets["biotime"].get("manual_punch_write_enabled", False)
+    strlit.secrets["biotime"].get("manual_punch_write_enabled", True)
 ).strip().lower() in ("1", "true", "yes", "on")
 BIOTIME_MANUAL_WRITE_LOCKED = not BIOTIME_MANUAL_WRITE_ENABLED
 
@@ -1922,18 +1932,20 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
           max_value=datetime.now(SYRIA_TZ).date(),
           key="manual_punch_date",
       )
+    selected_name = html.escape(
+        clean_txt(active_employees[selected_employee].get("name", ""))
+    )
+    strlit.markdown(
+        f'<div style="margin:-2px 0 9px;color:#526178;font-size:13px">'
+        f'Selected employee: <strong dir="rtl" style="color:#172033">'
+        f'{selected_name}</strong> · ID {html.escape(str(selected_employee))}</div>',
+        unsafe_allow_html=True,
+    )
     form_time = strlit.time_input(
         "Missing time",
         value=datetime.now(SYRIA_TZ).time().replace(second=0, microsecond=0),
         key="manual_punch_time",
     )
-
-    preview_error = None
-    try:
-      existing = fetch_employee_punches_for_day(selected_employee, form_date)
-    except Exception as error:
-      existing = []
-      preview_error = str(error)
 
     selected_daily_row = None
     if form_date == default_date:
@@ -1946,6 +1958,41 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
           None,
       )
     daily_status = str((selected_daily_row or {}).get("Status", ""))
+
+    # The selected dashboard date is already loaded from BioTime. Reuse those
+    # punches instead of making another network request on every widget change.
+    preview_error = None
+    existing = []
+    if selected_daily_row is not None:
+      for clock_key, state_name in (("Clock In", "IN"), ("Clock Out", "OUT")):
+        clock_value = str(selected_daily_row.get(clock_key, "") or "").strip()
+        if not clock_value:
+          continue
+        try:
+          clock_time = datetime.strptime(clock_value[:5], "%H:%M").time()
+          clock_date = form_date
+          if state_name == "OUT" and existing:
+            if clock_time <= existing[0]["datetime"].time():
+              clock_date = form_date + timedelta(days=1)
+          clock_datetime = datetime.combine(clock_date, clock_time)
+          existing.append({
+              "datetime": clock_datetime,
+              "time": clock_datetime.strftime("%d/%m/%Y %H:%M"),
+              "state": state_name,
+              "device": "BioTime dashboard cache",
+          })
+        except ValueError:
+          # Fall back to a fresh transaction read only when the loaded report
+          # contains a non-standard clock format.
+          existing = []
+          selected_daily_row = None
+          break
+    if selected_daily_row is None:
+      try:
+        existing = fetch_employee_punches_for_day(selected_employee, form_date)
+      except Exception as error:
+        existing = []
+        preview_error = str(error)
 
     detected_kind = None
     case_state = "unavailable" if preview_error else "empty"
@@ -2560,6 +2607,7 @@ def build_biotime_backup(progress_callback=None):
   return output.getvalue(), manifest
 
 
+@strlit.cache_data(ttl=60, show_spinner=False)
 def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today):
   token = get_auth_token()
   if not token:
