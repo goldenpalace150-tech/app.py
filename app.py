@@ -1595,18 +1595,61 @@ def create_biotime_web_session():
   return session, csrf_token
 
 
-def _manual_log_id_from_payload(payload, employee_uuid, punch_datetime):
-  """Find the exact Manual Log row ID in a response/table JSON structure."""
-  target_time = punch_datetime.strftime("%Y-%m-%d %H:%M:%S")
-  target_uuid = str(employee_uuid)
+def _manual_log_id_from_payload(
+    payload, employee_uuid, employee_code, punch_datetime
+):
+  """Find one exact Manual Log row across BioTime's different table formats."""
+  target_uuid = str(employee_uuid).strip().casefold()
+  target_code = _normalize_employee_code(employee_code).casefold()
+  time_needles = {
+      punch_datetime.strftime("%Y%m%d%H%M"),
+      punch_datetime.strftime("%d%m%Y%H%M"),
+  }
+
+  def flattened_fields(value, prefix=""):
+    fields = []
+    if isinstance(value, dict):
+      for key, child in value.items():
+        field_name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(child, (dict, list)):
+          fields.extend(flattened_fields(child, field_name))
+        else:
+          fields.append((field_name.casefold(), str(child).strip()))
+    elif isinstance(value, list):
+      for child in value:
+        fields.extend(flattened_fields(child, prefix))
+    return fields
+
+  def row_matches(value):
+    fields = flattened_fields(value)
+    employee_match = False
+    time_match = False
+    for field_name, raw_value in fields:
+      value_text = raw_value.casefold()
+      if any(
+          label in field_name
+          for label in ("employee", "emp_code", "staff", "personnel")
+      ):
+        normalized_value = _normalize_employee_code(raw_value).casefold()
+        if (
+            (target_uuid and target_uuid in value_text)
+            or normalized_value == target_code
+            or re.search(
+                rf"(?<!\d){re.escape(target_code)}(?!\d)", value_text
+            )
+        ):
+          employee_match = True
+      if "time" in field_name or "date" in field_name:
+        time_digits = re.sub(r"\D", "", raw_value)
+        if any(needle in time_digits for needle in time_needles):
+          time_match = True
+    return employee_match and time_match
 
   def walk(value):
     if isinstance(value, dict):
-      combined = json.dumps(value, ensure_ascii=False, default=str)
-      if target_time in combined and target_uuid in combined:
-        record_id = value.get("id") or value.get("pk")
-        if record_id not in (None, ""):
-          return str(record_id)
+      record_id = value.get("id") or value.get("pk")
+      if record_id not in (None, "") and row_matches(value):
+        return str(record_id)
       for child in value.values():
         found = walk(child)
         if found:
@@ -1621,12 +1664,35 @@ def _manual_log_id_from_payload(payload, employee_uuid, punch_datetime):
   return walk(payload)
 
 
-def find_manual_log_id(session, employee_uuid, punch_datetime):
+def _manual_log_created_id(payload):
+  """Read an ID returned directly by AddManualLog without mistaking status codes."""
+  if isinstance(payload, dict):
+    for key in ("id", "pk", "manual_log_id", "record_id"):
+      value = payload.get(key)
+      if value not in (None, ""):
+        return str(value)
+    data_value = payload.get("data")
+    if isinstance(data_value, (int, str)) and str(data_value).strip().isdigit():
+      if int(str(data_value).strip()) > 0:
+        return str(data_value).strip()
+    for value in payload.values():
+      found = _manual_log_created_id(value)
+      if found:
+        return found
+  elif isinstance(payload, list):
+    for value in payload:
+      found = _manual_log_created_id(value)
+      if found:
+        return found
+  return ""
+
+
+def find_manual_log_id(session, employee_uuid, employee_code, punch_datetime):
   """Locate an existing exact Manual Log so retries never create duplicates."""
   config = get_manual_punch_config()
   response = session.get(
       f"{BASE_URL}{config['table_endpoint']}",
-      params={"page": 1, "limit": 100},
+      params={"page": 1, "limit": 500},
       headers={"X-Requested-With": "XMLHttpRequest"},
       timeout=20,
   )
@@ -1634,7 +1700,7 @@ def find_manual_log_id(session, employee_uuid, punch_datetime):
     return ""
   try:
     return _manual_log_id_from_payload(
-        response.json(), employee_uuid, punch_datetime
+        response.json(), employee_uuid, employee_code, punch_datetime
     )
   except ValueError:
     return ""
@@ -1745,7 +1811,9 @@ def create_manual_biotime_punch(
 
   session, csrf_token = create_biotime_web_session()
   endpoint_url = f"{BASE_URL}{config['endpoint']}"
-  manual_log_id = find_manual_log_id(session, employee_uuid, punch_datetime)
+  manual_log_id = find_manual_log_id(
+      session, employee_uuid, employee_code, punch_datetime
+  )
   add_payload = {
       "employee": str(employee_uuid),
       "punch_time": punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1785,13 +1853,21 @@ def create_manual_biotime_punch(
           f"BioTime rejected AddManualLog (HTTP {response.status_code})."
       )
     try:
-      manual_log_id = _manual_log_id_from_payload(
-          response.json(), employee_uuid, punch_datetime
-      )
+      response_payload = response.json()
+      manual_log_id = _manual_log_created_id(response_payload)
+      if not manual_log_id:
+        manual_log_id = _manual_log_id_from_payload(
+            response_payload,
+            employee_uuid,
+            employee_code,
+            punch_datetime,
+        )
     except ValueError:
       manual_log_id = ""
     if not manual_log_id:
-      manual_log_id = find_manual_log_id(session, employee_uuid, punch_datetime)
+      manual_log_id = find_manual_log_id(
+          session, employee_uuid, employee_code, punch_datetime
+      )
     if not manual_log_id:
       raise RuntimeError(
           "Manual Log was created but its exact record ID could not be identified; "
