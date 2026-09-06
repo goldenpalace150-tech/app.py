@@ -1,11 +1,13 @@
 import base64
 import calendar
 import hashlib
+import html
 from datetime import datetime, timedelta
 import io
 import json
 import sqlite3
 import tempfile
+import time
 import unicodedata
 import re
 import zoneinfo
@@ -22,10 +24,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-PRO-DASHBOARD-2026-09-06"
-# Emergency safety lock. Keep BioTime transaction creation disabled until the
-# tenant's Manual Log is reviewed and the exact write payload is confirmed.
-BIOTIME_MANUAL_WRITE_LOCKED = True
+APP_VERSION = "BIO-ATTENDANCE-MANUAL-LOG-APPROVAL-2026-09-06"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -1094,6 +1093,12 @@ TOKEN_URL = strlit.secrets["biotime"]["token_url"]
 EMAIL = strlit.secrets["biotime"]["email"]
 PASSWORD = strlit.secrets["biotime"]["password"]
 COMPANY = strlit.secrets["biotime"]["company"]
+# Manual Log writes are opt-in. Set manual_punch_write_enabled=true in the
+# [biotime] Streamlit Secrets section only after rotating the exposed password.
+BIOTIME_MANUAL_WRITE_ENABLED = str(
+    strlit.secrets["biotime"].get("manual_punch_write_enabled", False)
+).strip().lower() in ("1", "true", "yes", "on")
+BIOTIME_MANUAL_WRITE_LOCKED = not BIOTIME_MANUAL_WRITE_ENABLED
 
 if "debug_logs" not in strlit.session_state:
   strlit.session_state["debug_logs"] = []
@@ -1491,20 +1496,15 @@ def _normalize_employee_code(value):
 
 
 def get_manual_punch_config():
-  """Load tenant-specific BioTime write settings without hardcoding credentials."""
-  config = strlit.secrets["biotime"]
+  """Return the tenant payload captured from BioTime's Manual Log screen."""
   return {
-      "endpoint": str(
-          config.get("manual_punch_endpoint", "/iclock/api/transactions/")
-      ).strip(),
-      "employee_field": str(config.get("manual_punch_employee_field", "emp_code")),
-      "time_field": str(config.get("manual_punch_time_field", "punch_time")),
-      "state_field": str(config.get("manual_punch_state_field", "punch_state")),
-      "in_value": config.get("manual_punch_in_value", "0"),
-      "out_value": config.get("manual_punch_out_value", "1"),
-      "terminal_field": str(config.get("manual_punch_terminal_field", "")).strip(),
-      "terminal_value": str(config.get("manual_punch_terminal_value", "")).strip(),
-      "note_field": str(config.get("manual_punch_note_field", "")).strip(),
+      "endpoint": "/att/manuallog/action/",
+      "table_endpoint": "/att/manuallog/table/",
+      "add_action": "4164644d616e75616c4c6f67",  # AddManualLog
+      "approve_action": "4d616e75616c4c6f67417070726f7665",  # ManualLogApprove
+      "approved_status": "2",
+      "in_value": "0",
+      "out_value": "1",
   }
 
 
@@ -1517,6 +1517,117 @@ def _manual_punch_headers():
       "Content-Type": "application/json",
       "Accept": "application/json",
   }
+
+
+def _csrf_from_page(session, response):
+  """Extract Django's CSRF value from cookies or the current HTML form."""
+  cookie_token = session.cookies.get("csrftoken")
+  if cookie_token:
+    return str(cookie_token)
+  match = re.search(
+      r'name=["\']csrfmiddlewaretoken["\'][^>]*value=["\']([^"\']+)',
+      response.text,
+      flags=re.IGNORECASE,
+  )
+  if not match:
+    match = re.search(
+        r'value=["\']([^"\']+)["\'][^>]*name=["\']csrfmiddlewaretoken["\']',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+  return html.unescape(match.group(1)) if match else ""
+
+
+def create_biotime_web_session():
+  """Open the same authenticated Django session used by BioTime Manual Log."""
+  session = requests.Session()
+  session.headers.update({
+      "User-Agent": "Golden-Palace-HR-App/1.0",
+      "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+  })
+  login_url = f"{BASE_URL}/login/"
+  login_page = session.get(login_url, timeout=20)
+  if login_page.status_code >= 400:
+    raise RuntimeError(f"BioTime login page failed (HTTP {login_page.status_code}).")
+  csrf_token = _csrf_from_page(session, login_page)
+  if not csrf_token:
+    raise RuntimeError("BioTime did not provide a CSRF token for login.")
+
+  login_response = session.post(
+      login_url,
+      data={
+          "username": EMAIL,
+          "company_name": COMPANY,
+          "password": PASSWORD,
+          "login_user": "user",
+          "csrfmiddlewaretoken": csrf_token,
+      },
+      headers={
+          "Referer": login_url,
+          "Origin": BASE_URL,
+          "X-CSRFToken": csrf_token,
+          "X-Requested-With": "XMLHttpRequest",
+      },
+      timeout=20,
+  )
+  if login_response.status_code not in (200, 302):
+    raise RuntimeError(
+        f"BioTime web login failed (HTTP {login_response.status_code})."
+    )
+
+  manual_page_url = f"{BASE_URL}/att/manuallog/"
+  manual_page = session.get(manual_page_url, timeout=20)
+  if manual_page.status_code != 200 or "/login/" in str(manual_page.url):
+    raise RuntimeError("BioTime did not create an authenticated Manual Log session.")
+  csrf_token = _csrf_from_page(session, manual_page)
+  if not csrf_token:
+    raise RuntimeError("BioTime Manual Log did not provide a CSRF token.")
+  return session, csrf_token
+
+
+def _manual_log_id_from_payload(payload, employee_uuid, punch_datetime):
+  """Find the exact Manual Log row ID in a response/table JSON structure."""
+  target_time = punch_datetime.strftime("%Y-%m-%d %H:%M:%S")
+  target_uuid = str(employee_uuid)
+
+  def walk(value):
+    if isinstance(value, dict):
+      combined = json.dumps(value, ensure_ascii=False, default=str)
+      if target_time in combined and target_uuid in combined:
+        record_id = value.get("id") or value.get("pk")
+        if record_id not in (None, ""):
+          return str(record_id)
+      for child in value.values():
+        found = walk(child)
+        if found:
+          return found
+    elif isinstance(value, list):
+      for child in value:
+        found = walk(child)
+        if found:
+          return found
+    return ""
+
+  return walk(payload)
+
+
+def find_manual_log_id(session, employee_uuid, punch_datetime):
+  """Locate an existing exact Manual Log so retries never create duplicates."""
+  config = get_manual_punch_config()
+  response = session.get(
+      f"{BASE_URL}{config['table_endpoint']}",
+      params={"page": 1, "limit": 100},
+      headers={"X-Requested-With": "XMLHttpRequest"},
+      timeout=20,
+  )
+  if response.status_code != 200:
+    return ""
+  try:
+    return _manual_log_id_from_payload(
+        response.json(), employee_uuid, punch_datetime
+    )
+  except ValueError:
+    return ""
 
 
 def fetch_employee_punches_for_day(employee_code, work_date):
@@ -1581,30 +1692,38 @@ def fetch_employee_punches_for_day(employee_code, work_date):
 
 
 def test_manual_punch_permission():
-  """Probe the configured write route without creating or changing attendance."""
+  """Verify web-session access without creating or changing attendance."""
+  session, _csrf_token = create_biotime_web_session()
   config = get_manual_punch_config()
-  endpoint = "/" + config["endpoint"].lstrip("/")
-  response = requests.options(
-      f"{BASE_URL}{endpoint}", headers=_manual_punch_headers(), timeout=20
+  response = session.get(
+      f"{BASE_URL}{config['table_endpoint']}",
+      params={"page": 1, "limit": 1},
+      timeout=20,
   )
-  allow = response.headers.get("Allow", "")
-  reachable = response.status_code < 500
-  post_advertised = "POST" in allow.upper()
   return {
       "status_code": response.status_code,
-      "allow": allow,
-      "reachable": reachable,
-      "post_advertised": post_advertised,
+      "allow": "authenticated Manual Log session",
+      "reachable": response.status_code == 200,
+      "post_advertised": response.status_code == 200,
   }
 
 
 def create_manual_biotime_punch(
-    employee_code, punch_datetime, punch_kind, reason, operator_name
+    employee_code,
+    employee_uuid,
+    punch_datetime,
+    punch_kind,
+    reason,
+    operator_name,
 ):
-  """Create one configured BioTime transaction and verify it by reading it back."""
+  """Create, approve and verify exactly one BioTime Manual Log correction."""
   if BIOTIME_MANUAL_WRITE_LOCKED:
     raise RuntimeError(
-        "تم إيقاف الكتابة مؤقتاً لحماية بيانات BioTime حتى مراجعة Manual Log."
+        "Manual Log writing is disabled in Streamlit Secrets."
+    )
+  if not employee_uuid:
+    raise RuntimeError(
+        "BioTime did not return the employee UUID; no Manual Log was created."
     )
   config = get_manual_punch_config()
   existing = fetch_employee_punches_for_day(employee_code, punch_datetime.date())
@@ -1614,44 +1733,104 @@ def create_manual_biotime_punch(
   ):
     raise RuntimeError("توجد بصمة لنفس الموظف في الدقيقة نفسها؛ لم تتم إضافة نسخة مكررة.")
 
-  payload = {
-      config["employee_field"]: str(employee_code),
-      config["time_field"]: punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
-      config["state_field"]: (
+  session, csrf_token = create_biotime_web_session()
+  endpoint_url = f"{BASE_URL}{config['endpoint']}"
+  manual_log_id = find_manual_log_id(session, employee_uuid, punch_datetime)
+  add_payload = {
+      "employee": str(employee_uuid),
+      "punch_time": punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+      "punch_state": (
           config["in_value"] if punch_kind == "IN" else config["out_value"]
       ),
+      "work_code": "",
+      "reason": f"{reason} | {operator_name}",
+      "action_name": config["add_action"],
   }
-  if config["terminal_field"] and config["terminal_value"]:
-    payload[config["terminal_field"]] = config["terminal_value"]
-  if config["note_field"]:
-    payload[config["note_field"]] = (
-        f"Manual HR correction | {operator_name} | {reason}"
-    )
 
-  endpoint = "/" + config["endpoint"].lstrip("/")
-  response = requests.post(
-      f"{BASE_URL}{endpoint}",
-      headers=_manual_punch_headers(),
-      json=payload,
+  if not manual_log_id:
+    create_form = [
+        ("csrfmiddlewaretoken", csrf_token),
+        ("frame-search", str(employee_code)),
+        ("layTableCheckbox", "on"),
+        ("employee", add_payload["employee"]),
+        ("punch_time", add_payload["punch_time"]),
+        ("punch_state", add_payload["punch_state"]),
+        ("work_code", add_payload["work_code"]),
+        ("reason", add_payload["reason"]),
+        ("action_name", add_payload["action_name"]),
+    ]
+    response = session.post(
+        endpoint_url,
+        data=create_form,
+        headers={
+            "Referer": f"{BASE_URL}/att/manuallog/",
+            "Origin": BASE_URL,
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        timeout=20,
+    )
+    if response.status_code != 200:
+      raise RuntimeError(
+          f"BioTime rejected AddManualLog (HTTP {response.status_code})."
+      )
+    try:
+      manual_log_id = _manual_log_id_from_payload(
+          response.json(), employee_uuid, punch_datetime
+      )
+    except ValueError:
+      manual_log_id = ""
+    if not manual_log_id:
+      manual_log_id = find_manual_log_id(session, employee_uuid, punch_datetime)
+    if not manual_log_id:
+      raise RuntimeError(
+          "Manual Log was created but its exact record ID could not be identified; "
+          "approval was stopped to protect other records."
+      )
+
+  # Refresh CSRF immediately before approving the exact newly-created row.
+  manual_page = session.get(f"{BASE_URL}/att/manuallog/", timeout=20)
+  csrf_token = _csrf_from_page(session, manual_page) or csrf_token
+  approve_form = {
+      "csrfmiddlewaretoken": csrf_token,
+      "audit_status": config["approved_status"],
+      "audit_reason": "Approved automatically after HR validation",
+      "action_name": config["approve_action"],
+      "id": str(manual_log_id),
+  }
+  approval_response = session.post(
+      endpoint_url,
+      data=approve_form,
+      headers={
+          "Referer": f"{BASE_URL}/att/manuallog/",
+          "Origin": BASE_URL,
+          "X-CSRFToken": csrf_token,
+          "X-Requested-With": "XMLHttpRequest",
+      },
       timeout=20,
   )
-  if response.status_code not in (200, 201, 202):
+  if approval_response.status_code != 200:
     raise RuntimeError(
-        f"رفض BioTime العملية (HTTP {response.status_code}): {response.text[:500]}"
+        f"Manual Log {manual_log_id} was created but approval failed "
+        f"(HTTP {approval_response.status_code})."
     )
 
-  verified_rows = fetch_employee_punches_for_day(
-      employee_code, punch_datetime.date()
-  )
-  verified = any(
-      abs((item["datetime"] - punch_datetime).total_seconds()) < 60
-      for item in verified_rows
-  )
-  if not verified:
-    raise RuntimeError(
-        "قبل BioTime الطلب لكنه لم يظهر عند إعادة القراءة. راجع BioTime قبل المحاولة مرة أخرى."
+  verified_rows = []
+  for wait_seconds in (0, 1, 2, 3):
+    if wait_seconds:
+      time.sleep(wait_seconds)
+    verified_rows = fetch_employee_punches_for_day(
+        employee_code, punch_datetime.date()
     )
-  return payload, verified_rows
+    if any(
+        abs((item["datetime"] - punch_datetime).total_seconds()) < 60
+        for item in verified_rows
+    ):
+      return add_payload, verified_rows
+  raise RuntimeError(
+      f"Manual Log {manual_log_id} was approved but the punch did not appear "
+      "in transactions after verification. Do not retry until BioTime is checked."
+  )
 
 
 def render_manual_punch_panel(active_employees, default_date, attendance_rows):
@@ -1851,13 +2030,15 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     )
     if BIOTIME_MANUAL_WRITE_LOCKED:
       strlit.caption(
-          "Safety lock is active: saving stays disabled until the BioTime Manual Log payload is verified."
+          "Safety lock is active. After changing the exposed BioTime password, "
+          "set manual_punch_write_enabled = true in the [biotime] Streamlit Secrets."
       )
     if save_clicked:
       try:
         reason = f"Auto-detected missing {detected_kind} from HR app"
         payload, verified_rows = create_manual_biotime_punch(
             selected_employee,
+            active_employees[selected_employee].get("uuid", ""),
             punch_datetime,
             detected_kind,
             reason,
@@ -2464,6 +2645,7 @@ def load_attendance_data_from_api(selected_date_str, selected_date_obj, is_today
       active_employees[cleaned_code] = {
           "name": clean_txt(full_name if full_name else f"موظف {cleaned_code}"),
           "dept": clean_txt(dept_name),
+          "uuid": str(emp.get("id") or "").strip(),
       }
 
   leave_records = []
@@ -4250,6 +4432,7 @@ try:
           active_employees[cleaned_code] = {
               "name": clean_txt(full_name or f"موظف {cleaned_code}"),
               "dept": clean_txt(dept_name),
+              "uuid": str(emp.get("id") or "").strip(),
           }
 
           internal_id = normalize_id(emp.get("id"))
