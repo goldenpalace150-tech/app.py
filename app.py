@@ -22,7 +22,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-MOBILE-LAYOUT-FIX-2026-09-05"
+APP_VERSION = "BIO-ATTENDANCE-PRO-DASHBOARD-2026-09-06"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -540,6 +540,196 @@ strlit.markdown(
         div[data-testid="stTabs"] [role="tab"] p { font-size: 12px !important; }
     }
 
+    /* ===== 2026-09-06 professional dashboard refinement ===== */
+    :root {
+        --gp-navy: #12213f;
+        --gp-blue: #2458d3;
+        --gp-surface: #ffffff;
+        --gp-canvas: #f3f6fa;
+        --gp-border: #dce4ee;
+        --gp-text: #172033;
+        --gp-muted: #64748b;
+    }
+    .stApp { background: var(--gp-canvas) !important; }
+    .block-container {
+        max-width: 1500px !important;
+        padding-top: 10px !important;
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+    }
+    .gp-app-hero {
+        position: relative;
+        overflow: hidden;
+        min-height: 76px;
+        padding: 16px 22px !important;
+        margin-bottom: 14px !important;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 18px !important;
+        box-shadow: 0 12px 28px rgba(20, 43, 92, 0.16) !important;
+    }
+    .gp-app-hero::after {
+        content: "";
+        position: absolute;
+        width: 220px;
+        height: 220px;
+        left: -70px;
+        top: -140px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.08);
+    }
+    .gp-app-hero-title {
+        position: relative;
+        z-index: 1;
+        font-size: 23px !important;
+        letter-spacing: 0.15px;
+    }
+    .gp-app-hero-subtitle {
+        position: relative;
+        z-index: 1;
+        font-size: 11px !important;
+        margin-top: 5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) {
+        background: rgba(255,255,255,0.94);
+        border: 1px solid var(--gp-border);
+        border-radius: 17px;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.055);
+        padding: 12px 14px 10px 14px;
+        margin-bottom: 14px;
+        align-items: end;
+    }
+    .gp-control-caption {
+        color: #52647c !important;
+        font-size: 11px !important;
+        font-weight: 800 !important;
+        margin: 0 3px 5px 3px !important;
+    }
+    .gp-live-card, .gp-archive-card,
+    div[data-testid="stDateInput"] > div > div {
+        min-height: 46px !important;
+        border-radius: 11px !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) button {
+        min-height: 46px !important;
+        border-radius: 11px !important;
+        box-shadow: none !important;
+        margin-bottom: 0 !important;
+    }
+    div[data-testid="stTabs"] [role="tablist"] {
+        min-height: 58px;
+        margin: 0 0 14px 0;
+        border-radius: 16px !important;
+        padding: 5px !important;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.05);
+    }
+    div[data-testid="stTabs"] [role="tab"] {
+        min-height: 46px !important;
+        color: #526178 !important;
+        font-weight: 800 !important;
+        transition: background-color .18s ease, color .18s ease;
+    }
+    div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+        color: #1d4ed8 !important;
+        background: linear-gradient(135deg, #eff6ff, #eaf2ff) !important;
+        box-shadow: inset 0 0 0 1px #d5e5ff;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) {
+        gap: 10px !important;
+        margin-bottom: 15px;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) button {
+        min-height: 104px !important;
+        border: 1px solid var(--gp-border) !important;
+        border-top: 3px solid #667eea !important;
+        border-radius: 15px !important;
+        background: var(--gp-surface) !important;
+        box-shadow: 0 5px 16px rgba(15, 23, 42, 0.055) !important;
+        margin: 0 !important;
+        transition: transform .16s ease, box-shadow .16s ease !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div:nth-child(2) button { border-top-color: #22c55e !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div:nth-child(3) button { border-top-color: #f59e0b !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div:nth-child(4) button { border-top-color: #64748b !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div:nth-child(5) button { border-top-color: #38bdf8 !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) > div:nth-child(6) button { border-top-color: #ef4444 !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 9px 22px rgba(15, 23, 42, 0.09) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) button p {
+        font-size: 14px !important;
+        line-height: 1.55 !important;
+        color: var(--gp-text) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stFileUploader"]) {
+        align-items: stretch;
+        gap: 14px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stFileUploader"]) > div[data-testid="stColumn"] {
+        background: var(--gp-surface);
+        border: 1px solid var(--gp-border);
+        border-radius: 16px;
+        padding: 14px 14px 10px 14px;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+    }
+    .gp-section-title {
+        font-size: 16px !important;
+        margin: 1px 2px 9px 2px !important;
+    }
+    .gp-file-note {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f8fafc !important;
+        border-color: #e3e9f1 !important;
+    }
+    .gp-report-panel {
+        border-color: var(--gp-border) !important;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045) !important;
+    }
+    @media (max-width: 700px) {
+        .block-container {
+            padding-top: 6px !important;
+            padding-left: 9px !important;
+            padding-right: 9px !important;
+        }
+        .gp-app-hero {
+            min-height: 68px;
+            padding: 13px 9px !important;
+            border-radius: 0 0 17px 17px !important;
+        }
+        .gp-app-hero-title { font-size: 18px !important; }
+        .gp-app-hero-subtitle { font-size: 9px !important; }
+        div[data-testid="stHorizontalBlock"]:has(.gp-controls-marker) {
+            padding: 10px !important;
+            border-radius: 15px;
+            margin-bottom: 10px;
+        }
+        div[data-testid="stTabs"] [role="tablist"] {
+            min-height: 54px;
+            margin-bottom: 10px;
+        }
+        div[data-testid="stTabs"] [role="tab"] {
+            min-height: 44px !important;
+            padding: 6px 3px !important;
+        }
+        div[data-testid="stTabs"] [role="tab"] p {
+            font-size: 10px !important;
+            line-height: 1.35 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) {
+            gap: 8px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-summary-marker) button {
+            min-height: 94px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stFileUploader"]) > div[data-testid="stColumn"] {
+            padding: 11px;
+        }
+    }
+
     </style>
 """,
     unsafe_allow_html=True,
@@ -944,6 +1134,377 @@ def get_auth_token():
   except Exception as e:
     strlit.error(f"Connection Failed: {str(e)}")
     return None
+
+
+def _normalize_employee_code(value):
+  """Match the employee-code normalization already used by attendance loading."""
+  if value is None:
+    return ""
+  raw = str(value).strip()
+  if raw.endswith(".0") and raw[:-2].isdigit():
+    raw = raw[:-2]
+  return str(int(raw)) if raw.isdigit() else raw
+
+
+def get_manual_punch_config():
+  """Load tenant-specific BioTime write settings without hardcoding credentials."""
+  config = strlit.secrets["biotime"]
+  return {
+      "enabled": bool(config.get("manual_punch_enabled", False)),
+      "endpoint": str(
+          config.get("manual_punch_endpoint", "/iclock/api/transactions/")
+      ).strip(),
+      "employee_field": str(config.get("manual_punch_employee_field", "emp_code")),
+      "time_field": str(config.get("manual_punch_time_field", "punch_time")),
+      "state_field": str(config.get("manual_punch_state_field", "punch_state")),
+      "in_value": config.get("manual_punch_in_value", "0"),
+      "out_value": config.get("manual_punch_out_value", "1"),
+      "terminal_field": str(config.get("manual_punch_terminal_field", "")).strip(),
+      "terminal_value": str(config.get("manual_punch_terminal_value", "")).strip(),
+      "note_field": str(config.get("manual_punch_note_field", "")).strip(),
+  }
+
+
+def _manual_punch_headers():
+  token = get_auth_token()
+  if not token:
+    raise RuntimeError("تعذر المصادقة مع BioTime.")
+  return {
+      "Authorization": f"Token {token}",
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+  }
+
+
+def fetch_employee_punches_for_day(employee_code, work_date):
+  """Read one employee's punches from BioTime for validation and verification."""
+  start_time = work_date.strftime("%Y-%m-%d") + " 00:00:00"
+  end_time = (work_date + timedelta(days=1)).strftime("%Y-%m-%d") + " 05:00:00"
+  response = requests.get(
+      f"{BASE_URL}/iclock/api/transactions/",
+      headers=_manual_punch_headers(),
+      params={
+          "start_time": start_time,
+          "end_time": end_time,
+          "page_size": 5000,
+      },
+      timeout=20,
+  )
+  if response.status_code != 200:
+    raise RuntimeError(
+        f"تعذر قراءة بصمات BioTime (HTTP {response.status_code}): "
+        f"{response.text[:300]}"
+    )
+  body = response.json()
+  rows = body.get("data", body) if isinstance(body, (dict, list)) else []
+  target = _normalize_employee_code(employee_code)
+  punches = []
+  for row in rows if isinstance(rows, list) else []:
+    if _normalize_employee_code(row.get("emp_code")) != target:
+      continue
+    raw_time = str(row.get("punch_time", ""))[:19]
+    try:
+      parsed_time = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+      continue
+    punches.append(
+        {
+            "datetime": parsed_time,
+            "time": parsed_time.strftime("%d/%m/%Y %H:%M"),
+            "state": str(
+                row.get("punch_state_display")
+                or row.get("punch_state")
+                or "—"
+            ),
+            "device": clean_txt(
+                row.get("terminal_alias")
+                or row.get("terminal_name")
+                or row.get("terminal_sn")
+                or "—"
+            ),
+        }
+    )
+  return sorted(punches, key=lambda item: item["datetime"])
+
+
+def test_manual_punch_permission():
+  """Probe the configured write route without creating or changing attendance."""
+  config = get_manual_punch_config()
+  endpoint = "/" + config["endpoint"].lstrip("/")
+  response = requests.options(
+      f"{BASE_URL}{endpoint}", headers=_manual_punch_headers(), timeout=20
+  )
+  allow = response.headers.get("Allow", "")
+  reachable = response.status_code < 500
+  post_advertised = "POST" in allow.upper()
+  return {
+      "status_code": response.status_code,
+      "allow": allow,
+      "reachable": reachable,
+      "post_advertised": post_advertised,
+  }
+
+
+def create_manual_biotime_punch(
+    employee_code, punch_datetime, punch_kind, reason, operator_name
+):
+  """Create one configured BioTime transaction and verify it by reading it back."""
+  config = get_manual_punch_config()
+  if not config["enabled"]:
+    raise RuntimeError(
+        "الكتابة غير مفعلة. أضف manual_punch_enabled = true في أسرار BioTime بعد اختبار الصلاحية."
+    )
+
+  existing = fetch_employee_punches_for_day(employee_code, punch_datetime.date())
+  if any(
+      abs((item["datetime"] - punch_datetime).total_seconds()) < 60
+      for item in existing
+  ):
+    raise RuntimeError("توجد بصمة لنفس الموظف في الدقيقة نفسها؛ لم تتم إضافة نسخة مكررة.")
+
+  payload = {
+      config["employee_field"]: str(employee_code),
+      config["time_field"]: punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+      config["state_field"]: (
+          config["in_value"] if punch_kind == "IN" else config["out_value"]
+      ),
+  }
+  if config["terminal_field"] and config["terminal_value"]:
+    payload[config["terminal_field"]] = config["terminal_value"]
+  if config["note_field"]:
+    payload[config["note_field"]] = (
+        f"Manual HR correction | {operator_name} | {reason}"
+    )
+
+  endpoint = "/" + config["endpoint"].lstrip("/")
+  response = requests.post(
+      f"{BASE_URL}{endpoint}",
+      headers=_manual_punch_headers(),
+      json=payload,
+      timeout=20,
+  )
+  if response.status_code not in (200, 201, 202):
+    raise RuntimeError(
+        f"رفض BioTime العملية (HTTP {response.status_code}): {response.text[:500]}"
+    )
+
+  verified_rows = fetch_employee_punches_for_day(
+      employee_code, punch_datetime.date()
+  )
+  verified = any(
+      abs((item["datetime"] - punch_datetime).total_seconds()) < 60
+      for item in verified_rows
+  )
+  if not verified:
+    raise RuntimeError(
+        "قبل BioTime الطلب لكنه لم يظهر عند إعادة القراءة. راجع BioTime قبل المحاولة مرة أخرى."
+    )
+  return payload, verified_rows
+
+
+def render_manual_punch_panel(active_employees, default_date):
+  """HR-only manual correction form with preview, validation and confirmation."""
+  strlit.markdown(
+      '<div class="gp-report-panel">'
+      '<div class="gp-report-title">✍️ تصحيح بصمة ناقصة</div>'
+      '<div class="gp-report-subtitle">تُحفظ البصمة مباشرة في BioTime Cloud بعد التأكيد</div>'
+      '</div>',
+      unsafe_allow_html=True,
+  )
+
+  config = get_manual_punch_config()
+  if not config["enabled"]:
+    strlit.warning(
+        "ميزة الكتابة محمية حالياً. اختبر صلاحية BioTime أولاً، ثم فعّل "
+        "manual_punch_enabled في الأسرار."
+    )
+    with strlit.expander("إعدادات BioTime المطلوبة", expanded=False):
+      strlit.code(
+          'manual_punch_enabled = false\n'
+          'manual_punch_endpoint = "/iclock/api/transactions/"\n'
+          'manual_punch_employee_field = "emp_code"\n'
+          'manual_punch_time_field = "punch_time"\n'
+          'manual_punch_state_field = "punch_state"\n'
+          'manual_punch_in_value = "0"\n'
+          'manual_punch_out_value = "1"\n'
+          '# أضف الحقول التالية فقط إذا طلبها مزود BioTime:\n'
+          '# manual_punch_terminal_field = "terminal_sn"\n'
+          '# manual_punch_terminal_value = "MANUAL"\n'
+          '# manual_punch_note_field = "reserved"',
+          language="toml",
+      )
+
+  if strlit.button(
+      "🔐 اختبار صلاحية BioTime بدون تسجيل بصمة",
+      use_container_width=True,
+      key="test_manual_punch_permission",
+  ):
+    try:
+      result = test_manual_punch_permission()
+      if result["post_advertised"]:
+        strlit.success(
+            f"المسار متاح ويعلن دعم POST (HTTP {result['status_code']})."
+        )
+      elif result["reachable"]:
+        allow_text = result["allow"] or "لم يرسل الخادم قائمة Allow"
+        strlit.warning(
+            f"المسار قابل للوصول (HTTP {result['status_code']})، لكن دعم الكتابة غير مؤكد: {allow_text}"
+        )
+      else:
+        strlit.error(f"تعذر الوصول إلى مسار الكتابة (HTTP {result['status_code']}).")
+    except Exception as permission_error:
+      strlit.error(str(permission_error))
+
+  if not active_employees:
+    strlit.info("لا توجد قائمة موظفين نشطين متاحة حالياً.")
+    return
+
+  employee_options = sorted(
+      active_employees,
+      key=lambda code: (active_employees[code].get("name", ""), code),
+  )
+  selected_employee = strlit.selectbox(
+      "الموظف",
+      employee_options,
+      format_func=lambda code: (
+          f"{active_employees[code].get('name', '')} — BioTime ID {code}"
+      ),
+      key="manual_punch_employee",
+  )
+  form_date = strlit.date_input(
+      "تاريخ البصمة",
+      value=default_date,
+      max_value=datetime.now(SYRIA_TZ).date(),
+      key="manual_punch_date",
+  )
+
+  try:
+    existing = fetch_employee_punches_for_day(selected_employee, form_date)
+  except Exception as preview_error:
+    existing = []
+    strlit.error(f"تعذر تحميل البصمات الحالية: {preview_error}")
+
+  if existing:
+    strlit.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "الوقت": item["time"],
+                    "النوع": item["state"],
+                    "الجهاز": item["device"],
+                }
+                for item in existing
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+  else:
+    strlit.info("لا توجد بصمات ظاهرة لهذا الموظف في التاريخ المحدد.")
+
+  with strlit.form("manual_punch_form", clear_on_submit=False):
+    form_kind = strlit.radio(
+        "البصمة الناقصة",
+        options=["IN", "OUT"],
+        format_func=lambda value: "دخول IN" if value == "IN" else "خروج OUT",
+        horizontal=True,
+    )
+    form_time = strlit.time_input(
+        "الوقت الصحيح", value=datetime.now(SYRIA_TZ).time().replace(second=0, microsecond=0)
+    )
+    next_day = strlit.checkbox(
+        "الخروج بعد منتصف الليل (اليوم التالي)", value=False
+    )
+    operator_name = strlit.text_input("اسم مسؤول الموارد البشرية")
+    reason = strlit.text_input("سبب التصحيح", placeholder="مثال: نسي الموظف بصمة الخروج")
+    confirm = strlit.checkbox(
+        "راجعت الموظف والتاريخ والوقت وأوافق على تسجيلها في BioTime Cloud"
+    )
+    submitted = strlit.form_submit_button(
+        "✅ تسجيل البصمة في BioTime Cloud", use_container_width=True
+    )
+
+  if not submitted:
+    if strlit.session_state.get("manual_punch_audit"):
+      audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
+          index=False
+      ).encode("utf-8-sig")
+      strlit.download_button(
+          "📥 تنزيل سجل التصحيحات لهذه الجلسة",
+          data=audit_csv,
+          file_name="Manual_Punch_Audit.csv",
+          mime="text/csv",
+          use_container_width=True,
+      )
+    return
+  if not config["enabled"]:
+    strlit.error("فعّل manual_punch_enabled في الأسرار بعد نجاح اختبار الصلاحية.")
+    return
+  if not operator_name.strip() or not reason.strip():
+    strlit.error("اسم المسؤول وسبب التصحيح مطلوبان.")
+    return
+  if not confirm:
+    strlit.error("يجب مراجعة البيانات وتفعيل مربع التأكيد قبل التسجيل.")
+    return
+
+  punch_date = form_date + timedelta(days=1) if next_day and form_kind == "OUT" else form_date
+  punch_datetime = datetime.combine(punch_date, form_time)
+  now_local = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+  if punch_datetime > now_local:
+    strlit.error("لا يمكن تسجيل بصمة في المستقبل.")
+    return
+  if existing:
+    existing_times = [item["datetime"] for item in existing]
+    if form_kind == "IN" and punch_datetime >= max(existing_times):
+      strlit.error("بصمة الدخول الناقصة يجب أن تكون قبل آخر بصمة موجودة.")
+      return
+    if form_kind == "OUT" and punch_datetime <= min(existing_times):
+      strlit.error("بصمة الخروج الناقصة يجب أن تكون بعد أول بصمة موجودة.")
+      return
+
+  try:
+    payload, verified_rows = create_manual_biotime_punch(
+        selected_employee,
+        punch_datetime,
+        form_kind,
+        reason.strip(),
+        operator_name.strip(),
+    )
+    audit_row = {
+        "Saved At": datetime.now(SYRIA_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "Operator": operator_name.strip(),
+        "BioTime ID": selected_employee,
+        "Employee": active_employees[selected_employee].get("name", ""),
+        "Punch": form_kind,
+        "Punch Time": punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+        "Reason": reason.strip(),
+        "BioTime Verified": "Yes",
+    }
+    strlit.session_state.setdefault("manual_punch_audit", []).append(audit_row)
+    strlit.cache_data.clear()
+    strlit.success("تم تسجيل البصمة والتحقق من ظهورها في BioTime Cloud.")
+    strlit.dataframe(
+        pd.DataFrame(
+            [{"الوقت": row["time"], "النوع": row["state"], "الجهاز": row["device"]}
+             for row in verified_rows]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+  except Exception as save_error:
+    strlit.error(f"لم يتم تسجيل البصمة: {save_error}")
+
+  if strlit.session_state.get("manual_punch_audit"):
+    audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
+        index=False
+    ).encode("utf-8-sig")
+    strlit.download_button(
+        "📥 تنزيل سجل التصحيحات لهذه الجلسة",
+        data=audit_csv,
+        file_name="Manual_Punch_Audit.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 
@@ -2229,7 +2790,7 @@ today_str = now_syria.strftime("%Y-%m-%d")
 strlit.markdown(
     '<div class="gp-app-hero">'
     '<div class="gp-app-hero-title">📡 Golden Palace • BioTime</div>'
-    '<div class="gp-app-hero-subtitle">حضور يومي • تقرير شهري • نسخة احتياطية</div>'
+    '<div class="gp-app-hero-subtitle">حضور يومي • تقرير شهري • تصحيح بصمة • نسخة احتياطية</div>'
     '</div>',
     unsafe_allow_html=True,
 )
@@ -2287,9 +2848,10 @@ try:
   hide_loading_overlay(main_loading_overlay)
   main_loading_overlay = None
 
-  daily_tab, monthly_tab, backup_tab = strlit.tabs([
+  daily_tab, monthly_tab, correction_tab, backup_tab = strlit.tabs([
       "📅 الحضور اليومي",
       "📊 التقرير الشهري",
+      "✍️ تصحيح بصمة",
       "🛡️ النسخة الاحتياطية",
   ])
 
@@ -2299,6 +2861,11 @@ try:
     col_gen, col_up = strlit.columns(2)
 
     with col_gen:
+      strlit.markdown(
+          '<div class="gp-section-title">📥 تقرير الحضور اليومي</div>'
+          '<div class="gp-file-note">تنزيل تقرير منظم للتاريخ المحدد أعلاه.</div>',
+          unsafe_allow_html=True,
+      )
       # Standard Generated Attendance Report
       df_excel = pd.DataFrame(exc)
       output = io.BytesIO()
@@ -4938,6 +5505,9 @@ try:
             use_container_width=True,
             key="download_direct_monthly_report",
         )
+
+  with correction_tab:
+    render_manual_punch_panel(act, selected_date_obj_input)
 
   with backup_tab:
     # 🛡️ INDEPENDENT BIOTIME BACKUP
