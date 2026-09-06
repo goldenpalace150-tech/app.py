@@ -22,7 +22,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-EXCEPTIONS-FIRST-2026-09-06"
+APP_VERSION = "BIO-ATTENDANCE-MOCKUP-MATCH-2026-09-06"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -180,7 +180,7 @@ strlit.markdown(
 
     .gp-kpi-grid {
         display: grid;
-        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
         gap: 9px;
         margin: 0 0 14px 0;
     }
@@ -736,6 +736,9 @@ strlit.markdown(
     div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) {
         align-items: stretch;
         gap: 14px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden;
     }
     div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"] {
         background: var(--gp-surface);
@@ -743,11 +746,13 @@ strlit.markdown(
         border-radius: 16px;
         padding: 15px;
         box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+        min-width: 0 !important;
+        max-width: 100% !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child {
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:last-child {
         background: #f8fafc;
     }
-    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child button {
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:last-child button {
         min-height: 62px !important;
         padding: 9px 11px !important;
         margin-bottom: 8px !important;
@@ -757,7 +762,7 @@ strlit.markdown(
         box-shadow: none !important;
         background: #ffffff !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child button p {
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:last-child button p {
         text-align: right !important;
         line-height: 1.55 !important;
         font-size: 12px !important;
@@ -766,6 +771,21 @@ strlit.markdown(
     div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) div[data-baseweb="select"] > div {
         min-height: 45px !important;
         border-radius: 10px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) div[data-baseweb="select"] span,
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) div[data-baseweb="select"] div {
+        color: #172033 !important;
+        -webkit-text-fill-color: #172033 !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stTimeInput"] input,
+    div[data-testid="stDateInput"] input {
+        direction: ltr !important;
+        unicode-bidi: plaintext !important;
+        text-align: right !important;
+        color: #172033 !important;
+        -webkit-text-fill-color: #172033 !important;
+        opacity: 1 !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) button[kind="primary"] {
         min-height: 47px !important;
@@ -789,7 +809,7 @@ strlit.markdown(
             min-width: 0 !important;
             padding: 11px;
         }
-        div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child {
+        div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:last-child {
             order: 2;
         }
     }
@@ -1214,7 +1234,6 @@ def get_manual_punch_config():
   """Load tenant-specific BioTime write settings without hardcoding credentials."""
   config = strlit.secrets["biotime"]
   return {
-      "enabled": bool(config.get("manual_punch_enabled", False)),
       "endpoint": str(
           config.get("manual_punch_endpoint", "/iclock/api/transactions/")
       ).strip(),
@@ -1324,11 +1343,6 @@ def create_manual_biotime_punch(
 ):
   """Create one configured BioTime transaction and verify it by reading it back."""
   config = get_manual_punch_config()
-  if not config["enabled"]:
-    raise RuntimeError(
-        "الكتابة غير مفعلة. أضف manual_punch_enabled = true في أسرار BioTime بعد اختبار الصلاحية."
-    )
-
   existing = fetch_employee_punches_for_day(employee_code, punch_datetime.date())
   if any(
       abs((item["datetime"] - punch_datetime).total_seconds()) < 60
@@ -1394,6 +1408,20 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
       row for row in attendance_rows
       if "Missing" in str(row.get("Status", ""))
   ]
+  present_count = sum(
+      1 for row in attendance_rows
+      if "Present" in str(row.get("Status", ""))
+      or "Late" in str(row.get("Status", ""))
+  )
+  late_count = sum(
+      1 for row in attendance_rows if "Late" in str(row.get("Status", ""))
+  )
+  render_kpi_cards([
+      ("👥", "الموظفون النشطون", len(active_employees)),
+      ("🟢", "الحضور", present_count),
+      ("⏰", "المتأخرون", late_count),
+      ("⚠️", "بصمة ناقصة", len(missing_rows)),
+  ])
   employee_options = sorted(
       active_employees,
       key=lambda code: (active_employees[code].get("name", ""), code),
@@ -1404,7 +1432,7 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     strlit.session_state["manual_punch_date"] = default_date
     strlit.session_state["manual_punch_last_dashboard_date"] = default_date
 
-  queue_col, correction_col = strlit.columns([0.82, 1.55], gap="medium")
+  correction_col, queue_col = strlit.columns([1.55, 0.82], gap="medium")
   with queue_col:
     strlit.markdown('<span class="gp-exceptions-marker"></span>', unsafe_allow_html=True)
     strlit.markdown(
@@ -1522,8 +1550,7 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     if validation_message:
       strlit.error(validation_message)
 
-    config = get_manual_punch_config()
-    can_save = valid_sequence and config["enabled"]
+    can_save = valid_sequence
     save_clicked = strlit.button(
         "حفظ والتحقق في BioTime",
         use_container_width=True,
@@ -1531,9 +1558,6 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
         disabled=not can_save,
         type="primary",
     )
-    if case_state == "missing" and not config["enabled"]:
-      strlit.caption("الحفظ متوقف حتى يتم تفعيل صلاحية الكتابة في إعدادات BioTime أدناه.")
-
     if save_clicked:
       try:
         reason = f"Auto-detected missing {detected_kind} from HR app"
@@ -1565,7 +1589,6 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
         strlit.error(f"لم يتم تسجيل البصمة: {save_error}")
 
   with strlit.expander("إعدادات اتصال BioTime وسجل التصحيحات", expanded=False):
-    config = get_manual_punch_config()
     if strlit.button(
         "اختبار صلاحية الكتابة بدون تسجيل بصمة",
         use_container_width=True,
@@ -1584,17 +1607,6 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
           strlit.error(f"تعذر الوصول إلى المسار (HTTP {result['status_code']}).")
       except Exception as permission_error:
         strlit.error(str(permission_error))
-    if not config["enabled"]:
-      strlit.code(
-          'manual_punch_enabled = false\n'
-          'manual_punch_endpoint = "/iclock/api/transactions/"\n'
-          'manual_punch_employee_field = "emp_code"\n'
-          'manual_punch_time_field = "punch_time"\n'
-          'manual_punch_state_field = "punch_state"\n'
-          'manual_punch_in_value = "0"\n'
-          'manual_punch_out_value = "1"',
-          language="toml",
-      )
     if strlit.session_state.get("manual_punch_audit"):
       audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
           index=False
@@ -2890,11 +2902,18 @@ today_str = now_syria.strftime("%Y-%m-%d")
 
 strlit.markdown(
     '<div class="gp-app-hero">'
-    '<div class="gp-app-hero-title">📡 Golden Palace • BioTime</div>'
-    '<div class="gp-app-hero-subtitle">حضور يومي • تقرير شهري • تصحيح بصمة • نسخة احتياطية</div>'
+    '<div class="gp-app-hero-title">Golden Palace</div>'
+    '<div class="gp-app-hero-subtitle">نظام الموارد البشرية و BioTime</div>'
     '</div>',
     unsafe_allow_html=True,
 )
+
+correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs([
+    "⚠️ الحالات والتصحيح",
+    "📅 الحضور اليومي",
+    "📊 التقارير",
+    "🛡️ النسخة الاحتياطية",
+])
 
 strlit.markdown('<div class="gp-top-controls"></div>', unsafe_allow_html=True)
 c_date, c_status, c_ref = strlit.columns([1.35, 0.90, 1.00], gap="small")
@@ -2948,13 +2967,6 @@ try:
   )
   hide_loading_overlay(main_loading_overlay)
   main_loading_overlay = None
-
-  correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs([
-      "⚠️ الحالات والتصحيح",
-      "📅 الحضور اليومي",
-      "📊 التقارير",
-      "🛡️ النسخة الاحتياطية",
-  ])
 
   with daily_tab:
     render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
