@@ -23,6 +23,9 @@ import streamlit as strlit
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
 APP_VERSION = "BIO-ATTENDANCE-MOCKUP-MATCH-2026-09-06"
+# Emergency safety lock. Keep BioTime transaction creation disabled until the
+# tenant's Manual Log is reviewed and the exact write payload is confirmed.
+BIOTIME_MANUAL_WRITE_LOCKED = True
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -1342,6 +1345,10 @@ def create_manual_biotime_punch(
     employee_code, punch_datetime, punch_kind, reason, operator_name
 ):
   """Create one configured BioTime transaction and verify it by reading it back."""
+  if BIOTIME_MANUAL_WRITE_LOCKED:
+    raise RuntimeError(
+        "تم إيقاف الكتابة مؤقتاً لحماية بيانات BioTime حتى مراجعة Manual Log."
+    )
   config = get_manual_punch_config()
   existing = fetch_employee_punches_for_day(employee_code, punch_datetime.date())
   if any(
@@ -1550,7 +1557,7 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     if validation_message:
       strlit.error(validation_message)
 
-    can_save = valid_sequence
+    can_save = valid_sequence and not BIOTIME_MANUAL_WRITE_LOCKED
     save_clicked = strlit.button(
         "حفظ والتحقق في BioTime",
         use_container_width=True,
@@ -1558,6 +1565,10 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
         disabled=not can_save,
         type="primary",
     )
+    if BIOTIME_MANUAL_WRITE_LOCKED:
+      strlit.error(
+          "الكتابة متوقفة مؤقتاً لحماية BioTime. راجع Manual Log قبل إعادة تفعيلها."
+      )
     if save_clicked:
       try:
         reason = f"Auto-detected missing {detected_kind} from HR app"
