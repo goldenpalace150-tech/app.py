@@ -22,7 +22,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-MOCKUP-MATCH-2026-09-06"
+APP_VERSION = "BIO-ATTENDANCE-PRO-DASHBOARD-2026-09-06"
 # Emergency safety lock. Keep BioTime transaction creation disabled until the
 # tenant's Manual Log is reviewed and the exact write payload is confirmed.
 BIOTIME_MANUAL_WRITE_LOCKED = True
@@ -817,6 +817,263 @@ strlit.markdown(
         }
     }
 
+    /* ===== Approved Golden Palace dashboard ===== */
+    .stApp {
+        direction: ltr !important;
+        background: #edf2f8 !important;
+        color: #172033;
+    }
+    .block-container {
+        max-width: 1440px !important;
+        padding: 8px 22px 34px !important;
+    }
+    .gp-shell-header {
+        min-height: 72px;
+        margin: 0;
+        padding: 0 30px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: #fff;
+        background: linear-gradient(112deg, #172847 0%, #1d3d7b 58%, #285fe1 100%);
+        border-radius: 0;
+        box-shadow: 0 9px 24px rgba(30, 64, 175, .14);
+        box-sizing: border-box;
+    }
+    .gp-brand-name { font-size: 21px; line-height: 1.15; font-weight: 800; }
+    .gp-brand-sub { margin-top: 5px; color: #dbe7ff; font-size: 13px; }
+    .gp-connection {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 14px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .gp-connection-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #42dc7c;
+        box-shadow: 0 0 0 4px rgba(66, 220, 124, .12);
+    }
+    div[data-testid="stTabs"] > div > div[role="tablist"],
+    div[data-testid="stTabs"] [role="tablist"] {
+        direction: ltr !important;
+        justify-content: flex-start !important;
+        gap: 8px !important;
+        min-height: 68px !important;
+        margin: 0 !important;
+        padding: 10px 24px !important;
+        background: #fff !important;
+        border: 0 !important;
+        border-bottom: 1px solid #dce4ee !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stTabs"] [role="tab"] {
+        flex: 0 0 auto !important;
+        min-width: 134px !important;
+        min-height: 46px !important;
+        padding: 10px 16px !important;
+        border-radius: 11px !important;
+        color: #64748b !important;
+        font-weight: 650 !important;
+    }
+    div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+        color: #173d80 !important;
+        background: #eaf1ff !important;
+        box-shadow: none !important;
+    }
+    .gp-overview-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        padding: 27px 2px 16px;
+        direction: ltr;
+    }
+    .gp-overview-title { color: #172033; font-size: 24px; font-weight: 800; }
+    .gp-overview-date { margin-top: 4px; color: #64748b; font-size: 14px; }
+    .gp-dashboard-marker, .gp-workspace-marker { display: none; }
+    div[data-testid="stElementContainer"]:has(.gp-dashboard-marker),
+    div[data-testid="stElementContainer"]:has(.gp-workspace-marker) { display: none; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) {
+        direction: ltr !important;
+        align-items: end !important;
+        gap: 12px !important;
+        padding: 0 2px 18px;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) > div:first-child {
+        flex: 1 1 auto !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) > div:nth-child(2) {
+        flex: 0 0 210px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) > div:nth-child(3) {
+        flex: 0 0 130px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) button {
+        min-height: 46px !important;
+        margin: 0 !important;
+        border: 1px solid #aebbc9 !important;
+        border-radius: 12px !important;
+        background: #fff !important;
+        box-shadow: 0 2px 0 #172033 !important;
+    }
+    .gp-overview-kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 13px;
+        margin: 0 2px 18px;
+        direction: ltr;
+    }
+    .gp-overview-kpi {
+        position: relative;
+        min-height: 105px;
+        padding: 19px 20px;
+        background: #fff;
+        border: 1px solid #e1e7ee;
+        border-radius: 15px;
+        box-sizing: border-box;
+        box-shadow: 0 5px 16px rgba(15, 23, 42, .035);
+        overflow: hidden;
+    }
+    .gp-overview-kpi::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 4px;
+        background: var(--accent, #234783);
+    }
+    .gp-overview-kpi-label { color: #64748b; font-size: 14px; }
+    .gp-overview-kpi-value { margin-top: 7px; color: #111827; font-size: 27px; line-height: 1; font-weight: 800; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) {
+        direction: ltr !important;
+        align-items: stretch !important;
+        gap: 16px !important;
+        margin: 0 2px;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) > div[data-testid="stColumn"] {
+        min-width: 0 !important;
+        padding: 20px !important;
+        background: #fff !important;
+        border: 1px solid #e1e7ee !important;
+        border-radius: 16px !important;
+        box-shadow: 0 5px 16px rgba(15, 23, 42, .04) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) > div[data-testid="stColumn"]:first-child button {
+        min-height: 64px !important;
+        margin: 8px 0 0 !important;
+        padding: 10px 13px !important;
+        text-align: left !important;
+        background: #eaf1ff !important;
+        border: 0 !important;
+        border-radius: 12px !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) > div[data-testid="stColumn"]:first-child button p {
+        color: #172033 !important;
+        text-align: left !important;
+        font-size: 13px !important;
+        line-height: 1.55 !important;
+    }
+    .gp-panel-title { color: #151d2c; font-size: 18px; font-weight: 800; }
+    .gp-panel-sub { margin: 3px 0 18px; color: #6b7b91; font-size: 13px; }
+    .gp-count-pill, .gp-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        color: #c73c3c;
+        background: #fff0f0;
+    }
+    .gp-field-label { margin: 5px 0 6px; color: #66758b; font-size: 13px; }
+    .gp-punch-pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 10px 0;
+        direction: ltr;
+    }
+    .gp-punch-state {
+        padding: 13px 14px;
+        border-radius: 12px;
+        background: #f5f7fa;
+        color: #66758b;
+        font-size: 13px;
+    }
+    .gp-punch-state strong { display: block; margin-top: 4px; color: #151d2c; font-size: 15px; }
+    .gp-result-box {
+        margin: 11px 0;
+        padding: 12px 14px;
+        border-radius: 11px;
+        font-size: 13px;
+        font-weight: 650;
+        background: #ecf9f1;
+        color: #187a43;
+    }
+    .gp-result-box.warning { background: #fff7e7; color: #9a5b00; }
+    .gp-result-box.danger { background: #fff0f0; color: #b72f2f; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) button[kind="primary"] {
+        min-height: 48px !important;
+        color: #fff !important;
+        background: #2458d3 !important;
+        border: 0 !important;
+        border-radius: 11px !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) button[kind="primary"] p { color: #fff !important; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) input,
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) div[data-baseweb="select"] > div {
+        min-height: 48px !important;
+        border-radius: 11px !important;
+        color: #172033 !important;
+        background: #f8fafc !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) label p {
+        color: #66758b !important;
+        font-size: 13px !important;
+    }
+    .gp-case-card {
+        margin-top: 10px;
+        padding: 14px;
+        border-radius: 12px;
+        color: #172033;
+        background: #eef4ff;
+        border-left: 4px solid #2458d3;
+    }
+    .gp-case-name { font-weight: 750; }
+    .gp-case-meta { margin-top: 4px; color: #64748b; font-size: 12px; }
+    @media (max-width: 760px) {
+        .block-container { padding: 0 9px 28px !important; }
+        .gp-shell-header { min-height: 68px; padding: 0 15px; }
+        .gp-brand-name { font-size: 18px; }
+        .gp-brand-sub, .gp-connection { font-size: 11px; }
+        div[data-testid="stTabs"] [role="tablist"] { padding: 8px 5px !important; overflow-x: auto; }
+        div[data-testid="stTabs"] [role="tab"] { min-width: 102px !important; padding: 8px !important; }
+        .gp-overview-head { padding-top: 20px; }
+        .gp-overview-title { font-size: 20px; }
+        div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) {
+            display: grid !important;
+            grid-template-columns: 1fr 110px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) > div:first-child { display: none; }
+        div[data-testid="stHorizontalBlock"]:has(.gp-dashboard-marker) > div { width: 100% !important; flex: none !important; }
+        .gp-overview-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+        .gp-overview-kpi { min-height: 91px; padding: 16px; }
+        div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) {
+            flex-direction: column !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-workspace-marker) > div[data-testid="stColumn"] {
+            width: 100% !important;
+            flex: none !important;
+            padding: 15px !important;
+        }
+        .gp-punch-pair { grid-template-columns: 1fr; }
+    }
+
     </style>
 """,
     unsafe_allow_html=True,
@@ -1398,17 +1655,9 @@ def create_manual_biotime_punch(
 
 
 def render_manual_punch_panel(active_employees, default_date, attendance_rows):
-  """Exception-first correction: employee, date and time; backend does the rest."""
-  strlit.markdown(
-      '<div class="gp-report-panel">'
-      '<div class="gp-report-title">حالات الدوام والتصحيح</div>'
-      '<div class="gp-report-subtitle">اختر الموظف والتاريخ والوقت فقط — التطبيق يحدد نوع البصمة ويتحقق من BioTime</div>'
-      '</div>',
-      unsafe_allow_html=True,
-  )
-
+  """Render the approved exception-first workspace with only three inputs."""
   if not active_employees:
-    strlit.info("لا توجد قائمة موظفين نشطين متاحة حالياً.")
+    strlit.info("No active employees are available.")
     return
 
   missing_rows = [
@@ -1423,12 +1672,16 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
   late_count = sum(
       1 for row in attendance_rows if "Late" in str(row.get("Status", ""))
   )
-  render_kpi_cards([
-      ("👥", "الموظفون النشطون", len(active_employees)),
-      ("🟢", "الحضور", present_count),
-      ("⏰", "المتأخرون", late_count),
-      ("⚠️", "بصمة ناقصة", len(missing_rows)),
-  ])
+  strlit.markdown(
+      '<div class="gp-overview-kpis">'
+      f'<div class="gp-overview-kpi" style="--accent:#234783"><div class="gp-overview-kpi-label">Active staff</div><div class="gp-overview-kpi-value">{len(active_employees)}</div></div>'
+      f'<div class="gp-overview-kpi" style="--accent:#16804a"><div class="gp-overview-kpi-label">Present now</div><div class="gp-overview-kpi-value">{present_count}</div></div>'
+      f'<div class="gp-overview-kpi" style="--accent:#b86500"><div class="gp-overview-kpi-label">Late</div><div class="gp-overview-kpi-value">{late_count}</div></div>'
+      f'<div class="gp-overview-kpi" style="--accent:#c43f44"><div class="gp-overview-kpi-label">Missing punch</div><div class="gp-overview-kpi-value">{len(missing_rows)}</div></div>'
+      '</div>',
+      unsafe_allow_html=True,
+  )
+
   employee_options = sorted(
       active_employees,
       key=lambda code: (active_employees[code].get("name", ""), code),
@@ -1439,48 +1692,59 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     strlit.session_state["manual_punch_date"] = default_date
     strlit.session_state["manual_punch_last_dashboard_date"] = default_date
 
-  correction_col, queue_col = strlit.columns([1.55, 0.82], gap="medium")
+  def select_missing_case(employee_code):
+    strlit.session_state["manual_punch_employee"] = employee_code
+    strlit.session_state["manual_punch_date"] = default_date
+
+  queue_col, correction_col = strlit.columns([0.82, 1.68], gap="medium")
   with queue_col:
-    strlit.markdown('<span class="gp-exceptions-marker"></span>', unsafe_allow_html=True)
+    strlit.markdown('<span class="gp-workspace-marker"></span>', unsafe_allow_html=True)
     strlit.markdown(
-        '<div class="gp-section-title">الحالات التي تحتاج إجراء</div>',
+        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+        f'<div class="gp-panel-title">Attendance exceptions</div>'
+        f'<span class="gp-count-pill">{len(missing_rows)} open</span></div>'
+        '<div class="gp-panel-sub">Only cases requiring HR action</div>',
         unsafe_allow_html=True,
     )
     if not missing_rows:
-      strlit.success("لا توجد بصمات ناقصة في التاريخ المعروض.")
+      strlit.success("No missing punches for this date.")
     else:
       for row_index, row in enumerate(missing_rows):
         employee_code = _normalize_employee_code(row.get("Employee ID"))
-        employee_name = clean_txt(row.get("First Name", ""))
-        missing_type = "خروج ناقص" if "Missing OUT" in str(row.get("Status", "")) else "دخول ناقص"
-        if strlit.button(
-            f"{employee_name}\nBioTime ID {employee_code} · {missing_type}",
+        employee_name = clean_txt(row.get("First Name", "")) or f"Employee {employee_code}"
+        missing_type = "Missing OUT" if "Missing OUT" in str(row.get("Status", "")) else "Missing IN"
+        strlit.button(
+            f"{employee_name}\nID {employee_code} · {missing_type}  ›",
             key=f"open_missing_case_{employee_code}_{row_index}",
             use_container_width=True,
-        ):
-          strlit.session_state["manual_punch_employee"] = employee_code
-          strlit.session_state["manual_punch_date"] = default_date
+            on_click=select_missing_case,
+            args=(employee_code,),
+        )
 
   with correction_col:
     strlit.markdown(
-        '<div class="gp-section-title">إكمال البصمة الناقصة</div>',
+        '<div class="gp-panel-title">Complete missing punch</div>'
+        '<div class="gp-panel-sub">Choose employee, date and time. BioTime decides IN or OUT automatically.</div>',
         unsafe_allow_html=True,
     )
-    selected_employee = strlit.selectbox(
-        "الموظف",
-        employee_options,
-        format_func=lambda code: (
-            f"{active_employees[code].get('name', '')} — BioTime ID {code}"
-        ),
-        key="manual_punch_employee",
-    )
-    form_date = strlit.date_input(
-        "التاريخ",
-        max_value=datetime.now(SYRIA_TZ).date(),
-        key="manual_punch_date",
-    )
+    employee_col, date_col = strlit.columns([1.35, 0.95], gap="small")
+    with employee_col:
+      selected_employee = strlit.selectbox(
+          "Employee",
+          employee_options,
+          format_func=lambda code: (
+              f"{active_employees[code].get('name', '')} · {code}"
+          ),
+          key="manual_punch_employee",
+      )
+    with date_col:
+      form_date = strlit.date_input(
+          "Date",
+          max_value=datetime.now(SYRIA_TZ).date(),
+          key="manual_punch_date",
+      )
     form_time = strlit.time_input(
-        "الوقت الناقص",
+        "Missing time",
         value=datetime.now(SYRIA_TZ).time().replace(second=0, microsecond=0),
         key="manual_punch_time",
     )
@@ -1492,51 +1756,57 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
       existing = []
       preview_error = str(error)
 
+    selected_daily_row = None
+    if form_date == default_date:
+      selected_daily_row = next(
+          (
+              row for row in attendance_rows
+              if _normalize_employee_code(row.get("Employee ID"))
+              == _normalize_employee_code(selected_employee)
+          ),
+          None,
+      )
+    daily_status = str((selected_daily_row or {}).get("Status", ""))
+
     detected_kind = None
-    case_state = "unavailable" if preview_error else "unknown"
+    case_state = "unavailable" if preview_error else "empty"
     existing_punch = existing[-1] if len(existing) % 2 == 1 else None
-    if len(existing) % 2 == 1:
-      if len(existing) == 1:
+    if not preview_error and len(existing) >= 2 and len(existing) % 2 == 0:
+      case_state = "overwrite"
+    elif not preview_error and len(existing) % 2 == 1:
+      case_state = "missing"
+      if "Missing OUT" in daily_status:
+        detected_kind = "OUT"
+      elif "Missing IN" in daily_status:
+        detected_kind = "IN"
+      elif len(existing) > 1:
+        detected_kind = "OUT"
+      else:
         detected_kind = (
             "IN" if existing_punch["datetime"].hour >= SINGLE_PUNCH_OUT_HOUR else "OUT"
         )
-      else:
-        # The app's approved multi-punch rule is sequential odd/even pairing.
-        # After 3/5/7 punches, the missing next record is therefore OUT.
-        detected_kind = "OUT"
-      case_state = "missing"
-    elif len(existing) >= 2:
-      case_state = "overwrite"
-    elif not preview_error:
-      case_state = "empty"
 
+    existing_in = "Missing"
+    existing_out = "Missing"
     if existing:
-      punch_summary = "  ·  ".join(
-          item["datetime"].strftime("%H:%M") for item in existing
-      )
-      strlit.caption(f"البصمات الموجودة في BioTime: {punch_summary}")
-
-    if case_state == "missing":
-      kind_ar = "دخول IN" if detected_kind == "IN" else "خروج OUT"
-      strlit.success(
-          f"بصمة ناقصة مؤكدة: عدد البصمات المسجلة فردي. سيضيف التطبيق {kind_ar}."
-      )
-    elif case_state == "overwrite":
-      strlit.warning(
-          "السجل مكتمل ويحتوي بصمتي دخول وخروج أو أكثر. هذه ليست بصمة ناقصة؛ "
-          "أي تغيير يعتبر استبدالاً، لذلك تم منع الحفظ التلقائي."
-      )
-    elif case_state == "empty":
-      strlit.warning(
-          "لا توجد أي بصمة لهذا الموظف في هذا التاريخ، لذلك لا يمكن تحديد IN أو OUT تلقائياً."
-      )
-    else:
-      strlit.error(f"تعذر التحقق من BioTime: {preview_error}")
+      if detected_kind == "IN":
+        existing_out = existing[-1]["datetime"].strftime("%H:%M")
+      elif detected_kind == "OUT":
+        existing_in = existing[0]["datetime"].strftime("%H:%M")
+      else:
+        existing_in = existing[0]["datetime"].strftime("%H:%M")
+        if len(existing) > 1:
+          existing_out = existing[-1]["datetime"].strftime("%H:%M")
+    strlit.markdown(
+        '<div class="gp-punch-pair">'
+        f'<div class="gp-punch-state">Existing IN<strong>{existing_in}</strong></div>'
+        f'<div class="gp-punch-state">Existing OUT<strong>{existing_out}</strong></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     punch_date = form_date
     if detected_kind == "OUT" and existing_punch:
-      # An OUT time earlier than the existing IN is automatically treated as
-      # an after-midnight punch belonging to the following calendar day.
       if form_time <= existing_punch["datetime"].time():
         punch_date = form_date + timedelta(days=1)
     punch_datetime = datetime.combine(punch_date, form_time)
@@ -1545,29 +1815,43 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     validation_message = ""
     if valid_sequence and punch_datetime > now_local:
       valid_sequence = False
-      validation_message = "لا يمكن تسجيل وقت في المستقبل."
-    if valid_sequence and detected_kind == "IN":
-      if punch_datetime >= existing_punch["datetime"]:
-        valid_sequence = False
-        validation_message = "وقت الدخول يجب أن يكون قبل بصمة الخروج الموجودة."
-    if valid_sequence and detected_kind == "OUT":
-      if punch_datetime <= existing_punch["datetime"]:
-        valid_sequence = False
-        validation_message = "وقت الخروج يجب أن يكون بعد بصمة الدخول الموجودة."
+      validation_message = "The selected time is in the future."
+    if valid_sequence and detected_kind == "IN" and punch_datetime >= existing_punch["datetime"]:
+      valid_sequence = False
+      validation_message = "IN must be earlier than the existing OUT."
+    if valid_sequence and detected_kind == "OUT" and punch_datetime <= existing_punch["datetime"]:
+      valid_sequence = False
+      validation_message = "OUT must be later than the existing IN."
+
+    if case_state == "missing":
+      label = "IN" if detected_kind == "IN" else "OUT"
+      message = f"Real missing {label}. The app will add one {label} punch only."
+      box_class = "gp-result-box"
+    elif case_state == "overwrite":
+      message = "Record already has complete punches. Overwrite is blocked."
+      box_class = "gp-result-box danger"
+    elif case_state == "empty":
+      message = "No punches exist, so IN or OUT cannot be determined safely."
+      box_class = "gp-result-box warning"
+    else:
+      message = f"BioTime verification unavailable: {preview_error}"
+      box_class = "gp-result-box danger"
     if validation_message:
-      strlit.error(validation_message)
+      message = validation_message
+      box_class = "gp-result-box danger"
+    strlit.markdown(f'<div class="{box_class}">{message}</div>', unsafe_allow_html=True)
 
     can_save = valid_sequence and not BIOTIME_MANUAL_WRITE_LOCKED
     save_clicked = strlit.button(
-        "حفظ والتحقق في BioTime",
+        "Save and verify in BioTime",
         use_container_width=True,
         key="save_auto_manual_punch",
         disabled=not can_save,
         type="primary",
     )
     if BIOTIME_MANUAL_WRITE_LOCKED:
-      strlit.error(
-          "الكتابة متوقفة مؤقتاً لحماية BioTime. راجع Manual Log قبل إعادة تفعيلها."
+      strlit.caption(
+          "Safety lock is active: saving stays disabled until the BioTime Manual Log payload is verified."
       )
     if save_clicked:
       try:
@@ -1591,44 +1875,13 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
         }
         strlit.session_state.setdefault("manual_punch_audit", []).append(audit_row)
         strlit.cache_data.clear()
-        strlit.success("تم الحفظ والتحقق من ظهور البصمة في BioTime Cloud.")
+        strlit.success("Saved and verified in BioTime Cloud.")
         strlit.caption(
-            "السجل بعد التصحيح: "
+            "Verified punches: "
             + " · ".join(row["datetime"].strftime("%H:%M") for row in verified_rows)
         )
       except Exception as save_error:
-        strlit.error(f"لم يتم تسجيل البصمة: {save_error}")
-
-  with strlit.expander("إعدادات اتصال BioTime وسجل التصحيحات", expanded=False):
-    if strlit.button(
-        "اختبار صلاحية الكتابة بدون تسجيل بصمة",
-        use_container_width=True,
-        key="test_manual_punch_permission",
-    ):
-      try:
-        result = test_manual_punch_permission()
-        if result["post_advertised"]:
-          strlit.success(f"المسار يعلن دعم POST (HTTP {result['status_code']}).")
-        elif result["reachable"]:
-          allow_text = result["allow"] or "الخادم لم يرسل قائمة Allow"
-          strlit.warning(
-              f"المسار متاح، لكن صلاحية POST غير مؤكدة: {allow_text}"
-          )
-        else:
-          strlit.error(f"تعذر الوصول إلى المسار (HTTP {result['status_code']}).")
-      except Exception as permission_error:
-        strlit.error(str(permission_error))
-    if strlit.session_state.get("manual_punch_audit"):
-      audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
-          index=False
-      ).encode("utf-8-sig")
-      strlit.download_button(
-          "تنزيل سجل التصحيحات",
-          data=audit_csv,
-          file_name="Manual_Punch_Audit.csv",
-          mime="text/csv",
-          use_container_width=True,
-      )
+        strlit.error(f"Punch was not saved: {save_error}")
 
 
 
@@ -2912,57 +3165,51 @@ now_syria = datetime.now(SYRIA_TZ)
 today_str = now_syria.strftime("%Y-%m-%d")
 
 strlit.markdown(
-    '<div class="gp-app-hero">'
-    '<div class="gp-app-hero-title">Golden Palace</div>'
-    '<div class="gp-app-hero-subtitle">نظام الموارد البشرية و BioTime</div>'
+    '<div class="gp-shell-header">'
+    '<div><div class="gp-brand-name">Golden Palace</div>'
+    '<div class="gp-brand-sub">HR &amp; BioTime</div></div>'
+    '<div class="gp-connection"><span class="gp-connection-dot"></span>'
+    '<span>BioTime connected</span></div>'
     '</div>',
     unsafe_allow_html=True,
 )
 
 correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs([
-    "⚠️ الحالات والتصحيح",
-    "📅 الحضور اليومي",
-    "📊 التقارير",
-    "🛡️ النسخة الاحتياطية",
+    "▦  Overview",
+    "▣  Attendance",
+    "⌑  Reports",
+    "▤  Backup",
 ])
 
-strlit.markdown('<div class="gp-top-controls"></div>', unsafe_allow_html=True)
-c_date, c_status, c_ref = strlit.columns([1.35, 0.90, 1.00], gap="small")
-with c_date:
-  strlit.markdown('<span class="gp-controls-marker"></span>', unsafe_allow_html=True)
-  strlit.markdown('<div class="gp-control-caption">📅 تاريخ العرض</div>', unsafe_allow_html=True)
-  selected_date_obj_input = strlit.date_input(
-      "تاريخ العرض", value=now_syria.date(), label_visibility="collapsed"
-  )
-  selected_date_str = selected_date_obj_input.strftime("%Y-%m-%d")
+if "dashboard_date" not in strlit.session_state:
+  strlit.session_state["dashboard_date"] = now_syria.date()
 
+with correction_tab:
+  head_col, date_col, refresh_col = strlit.columns([1.0, 0.34, 0.22], gap="small")
+  with head_col:
+    strlit.markdown('<span class="gp-dashboard-marker"></span>', unsafe_allow_html=True)
+    shown_date = strlit.session_state["dashboard_date"]
+    strlit.markdown(
+        '<div class="gp-overview-head"><div>'
+        '<div class="gp-overview-title">Today’s attendance</div>'
+        f'<div class="gp-overview-date">{shown_date.strftime("%A, %d %B %Y")}</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+  with date_col:
+    selected_date_obj_input = strlit.date_input(
+        "Date",
+        max_value=now_syria.date(),
+        key="dashboard_date",
+    )
+  with refresh_col:
+    strlit.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+    if strlit.button("↻  Refresh", use_container_width=True, key="top_refresh_button"):
+      strlit.cache_data.clear()
+      strlit.rerun()
+
+selected_date_str = selected_date_obj_input.strftime("%Y-%m-%d")
 is_today = selected_date_str == today_str
-
-with c_status:
-  strlit.markdown('<div class="gp-control-caption">📡 حالة الاتصال</div>', unsafe_allow_html=True)
-  if is_today:
-    strlit.markdown(
-        '<div class="gp-live-card">'
-        '<span class="gp-live-dot"></span>'
-        '<span class="gp-live-main">Online</span>'
-        '<span class="gp-live-sub">مباشر</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-  else:
-    strlit.markdown(
-        f'<div class="gp-archive-card">'
-        f'<span>🗂️</span><span class="gp-live-main">أرشيف</span>'
-        f'<span class="gp-live-sub">{selected_date_obj_input.strftime("%d/%m/%Y")}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-with c_ref:
-  strlit.markdown('<div class="gp-control-caption">⚡ البيانات</div>', unsafe_allow_html=True)
-  if strlit.button("🔄 تحديث الآن", use_container_width=True, key="top_refresh_button"):
-    strlit.cache_data.clear()
-    strlit.rerun()
 
 if "last_selected_date" not in strlit.session_state:
   strlit.session_state["last_selected_date"] = selected_date_str
