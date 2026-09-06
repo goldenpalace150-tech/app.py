@@ -22,7 +22,7 @@ import streamlit as strlit
 # ==========================================
 # 0. RTL ARABIC TEXT & VISUAL CONFIG
 # ==========================================
-APP_VERSION = "BIO-ATTENDANCE-PRO-DASHBOARD-2026-09-06"
+APP_VERSION = "BIO-ATTENDANCE-EXCEPTIONS-FIRST-2026-09-06"
 
 TEXT_CONFIG = {
     "page_title": "حضور وانصراف القصر الذهبي",
@@ -730,6 +730,70 @@ strlit.markdown(
         }
     }
 
+    /* Exception-first workspace: quiet queue on the side, one clear action. */
+    .gp-exceptions-marker { display: none; }
+    div[data-testid="stElementContainer"]:has(.gp-exceptions-marker) { display: none; }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) {
+        align-items: stretch;
+        gap: 14px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"] {
+        background: var(--gp-surface);
+        border: 1px solid var(--gp-border);
+        border-radius: 16px;
+        padding: 15px;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child {
+        background: #f8fafc;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child button {
+        min-height: 62px !important;
+        padding: 9px 11px !important;
+        margin-bottom: 8px !important;
+        text-align: right !important;
+        border: 1px solid #e2e8f0 !important;
+        border-right: 3px solid #ef4444 !important;
+        box-shadow: none !important;
+        background: #ffffff !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child button p {
+        text-align: right !important;
+        line-height: 1.55 !important;
+        font-size: 12px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) input,
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) div[data-baseweb="select"] > div {
+        min-height: 45px !important;
+        border-radius: 10px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) button[kind="primary"] {
+        min-height: 47px !important;
+        border-radius: 10px !important;
+        background: #1d4ed8 !important;
+        border-color: #1d4ed8 !important;
+        color: #ffffff !important;
+        box-shadow: 0 5px 14px rgba(29, 78, 216, 0.18) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) button[kind="primary"] p {
+        color: #ffffff !important;
+    }
+    @media (max-width: 700px) {
+        div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"] {
+            width: 100% !important;
+            min-width: 0 !important;
+            padding: 11px;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.gp-exceptions-marker) > div[data-testid="stColumn"]:first-child {
+            order: 2;
+        }
+    }
+
     </style>
 """,
     unsafe_allow_html=True,
@@ -1224,7 +1288,17 @@ def fetch_employee_punches_for_day(employee_code, work_date):
             ),
         }
     )
-  return sorted(punches, key=lambda item: item["datetime"])
+  punches.sort(key=lambda item: item["datetime"])
+  deduplicated = []
+  for punch in punches:
+    if (
+        not deduplicated
+        or abs(
+            (punch["datetime"] - deduplicated[-1]["datetime"]).total_seconds()
+        ) > 60
+    ):
+      deduplicated.append(punch)
+  return deduplicated
 
 
 def test_manual_punch_permission():
@@ -1302,23 +1376,215 @@ def create_manual_biotime_punch(
   return payload, verified_rows
 
 
-def render_manual_punch_panel(active_employees, default_date):
-  """HR-only manual correction form with preview, validation and confirmation."""
+def render_manual_punch_panel(active_employees, default_date, attendance_rows):
+  """Exception-first correction: employee, date and time; backend does the rest."""
   strlit.markdown(
       '<div class="gp-report-panel">'
-      '<div class="gp-report-title">✍️ تصحيح بصمة ناقصة</div>'
-      '<div class="gp-report-subtitle">تُحفظ البصمة مباشرة في BioTime Cloud بعد التأكيد</div>'
+      '<div class="gp-report-title">حالات الدوام والتصحيح</div>'
+      '<div class="gp-report-subtitle">اختر الموظف والتاريخ والوقت فقط — التطبيق يحدد نوع البصمة ويتحقق من BioTime</div>'
       '</div>',
       unsafe_allow_html=True,
   )
 
-  config = get_manual_punch_config()
-  if not config["enabled"]:
-    strlit.warning(
-        "ميزة الكتابة محمية حالياً. اختبر صلاحية BioTime أولاً، ثم فعّل "
-        "manual_punch_enabled في الأسرار."
+  if not active_employees:
+    strlit.info("لا توجد قائمة موظفين نشطين متاحة حالياً.")
+    return
+
+  missing_rows = [
+      row for row in attendance_rows
+      if "Missing" in str(row.get("Status", ""))
+  ]
+  employee_options = sorted(
+      active_employees,
+      key=lambda code: (active_employees[code].get("name", ""), code),
+  )
+  if strlit.session_state.get("manual_punch_employee") not in employee_options:
+    strlit.session_state["manual_punch_employee"] = employee_options[0]
+  if strlit.session_state.get("manual_punch_last_dashboard_date") != default_date:
+    strlit.session_state["manual_punch_date"] = default_date
+    strlit.session_state["manual_punch_last_dashboard_date"] = default_date
+
+  queue_col, correction_col = strlit.columns([0.82, 1.55], gap="medium")
+  with queue_col:
+    strlit.markdown('<span class="gp-exceptions-marker"></span>', unsafe_allow_html=True)
+    strlit.markdown(
+        '<div class="gp-section-title">الحالات التي تحتاج إجراء</div>',
+        unsafe_allow_html=True,
     )
-    with strlit.expander("إعدادات BioTime المطلوبة", expanded=False):
+    if not missing_rows:
+      strlit.success("لا توجد بصمات ناقصة في التاريخ المعروض.")
+    else:
+      for row_index, row in enumerate(missing_rows):
+        employee_code = _normalize_employee_code(row.get("Employee ID"))
+        employee_name = clean_txt(row.get("First Name", ""))
+        missing_type = "خروج ناقص" if "Missing OUT" in str(row.get("Status", "")) else "دخول ناقص"
+        if strlit.button(
+            f"{employee_name}\nBioTime ID {employee_code} · {missing_type}",
+            key=f"open_missing_case_{employee_code}_{row_index}",
+            use_container_width=True,
+        ):
+          strlit.session_state["manual_punch_employee"] = employee_code
+          strlit.session_state["manual_punch_date"] = default_date
+
+  with correction_col:
+    strlit.markdown(
+        '<div class="gp-section-title">إكمال البصمة الناقصة</div>',
+        unsafe_allow_html=True,
+    )
+    selected_employee = strlit.selectbox(
+        "الموظف",
+        employee_options,
+        format_func=lambda code: (
+            f"{active_employees[code].get('name', '')} — BioTime ID {code}"
+        ),
+        key="manual_punch_employee",
+    )
+    form_date = strlit.date_input(
+        "التاريخ",
+        max_value=datetime.now(SYRIA_TZ).date(),
+        key="manual_punch_date",
+    )
+    form_time = strlit.time_input(
+        "الوقت الناقص",
+        value=datetime.now(SYRIA_TZ).time().replace(second=0, microsecond=0),
+        key="manual_punch_time",
+    )
+
+    preview_error = None
+    try:
+      existing = fetch_employee_punches_for_day(selected_employee, form_date)
+    except Exception as error:
+      existing = []
+      preview_error = str(error)
+
+    detected_kind = None
+    case_state = "unavailable" if preview_error else "unknown"
+    existing_punch = existing[-1] if len(existing) % 2 == 1 else None
+    if len(existing) % 2 == 1:
+      if len(existing) == 1:
+        detected_kind = (
+            "IN" if existing_punch["datetime"].hour >= SINGLE_PUNCH_OUT_HOUR else "OUT"
+        )
+      else:
+        # The app's approved multi-punch rule is sequential odd/even pairing.
+        # After 3/5/7 punches, the missing next record is therefore OUT.
+        detected_kind = "OUT"
+      case_state = "missing"
+    elif len(existing) >= 2:
+      case_state = "overwrite"
+    elif not preview_error:
+      case_state = "empty"
+
+    if existing:
+      punch_summary = "  ·  ".join(
+          item["datetime"].strftime("%H:%M") for item in existing
+      )
+      strlit.caption(f"البصمات الموجودة في BioTime: {punch_summary}")
+
+    if case_state == "missing":
+      kind_ar = "دخول IN" if detected_kind == "IN" else "خروج OUT"
+      strlit.success(
+          f"بصمة ناقصة مؤكدة: عدد البصمات المسجلة فردي. سيضيف التطبيق {kind_ar}."
+      )
+    elif case_state == "overwrite":
+      strlit.warning(
+          "السجل مكتمل ويحتوي بصمتي دخول وخروج أو أكثر. هذه ليست بصمة ناقصة؛ "
+          "أي تغيير يعتبر استبدالاً، لذلك تم منع الحفظ التلقائي."
+      )
+    elif case_state == "empty":
+      strlit.warning(
+          "لا توجد أي بصمة لهذا الموظف في هذا التاريخ، لذلك لا يمكن تحديد IN أو OUT تلقائياً."
+      )
+    else:
+      strlit.error(f"تعذر التحقق من BioTime: {preview_error}")
+
+    punch_date = form_date
+    if detected_kind == "OUT" and existing_punch:
+      # An OUT time earlier than the existing IN is automatically treated as
+      # an after-midnight punch belonging to the following calendar day.
+      if form_time <= existing_punch["datetime"].time():
+        punch_date = form_date + timedelta(days=1)
+    punch_datetime = datetime.combine(punch_date, form_time)
+    now_local = datetime.now(SYRIA_TZ).replace(tzinfo=None)
+    valid_sequence = case_state == "missing"
+    validation_message = ""
+    if valid_sequence and punch_datetime > now_local:
+      valid_sequence = False
+      validation_message = "لا يمكن تسجيل وقت في المستقبل."
+    if valid_sequence and detected_kind == "IN":
+      if punch_datetime >= existing_punch["datetime"]:
+        valid_sequence = False
+        validation_message = "وقت الدخول يجب أن يكون قبل بصمة الخروج الموجودة."
+    if valid_sequence and detected_kind == "OUT":
+      if punch_datetime <= existing_punch["datetime"]:
+        valid_sequence = False
+        validation_message = "وقت الخروج يجب أن يكون بعد بصمة الدخول الموجودة."
+    if validation_message:
+      strlit.error(validation_message)
+
+    config = get_manual_punch_config()
+    can_save = valid_sequence and config["enabled"]
+    save_clicked = strlit.button(
+        "حفظ والتحقق في BioTime",
+        use_container_width=True,
+        key="save_auto_manual_punch",
+        disabled=not can_save,
+        type="primary",
+    )
+    if case_state == "missing" and not config["enabled"]:
+      strlit.caption("الحفظ متوقف حتى يتم تفعيل صلاحية الكتابة في إعدادات BioTime أدناه.")
+
+    if save_clicked:
+      try:
+        reason = f"Auto-detected missing {detected_kind} from HR app"
+        payload, verified_rows = create_manual_biotime_punch(
+            selected_employee,
+            punch_datetime,
+            detected_kind,
+            reason,
+            "HR App",
+        )
+        audit_row = {
+            "Saved At": datetime.now(SYRIA_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            "Operator": "HR App",
+            "BioTime ID": selected_employee,
+            "Employee": active_employees[selected_employee].get("name", ""),
+            "Punch": detected_kind,
+            "Punch Time": punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+            "Reason": reason,
+            "BioTime Verified": "Yes",
+        }
+        strlit.session_state.setdefault("manual_punch_audit", []).append(audit_row)
+        strlit.cache_data.clear()
+        strlit.success("تم الحفظ والتحقق من ظهور البصمة في BioTime Cloud.")
+        strlit.caption(
+            "السجل بعد التصحيح: "
+            + " · ".join(row["datetime"].strftime("%H:%M") for row in verified_rows)
+        )
+      except Exception as save_error:
+        strlit.error(f"لم يتم تسجيل البصمة: {save_error}")
+
+  with strlit.expander("إعدادات اتصال BioTime وسجل التصحيحات", expanded=False):
+    config = get_manual_punch_config()
+    if strlit.button(
+        "اختبار صلاحية الكتابة بدون تسجيل بصمة",
+        use_container_width=True,
+        key="test_manual_punch_permission",
+    ):
+      try:
+        result = test_manual_punch_permission()
+        if result["post_advertised"]:
+          strlit.success(f"المسار يعلن دعم POST (HTTP {result['status_code']}).")
+        elif result["reachable"]:
+          allow_text = result["allow"] or "الخادم لم يرسل قائمة Allow"
+          strlit.warning(
+              f"المسار متاح، لكن صلاحية POST غير مؤكدة: {allow_text}"
+          )
+        else:
+          strlit.error(f"تعذر الوصول إلى المسار (HTTP {result['status_code']}).")
+      except Exception as permission_error:
+        strlit.error(str(permission_error))
+    if not config["enabled"]:
       strlit.code(
           'manual_punch_enabled = false\n'
           'manual_punch_endpoint = "/iclock/api/transactions/"\n'
@@ -1326,185 +1592,20 @@ def render_manual_punch_panel(active_employees, default_date):
           'manual_punch_time_field = "punch_time"\n'
           'manual_punch_state_field = "punch_state"\n'
           'manual_punch_in_value = "0"\n'
-          'manual_punch_out_value = "1"\n'
-          '# أضف الحقول التالية فقط إذا طلبها مزود BioTime:\n'
-          '# manual_punch_terminal_field = "terminal_sn"\n'
-          '# manual_punch_terminal_value = "MANUAL"\n'
-          '# manual_punch_note_field = "reserved"',
+          'manual_punch_out_value = "1"',
           language="toml",
       )
-
-  if strlit.button(
-      "🔐 اختبار صلاحية BioTime بدون تسجيل بصمة",
-      use_container_width=True,
-      key="test_manual_punch_permission",
-  ):
-    try:
-      result = test_manual_punch_permission()
-      if result["post_advertised"]:
-        strlit.success(
-            f"المسار متاح ويعلن دعم POST (HTTP {result['status_code']})."
-        )
-      elif result["reachable"]:
-        allow_text = result["allow"] or "لم يرسل الخادم قائمة Allow"
-        strlit.warning(
-            f"المسار قابل للوصول (HTTP {result['status_code']})، لكن دعم الكتابة غير مؤكد: {allow_text}"
-        )
-      else:
-        strlit.error(f"تعذر الوصول إلى مسار الكتابة (HTTP {result['status_code']}).")
-    except Exception as permission_error:
-      strlit.error(str(permission_error))
-
-  if not active_employees:
-    strlit.info("لا توجد قائمة موظفين نشطين متاحة حالياً.")
-    return
-
-  employee_options = sorted(
-      active_employees,
-      key=lambda code: (active_employees[code].get("name", ""), code),
-  )
-  selected_employee = strlit.selectbox(
-      "الموظف",
-      employee_options,
-      format_func=lambda code: (
-          f"{active_employees[code].get('name', '')} — BioTime ID {code}"
-      ),
-      key="manual_punch_employee",
-  )
-  form_date = strlit.date_input(
-      "تاريخ البصمة",
-      value=default_date,
-      max_value=datetime.now(SYRIA_TZ).date(),
-      key="manual_punch_date",
-  )
-
-  try:
-    existing = fetch_employee_punches_for_day(selected_employee, form_date)
-  except Exception as preview_error:
-    existing = []
-    strlit.error(f"تعذر تحميل البصمات الحالية: {preview_error}")
-
-  if existing:
-    strlit.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "الوقت": item["time"],
-                    "النوع": item["state"],
-                    "الجهاز": item["device"],
-                }
-                for item in existing
-            ]
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
-  else:
-    strlit.info("لا توجد بصمات ظاهرة لهذا الموظف في التاريخ المحدد.")
-
-  with strlit.form("manual_punch_form", clear_on_submit=False):
-    form_kind = strlit.radio(
-        "البصمة الناقصة",
-        options=["IN", "OUT"],
-        format_func=lambda value: "دخول IN" if value == "IN" else "خروج OUT",
-        horizontal=True,
-    )
-    form_time = strlit.time_input(
-        "الوقت الصحيح", value=datetime.now(SYRIA_TZ).time().replace(second=0, microsecond=0)
-    )
-    next_day = strlit.checkbox(
-        "الخروج بعد منتصف الليل (اليوم التالي)", value=False
-    )
-    operator_name = strlit.text_input("اسم مسؤول الموارد البشرية")
-    reason = strlit.text_input("سبب التصحيح", placeholder="مثال: نسي الموظف بصمة الخروج")
-    confirm = strlit.checkbox(
-        "راجعت الموظف والتاريخ والوقت وأوافق على تسجيلها في BioTime Cloud"
-    )
-    submitted = strlit.form_submit_button(
-        "✅ تسجيل البصمة في BioTime Cloud", use_container_width=True
-    )
-
-  if not submitted:
     if strlit.session_state.get("manual_punch_audit"):
       audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
           index=False
       ).encode("utf-8-sig")
       strlit.download_button(
-          "📥 تنزيل سجل التصحيحات لهذه الجلسة",
+          "تنزيل سجل التصحيحات",
           data=audit_csv,
           file_name="Manual_Punch_Audit.csv",
           mime="text/csv",
           use_container_width=True,
       )
-    return
-  if not config["enabled"]:
-    strlit.error("فعّل manual_punch_enabled في الأسرار بعد نجاح اختبار الصلاحية.")
-    return
-  if not operator_name.strip() or not reason.strip():
-    strlit.error("اسم المسؤول وسبب التصحيح مطلوبان.")
-    return
-  if not confirm:
-    strlit.error("يجب مراجعة البيانات وتفعيل مربع التأكيد قبل التسجيل.")
-    return
-
-  punch_date = form_date + timedelta(days=1) if next_day and form_kind == "OUT" else form_date
-  punch_datetime = datetime.combine(punch_date, form_time)
-  now_local = datetime.now(SYRIA_TZ).replace(tzinfo=None)
-  if punch_datetime > now_local:
-    strlit.error("لا يمكن تسجيل بصمة في المستقبل.")
-    return
-  if existing:
-    existing_times = [item["datetime"] for item in existing]
-    if form_kind == "IN" and punch_datetime >= max(existing_times):
-      strlit.error("بصمة الدخول الناقصة يجب أن تكون قبل آخر بصمة موجودة.")
-      return
-    if form_kind == "OUT" and punch_datetime <= min(existing_times):
-      strlit.error("بصمة الخروج الناقصة يجب أن تكون بعد أول بصمة موجودة.")
-      return
-
-  try:
-    payload, verified_rows = create_manual_biotime_punch(
-        selected_employee,
-        punch_datetime,
-        form_kind,
-        reason.strip(),
-        operator_name.strip(),
-    )
-    audit_row = {
-        "Saved At": datetime.now(SYRIA_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-        "Operator": operator_name.strip(),
-        "BioTime ID": selected_employee,
-        "Employee": active_employees[selected_employee].get("name", ""),
-        "Punch": form_kind,
-        "Punch Time": punch_datetime.strftime("%Y-%m-%d %H:%M:%S"),
-        "Reason": reason.strip(),
-        "BioTime Verified": "Yes",
-    }
-    strlit.session_state.setdefault("manual_punch_audit", []).append(audit_row)
-    strlit.cache_data.clear()
-    strlit.success("تم تسجيل البصمة والتحقق من ظهورها في BioTime Cloud.")
-    strlit.dataframe(
-        pd.DataFrame(
-            [{"الوقت": row["time"], "النوع": row["state"], "الجهاز": row["device"]}
-             for row in verified_rows]
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
-  except Exception as save_error:
-    strlit.error(f"لم يتم تسجيل البصمة: {save_error}")
-
-  if strlit.session_state.get("manual_punch_audit"):
-    audit_csv = pd.DataFrame(strlit.session_state["manual_punch_audit"]).to_csv(
-        index=False
-    ).encode("utf-8-sig")
-    strlit.download_button(
-        "📥 تنزيل سجل التصحيحات لهذه الجلسة",
-        data=audit_csv,
-        file_name="Manual_Punch_Audit.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
 
 
 
@@ -2848,10 +2949,10 @@ try:
   hide_loading_overlay(main_loading_overlay)
   main_loading_overlay = None
 
-  daily_tab, monthly_tab, correction_tab, backup_tab = strlit.tabs([
+  correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs([
+      "⚠️ الحالات والتصحيح",
       "📅 الحضور اليومي",
-      "📊 التقرير الشهري",
-      "✍️ تصحيح بصمة",
+      "📊 التقارير",
       "🛡️ النسخة الاحتياطية",
   ])
 
@@ -5507,7 +5608,7 @@ try:
         )
 
   with correction_tab:
-    render_manual_punch_panel(act, selected_date_obj_input)
+    render_manual_punch_panel(act, selected_date_obj_input, exc)
 
   with backup_tab:
     # 🛡️ INDEPENDENT BIOTIME BACKUP
