@@ -1921,6 +1921,10 @@ def create_manual_biotime_punch(
 
 def render_manual_punch_panel(active_employees, default_date, attendance_rows):
   """Render the approved exception-first workspace with only three inputs."""
+  flash_message = strlit.session_state.pop("manual_punch_flash", None)
+  if flash_message:
+    strlit.success(flash_message)
+
   if not active_employees:
     strlit.info("No active employees are available.")
     return
@@ -1953,13 +1957,8 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
   )
   if strlit.session_state.get("manual_punch_employee") not in employee_options:
     strlit.session_state["manual_punch_employee"] = employee_options[0]
-  if strlit.session_state.get("manual_punch_last_dashboard_date") != default_date:
-    strlit.session_state["manual_punch_date"] = default_date
-    strlit.session_state["manual_punch_last_dashboard_date"] = default_date
-
   def select_missing_case(employee_code):
     strlit.session_state["manual_punch_employee"] = employee_code
-    strlit.session_state["manual_punch_date"] = default_date
 
   queue_col, correction_col = strlit.columns([0.82, 1.68], gap="medium")
   with queue_col:
@@ -2005,8 +2004,10 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
     with date_col:
       form_date = strlit.date_input(
           "Date",
+          value=default_date,
           max_value=datetime.now(SYRIA_TZ).date(),
-          key="manual_punch_date",
+          key=f"manual_punch_date_{default_date.isoformat()}",
+          disabled=True,
       )
     selected_name = html.escape(
         clean_txt(active_employees[selected_employee].get("name", ""))
@@ -2179,11 +2180,14 @@ def render_manual_punch_panel(active_employees, default_date, attendance_rows):
         }
         strlit.session_state.setdefault("manual_punch_audit", []).append(audit_row)
         strlit.cache_data.clear()
-        strlit.success("Saved and verified in BioTime Cloud.")
-        strlit.caption(
-            "Verified punches: "
-            + " · ".join(row["datetime"].strftime("%H:%M") for row in verified_rows)
+        verified_times = " · ".join(
+            row["datetime"].strftime("%H:%M") for row in verified_rows
         )
+        strlit.session_state["manual_punch_flash"] = (
+            "Saved and verified in BioTime Cloud. Attendance was recalculated "
+            f"from the updated punches: {verified_times}"
+        )
+        strlit.rerun()
       except Exception as save_error:
         strlit.error(f"Punch was not saved: {save_error}")
 
@@ -3480,21 +3484,25 @@ strlit.markdown(
     unsafe_allow_html=True,
 )
 
-correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs([
+tab_labels = [
     "▦  Overview",
     "▣  Attendance",
     "⌑  Reports",
     "▤  Backup",
-])
+]
+correction_tab, daily_tab, monthly_tab, backup_tab = strlit.tabs(
+    tab_labels,
+    default=tab_labels[1],
+)
 
-if "dashboard_date" not in strlit.session_state:
-  strlit.session_state["dashboard_date"] = now_syria.date()
+if "attendance_date" not in strlit.session_state:
+  strlit.session_state["attendance_date"] = now_syria.date()
 
-with correction_tab:
+with daily_tab:
   head_col, date_col, refresh_col = strlit.columns([1.0, 0.34, 0.22], gap="small")
   with head_col:
     strlit.markdown('<span class="gp-dashboard-marker"></span>', unsafe_allow_html=True)
-    shown_date = strlit.session_state["dashboard_date"]
+    shown_date = strlit.session_state["attendance_date"]
     strlit.markdown(
         '<div class="gp-overview-head"><div>'
         '<div class="gp-overview-title">Today’s attendance</div>'
@@ -3506,11 +3514,39 @@ with correction_tab:
     selected_date_obj_input = strlit.date_input(
         "Date",
         max_value=now_syria.date(),
-        key="dashboard_date",
+        key="attendance_date",
     )
   with refresh_col:
     strlit.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
     if strlit.button("↻  Refresh", use_container_width=True, key="top_refresh_button"):
+      strlit.cache_data.clear()
+      strlit.rerun()
+
+with correction_tab:
+  correction_head, correction_date_col, correction_refresh_col = strlit.columns(
+      [1.0, 0.34, 0.22], gap="small"
+  )
+  with correction_head:
+    strlit.markdown('<span class="gp-dashboard-marker"></span>', unsafe_allow_html=True)
+    strlit.markdown(
+        '<div class="gp-overview-head"><div>'
+        '<div class="gp-overview-title">Attendance corrections</div>'
+        '<div class="gp-overview-date">Select a date to view its missing punches</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+  with correction_date_col:
+    correction_date_obj = strlit.date_input(
+        "Correction date",
+        value=None,
+        max_value=now_syria.date(),
+        key="correction_date",
+    )
+  with correction_refresh_col:
+    strlit.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+    if strlit.button(
+        "↻  Refresh", use_container_width=True, key="correction_refresh_button"
+    ):
       strlit.cache_data.clear()
       strlit.rerun()
 
@@ -3534,6 +3570,8 @@ try:
 
   with daily_tab:
     render_clickable_attendance_cards(act, pre, lat, chk, lev, abs_s)
+
+  with monthly_tab:
     # 📥 UPLOAD TEMPLATE & FILL ATTENDANCE VALUES OR GENERATE DEFAULT REPORT
     col_gen, col_up = strlit.columns(2)
 
@@ -6185,7 +6223,32 @@ try:
         )
 
   with correction_tab:
-    render_manual_punch_panel(act, selected_date_obj_input, exc)
+    if correction_date_obj is None:
+      strlit.info(
+          "Select a correction date above to load only that date’s missing-punch staff."
+      )
+    else:
+      correction_date_str = correction_date_obj.strftime("%Y-%m-%d")
+      if correction_date_obj == selected_date_obj_input:
+        correction_act, correction_exc = act, exc
+      else:
+        correction_is_today = correction_date_str == today_str
+        correction_overlay = show_loading_overlay(
+            "Loading missing punches for the selected date..."
+        )
+        correction_act, _, _, _, _, _, _, correction_exc = (
+            load_attendance_data_from_api(
+                correction_date_str,
+                correction_date_obj,
+                correction_is_today,
+            )
+        )
+        hide_loading_overlay(correction_overlay)
+      render_manual_punch_panel(
+          correction_act,
+          correction_date_obj,
+          correction_exc,
+      )
 
   with backup_tab:
     # 🛡️ INDEPENDENT BIOTIME BACKUP
